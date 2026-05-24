@@ -1,0 +1,78 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "Run CornersPredictionApi",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-api",
+      "program": "${workspaceFolder}/CornersPredictionApi/bin/Debug/net8.0/CornersPredictionApi.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/CornersPredictionApi",
+      "stopAtEntry": false,
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(http://\\S+)",
+        "uriFormat": "%s/swagger/index.html"
+      },
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5070"
+      },
+      "sourceFileMap": {
+        "/Views": "${workspaceFolder}/Views"
+      }
+    },
+    {
+      "name": "Run CornersPredictionApi (No Browser)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-api",
+      "program": "${workspaceFolder}/CornersPredictionApi/bin/Debug/net8.0/CornersPredictionApi.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/CornersPredictionApi",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5070"
+      },
+      "sourceFileMap": {
+        "/Views": "${workspaceFolder}/Views"
+      }
+    },
+    {
+      "name": "Run CornersPrediction.Web",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-web",
+      "program": "${workspaceFolder}/CornersPrediction.Web/bin/Debug/net8.0/CornersPrediction.Web.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/CornersPrediction.Web",
+      "stopAtEntry": false,
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(http://\\S+)",
+        "uriFormat": "%s/MatchHistory"
+      },
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5130",
+        "BackendApi__BaseUrl": "http://localhost:5070"
+      },
+      "sourceFileMap": {
+        "/Views": "${workspaceFolder}/Views"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Run API + Web",
+      "configurations": [
+        "Run CornersPredictionApi (No Browser)",
+        "Run CornersPrediction.Web"
+      ],
+      "stopAll": true
+    }
+  ]
+}

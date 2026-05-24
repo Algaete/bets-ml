@@ -1,0 +1,126 @@
+@model CornersPrediction.Web.Models.Betting.BettingRecordViewModel
+
+@{
+    Func<string, string> T = key => UiText.T(Context, key);
+    ViewData["Title"] = T("Betting.Details");
+}
+
+@functions {
+    private static string StatusBadge(string status) => status switch
+    {
+        "Won" => "text-bg-success",
+        "Lost" => "text-bg-danger",
+        "Pending" => "text-bg-warning",
+        "Void" => "text-bg-info",
+        "Cashout" => "text-bg-secondary",
+        _ => "text-bg-light"
+    };
+
+    private static string MoneyClass(decimal value) => value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-muted";
+
+    private static string Money(decimal value, string currencyCode) =>
+        currencyCode == "CLP" ? $"{currencyCode} {value:N0}" : $"{currencyCode} {value:N2}";
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">@T("Betting.Details")</h1>
+        <p class="text-muted mb-0">@Model.HomeTeam vs @Model.AwayTeam</p>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary" asp-controller="Betting" asp-action="Index" asp-route-currencyCode="@Model.CurrencyCode">@T("Common.Back")</a>
+        <a class="btn btn-primary" asp-controller="Betting" asp-action="Edit" asp-route-id="@Model.Id">@T("Common.Edit")</a>
+        <form method="post" asp-controller="Betting" asp-action="Delete" onsubmit="return confirm('@T("Common.DeleteBetConfirm")');">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="id" value="@Model.Id" />
+            <input type="hidden" name="currencyCode" value="@Model.CurrencyCode" />
+            <button type="submit" class="btn btn-outline-danger">@T("Common.Delete")</button>
+        </form>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <div class="small text-muted">@T("Fields.Status")</div>
+                <div class="mt-2"><span class="badge @StatusBadge(Model.Status)">@Model.Status</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <div class="small text-muted">@T("Fields.Stake")</div>
+                <div class="h5 mb-0">@Money(Model.Stake, Model.CurrencyCode)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <div class="small text-muted">@T("Fields.PotentialReturn")</div>
+                <div class="h5 mb-0">@Money(Model.PotentialReturn, Model.CurrencyCode)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <div class="small text-muted">@T("Fields.ProfitLoss")</div>
+                <div class="h5 mb-0 @MoneyClass(Model.ProfitLoss)">@Money(Model.ProfitLoss, Model.CurrencyCode)</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h2 class="h6 mb-0">@T("Betting.Bet")</h2>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Date")</div><div class="fw-semibold">@Model.MatchDate.ToString("yyyy-MM-dd")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.League")</div><div class="fw-semibold">@Model.League</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Season")</div><div class="fw-semibold">@Model.Season</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Currency")</div><div class="fw-semibold">@Model.CurrencyCode</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Bookmaker")</div><div class="fw-semibold">@(Model.Bookmaker ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Market")</div><div class="fw-semibold">@Model.MarketType</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Selection")</div><div class="fw-semibold">@Model.BetSelection</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Line")</div><div class="fw-semibold">@Model.Line.ToString("N2")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Odds")</div><div class="fw-semibold">@Model.Odds.ToString("N2")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.ClosingOdds")</div><div class="fw-semibold">@(Model.ClosingOdds?.ToString("N2") ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Confidence")</div><div class="fw-semibold">@(Model.ConfidenceLevel ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Betting.Roi")</div><div class="fw-semibold">@Model.RoiPercent.ToString("N2")%</div></div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h2 class="h6 mb-0">@T("Betting.Result")</h2>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.HomeCorners")</div><div class="fw-semibold">@(Model.ActualHomeCorners?.ToString() ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.AwayCorners")</div><div class="fw-semibold">@(Model.ActualAwayCorners?.ToString() ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.TotalCorners")</div><div class="fw-semibold">@(Model.ActualTotalCorners?.ToString() ?? "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.Cashout")</div><div class="fw-semibold">@(Model.CashoutAmount.HasValue ? Money(Model.CashoutAmount.Value, Model.CurrencyCode) : "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.NetReturn")</div><div class="fw-semibold">@Money(Model.NetReturn, Model.CurrencyCode)</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.BankBefore")</div><div class="fw-semibold">@(Model.BankrollBefore.HasValue ? Money(Model.BankrollBefore.Value, Model.CurrencyCode) : "-")</div></div>
+            <div class="col-md-3"><div class="small text-muted">@T("Fields.BankAfter")</div><div class="fw-semibold">@(Model.BankrollAfter.HasValue ? Money(Model.BankrollAfter.Value, Model.CurrencyCode) : "-")</div></div>
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.Notes))
+{
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h2 class="h6 mb-0">@T("Fields.Notes")</h2>
+        </div>
+        <div class="card-body">
+            <p class="mb-0">@Model.Notes</p>
+        </div>
+    </div>
+}

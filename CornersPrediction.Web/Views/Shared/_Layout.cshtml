@@ -1,0 +1,135 @@
+﻿<!DOCTYPE html>
+@{
+    var language = UiText.GetLanguage(Context);
+}
+<html lang="@language">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - @UiText.T(language, "App.Name")</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/CornersPrediction.Web.styles.css" asp-append-version="true" />
+</head>
+<body>
+    @{
+        var activeController = ViewContext.RouteData.Values["controller"]?.ToString();
+        var returnUrl = Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString;
+    }
+    <div class="app-shell" id="AppShell">
+        <aside class="app-sidebar" id="AppSidebar" aria-label="Main menu">
+            <div class="sidebar-brand">
+                <a asp-area="" asp-controller="MatchHistory" asp-action="Index">
+                    <span class="brand-mark">CP</span>
+                    <span>
+                        <span class="brand-title">@UiText.T(language, "App.Name")</span>
+                        <span class="brand-subtitle">@UiText.T(language, "App.Subtitle")</span>
+                    </span>
+                </a>
+            </div>
+            <nav class="sidebar-nav">
+                <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
+                    <span class="sidebar-icon">MH</span>
+                    <span>@UiText.T(language, "Nav.MatchHistory")</span>
+                </a>
+                <a class="sidebar-link @(activeController == "Predictions" ? "active" : "")" asp-area="" asp-controller="Predictions" asp-action="Index">
+                    <span class="sidebar-icon">PR</span>
+                    <span>@UiText.T(language, "Nav.Predictions")</span>
+                </a>
+                <a class="sidebar-link @(activeController == "Betting" ? "active" : "")" asp-area="" asp-controller="Betting" asp-action="Index">
+                    <span class="sidebar-icon">BT</span>
+                    <span>@UiText.T(language, "Nav.Betting")</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <span class="small text-white-50">@UiText.T(language, "App.LocalWorkspace")</span>
+                <span class="small fw-semibold">2026</span>
+            </div>
+        </aside>
+
+        <div class="sidebar-backdrop" id="SidebarBackdrop"></div>
+
+        <div class="app-main">
+            <header class="app-topbar">
+                <button class="sidebar-toggle" type="button" id="SidebarToggle" aria-controls="AppSidebar" aria-expanded="true" aria-label="Toggle menu">
+                    <span aria-hidden="true">&#9776;</span>
+                </button>
+                <div>
+                    <div class="topbar-title">@ViewData["Title"]</div>
+                    <div class="topbar-subtitle">@UiText.T(language, "App.Name")</div>
+                </div>
+                <form class="language-switcher ms-auto" method="post" asp-controller="Language" asp-action="Set">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="returnUrl" value="@returnUrl" />
+                    <label class="visually-hidden" for="LanguageSelect">@UiText.T(language, "Language.Label")</label>
+                    <select id="LanguageSelect" name="language" class="form-select form-select-sm" onchange="this.form.submit()">
+                        @if (language == UiText.English)
+                        {
+                            <option value="en" selected>EN</option>
+                            <option value="es">ES</option>
+                        }
+                        else
+                        {
+                            <option value="en">EN</option>
+                            <option value="es" selected>ES</option>
+                        }
+                    </select>
+                </form>
+            </header>
+
+            <main role="main" class="app-content">
+                @RenderBody()
+            </main>
+
+            <footer class="app-footer text-muted">
+                &copy; 2026 - Corners Prediction
+            </footer>
+        </div>
+    </div>
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script>
+        (() => {
+            const shell = document.getElementById('AppShell');
+            const toggle = document.getElementById('SidebarToggle');
+            const backdrop = document.getElementById('SidebarBackdrop');
+            const storageKey = 'corners-sidebar-collapsed';
+
+            const isMobile = () => window.matchMedia('(max-width: 991.98px)').matches;
+
+            const setExpandedState = () => {
+                const expanded = isMobile()
+                    ? shell.classList.contains('sidebar-open')
+                    : !shell.classList.contains('sidebar-collapsed');
+                toggle.setAttribute('aria-expanded', expanded.toString());
+            };
+
+            const closeMobileSidebar = () => {
+                shell.classList.remove('sidebar-open');
+                setExpandedState();
+            };
+
+            if (localStorage.getItem(storageKey) === 'true') {
+                shell.classList.add('sidebar-collapsed');
+            }
+
+            toggle.addEventListener('click', () => {
+                if (isMobile()) {
+                    shell.classList.toggle('sidebar-open');
+                } else {
+                    shell.classList.toggle('sidebar-collapsed');
+                    localStorage.setItem(storageKey, shell.classList.contains('sidebar-collapsed').toString());
+                }
+
+                setExpandedState();
+            });
+
+            backdrop.addEventListener('click', closeMobileSidebar);
+            window.addEventListener('resize', setExpandedState);
+            setExpandedState();
+        })();
+    </script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

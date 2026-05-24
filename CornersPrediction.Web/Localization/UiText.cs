@@ -1,0 +1,235 @@
+using Microsoft.AspNetCore.Http;
+
+namespace CornersPrediction.Web.Localization;
+
+public static class UiText
+{
+    public const string CookieName = "corners-ui-language";
+    public const string English = "en";
+    public const string Spanish = "es";
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Texts =
+        new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            [English] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["App.Name"] = "Corners Prediction",
+                ["App.Subtitle"] = "Model & betting desk",
+                ["App.LocalWorkspace"] = "Local workspace",
+                ["Language.Label"] = "Language",
+                ["Language.English"] = "English",
+                ["Language.Spanish"] = "Spanish",
+                ["Nav.MatchHistory"] = "Match history",
+                ["Nav.Predictions"] = "Predict corners",
+                ["Nav.Betting"] = "Betting",
+                ["Betting.Title"] = "Betting",
+                ["Betting.Description"] = "Manual betting ledger for stake, odds, profit/loss, ROI and bankroll tracking.",
+                ["Betting.Create"] = "Create bet",
+                ["Betting.Edit"] = "Edit bet",
+                ["Betting.Details"] = "Bet details",
+                ["Betting.CreateDescription"] = "Register a manual betting position.",
+                ["Betting.EditDescription"] = "Update result, status, bankroll and notes.",
+                ["Betting.CurrentBankroll"] = "Current bankroll",
+                ["Betting.BankrollTransaction"] = "Bankroll transaction",
+                ["Betting.AddMovement"] = "Add movement",
+                ["Betting.Filters"] = "Filters",
+                ["Betting.TotalStake"] = "Total stake",
+                ["Betting.NetPL"] = "Net P/L",
+                ["Betting.Roi"] = "ROI",
+                ["Betting.WinRate"] = "Win rate",
+                ["Betting.Won"] = "Won",
+                ["Betting.Lost"] = "Lost",
+                ["Betting.Pending"] = "Pending",
+                ["Betting.AverageOdds"] = "Average odds",
+                ["Betting.BankrollMovements"] = "Bankroll movements",
+                ["Betting.Records"] = "Betting records",
+                ["Betting.Bet"] = "Bet",
+                ["Betting.Result"] = "Result",
+                ["Common.All"] = "All",
+                ["Common.None"] = "None",
+                ["Common.Back"] = "Back",
+                ["Common.Cancel"] = "Cancel",
+                ["Common.Save"] = "Save",
+                ["Common.SaveBet"] = "Save bet",
+                ["Common.SaveChanges"] = "Save changes",
+                ["Common.Edit"] = "Edit",
+                ["Common.Delete"] = "Delete",
+                ["Common.View"] = "View",
+                ["Common.Apply"] = "Apply",
+                ["Common.Actions"] = "Actions",
+                ["Common.Records"] = "records",
+                ["Common.DeleteBetConfirm"] = "Delete this betting record?",
+                ["Fields.Date"] = "Date",
+                ["Fields.DateFrom"] = "Date from",
+                ["Fields.DateTo"] = "Date to",
+                ["Fields.Currency"] = "Currency",
+                ["Fields.Type"] = "Type",
+                ["Fields.Amount"] = "Amount",
+                ["Fields.BalanceAfter"] = "Balance after",
+                ["Fields.BetId"] = "Bet id",
+                ["Fields.Notes"] = "Notes",
+                ["Fields.League"] = "League",
+                ["Fields.Season"] = "Season",
+                ["Fields.HomeTeam"] = "Home team",
+                ["Fields.AwayTeam"] = "Away team",
+                ["Fields.Status"] = "Status",
+                ["Fields.Market"] = "Market",
+                ["Fields.Bookmaker"] = "Bookmaker",
+                ["Fields.Match"] = "Match",
+                ["Fields.Pick"] = "Pick",
+                ["Fields.Line"] = "Line",
+                ["Fields.Odds"] = "Odds",
+                ["Fields.Stake"] = "Stake",
+                ["Fields.Corners"] = "Corners",
+                ["Fields.Potential"] = "Potential",
+                ["Fields.PotentialReturn"] = "Potential return",
+                ["Fields.Net"] = "Net",
+                ["Fields.NetReturn"] = "Net return",
+                ["Fields.ProfitLoss"] = "Profit/Loss",
+                ["Fields.BankBefore"] = "Bank before",
+                ["Fields.BankAfter"] = "Bank after",
+                ["Fields.Confidence"] = "Confidence",
+                ["Fields.Selection"] = "Selection",
+                ["Fields.ClosingOdds"] = "Closing odds",
+                ["Fields.HomeCorners"] = "Home corners",
+                ["Fields.AwayCorners"] = "Away corners",
+                ["Fields.TotalCorners"] = "Total corners",
+                ["Fields.Cashout"] = "Cashout",
+                ["Fields.MarketType"] = "Market type",
+                ["Fields.BetSelection"] = "Bet selection",
+                ["Fields.MatchDate"] = "Match date",
+                ["Fields.BankrollBefore"] = "Bankroll before",
+                ["Fields.CashoutAmount"] = "Cashout amount",
+                ["Fields.ActualHomeCorners"] = "Actual home corners",
+                ["Fields.ActualAwayCorners"] = "Actual away corners",
+                ["Fields.ActualTotalCorners"] = "Actual total corners",
+                ["Fields.ConfidenceLevel"] = "Confidence level",
+                ["Fields.AutoResolve"] = "Auto resolve TotalCorners",
+                ["Predictions.Title"] = "Predict corners",
+                ["MatchHistory.Title"] = "Match history",
+            },
+            [Spanish] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["App.Name"] = "Prediccion de Corners",
+                ["App.Subtitle"] = "Modelo y mesa de apuestas",
+                ["App.LocalWorkspace"] = "Espacio local",
+                ["Language.Label"] = "Idioma",
+                ["Language.English"] = "Ingles",
+                ["Language.Spanish"] = "Espanol",
+                ["Nav.MatchHistory"] = "Historial de partidos",
+                ["Nav.Predictions"] = "Predecir corners",
+                ["Nav.Betting"] = "Apuestas",
+                ["Betting.Title"] = "Apuestas",
+                ["Betting.Description"] = "Registro manual de apuestas, stake, cuotas, ganancia/perdida, ROI y banca.",
+                ["Betting.Create"] = "Crear apuesta",
+                ["Betting.Edit"] = "Editar apuesta",
+                ["Betting.Details"] = "Detalle de apuesta",
+                ["Betting.CreateDescription"] = "Registra una apuesta manual.",
+                ["Betting.EditDescription"] = "Actualiza resultado, estado, banca y notas.",
+                ["Betting.CurrentBankroll"] = "Banca actual",
+                ["Betting.BankrollTransaction"] = "Movimiento de banca",
+                ["Betting.AddMovement"] = "Agregar movimiento",
+                ["Betting.Filters"] = "Filtros",
+                ["Betting.TotalStake"] = "Total apostado",
+                ["Betting.NetPL"] = "Ganancia/Perdida neta",
+                ["Betting.Roi"] = "ROI",
+                ["Betting.WinRate"] = "Win rate",
+                ["Betting.Won"] = "Ganadas",
+                ["Betting.Lost"] = "Perdidas",
+                ["Betting.Pending"] = "Pendientes",
+                ["Betting.AverageOdds"] = "Cuota promedio",
+                ["Betting.BankrollMovements"] = "Movimientos de banca",
+                ["Betting.Records"] = "Registros de apuestas",
+                ["Betting.Bet"] = "Apuesta",
+                ["Betting.Result"] = "Resultado",
+                ["Common.All"] = "Todas",
+                ["Common.None"] = "Ninguno",
+                ["Common.Back"] = "Volver",
+                ["Common.Cancel"] = "Cancelar",
+                ["Common.Save"] = "Guardar",
+                ["Common.SaveBet"] = "Guardar apuesta",
+                ["Common.SaveChanges"] = "Guardar cambios",
+                ["Common.Edit"] = "Editar",
+                ["Common.Delete"] = "Eliminar",
+                ["Common.View"] = "Ver",
+                ["Common.Apply"] = "Aplicar",
+                ["Common.Actions"] = "Acciones",
+                ["Common.Records"] = "registros",
+                ["Common.DeleteBetConfirm"] = "Eliminar esta apuesta?",
+                ["Fields.Date"] = "Fecha",
+                ["Fields.DateFrom"] = "Fecha desde",
+                ["Fields.DateTo"] = "Fecha hasta",
+                ["Fields.Currency"] = "Moneda",
+                ["Fields.Type"] = "Tipo",
+                ["Fields.Amount"] = "Monto",
+                ["Fields.BalanceAfter"] = "Saldo despues",
+                ["Fields.BetId"] = "Id apuesta",
+                ["Fields.Notes"] = "Notas",
+                ["Fields.League"] = "Liga",
+                ["Fields.Season"] = "Temporada",
+                ["Fields.HomeTeam"] = "Equipo local",
+                ["Fields.AwayTeam"] = "Equipo visita",
+                ["Fields.Status"] = "Estado",
+                ["Fields.Market"] = "Mercado",
+                ["Fields.Bookmaker"] = "Casa de apuesta",
+                ["Fields.Match"] = "Partido",
+                ["Fields.Pick"] = "Seleccion",
+                ["Fields.Line"] = "Linea",
+                ["Fields.Odds"] = "Cuota",
+                ["Fields.Stake"] = "Stake",
+                ["Fields.Corners"] = "Corners",
+                ["Fields.Potential"] = "Potencial",
+                ["Fields.PotentialReturn"] = "Retorno potencial",
+                ["Fields.Net"] = "Neto",
+                ["Fields.NetReturn"] = "Retorno neto",
+                ["Fields.ProfitLoss"] = "Ganancia/Perdida",
+                ["Fields.BankBefore"] = "Banca antes",
+                ["Fields.BankAfter"] = "Banca despues",
+                ["Fields.Confidence"] = "Confianza",
+                ["Fields.Selection"] = "Seleccion",
+                ["Fields.ClosingOdds"] = "Cuota cierre",
+                ["Fields.HomeCorners"] = "Corners local",
+                ["Fields.AwayCorners"] = "Corners visita",
+                ["Fields.TotalCorners"] = "Total corners",
+                ["Fields.Cashout"] = "Cashout",
+                ["Fields.MarketType"] = "Tipo de mercado",
+                ["Fields.BetSelection"] = "Seleccion apuesta",
+                ["Fields.MatchDate"] = "Fecha partido",
+                ["Fields.BankrollBefore"] = "Banca antes",
+                ["Fields.CashoutAmount"] = "Monto cashout",
+                ["Fields.ActualHomeCorners"] = "Corners reales local",
+                ["Fields.ActualAwayCorners"] = "Corners reales visita",
+                ["Fields.ActualTotalCorners"] = "Corners reales total",
+                ["Fields.ConfidenceLevel"] = "Nivel de confianza",
+                ["Fields.AutoResolve"] = "Resolver TotalCorners automaticamente",
+                ["Predictions.Title"] = "Predecir corners",
+                ["MatchHistory.Title"] = "Historial de partidos",
+            }
+        };
+
+    public static string GetLanguage(HttpContext context)
+    {
+        return NormalizeLanguage(context.Request.Cookies[CookieName]);
+    }
+
+    public static string NormalizeLanguage(string? language)
+    {
+        return string.Equals(language, Spanish, StringComparison.OrdinalIgnoreCase) ? Spanish : English;
+    }
+
+    public static string T(HttpContext context, string key)
+    {
+        return T(GetLanguage(context), key);
+    }
+
+    public static string T(string language, string key)
+    {
+        var normalized = NormalizeLanguage(language);
+        if (Texts[normalized].TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        return Texts[English].TryGetValue(key, out var fallback) ? fallback : key;
+    }
+}

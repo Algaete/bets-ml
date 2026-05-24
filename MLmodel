@@ -1,0 +1,92 @@
+artifact_path: outputs/mlflow-model
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.10.19
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: pickle
+    sklearn_version: 1.5.1
+metadata:
+  azureml.base_image: mcr.microsoft.com/azureml/curated/ai-ml-automl:41
+  azureml.engine: automl
+mlflow_version: 2.15.1
+model_size_bytes: 3297451
+model_uuid: 3cbc7f7775294a2e83cec033d1a7f07e
+run_id: corners-automl-v2_19
+signature:
+  inputs: '[{"type": "string", "name": "League", "required": true}, {"type": "string",
+    "name": "Season", "required": true}, {"type": "datetime", "name": "MatchDate",
+    "required": true}, {"type": "string", "name": "Home_AvgCornersForLast3", "required":
+    true}, {"type": "string", "name": "Home_AvgCornersAgainstLast3", "required": true},
+    {"type": "string", "name": "Home_AvgCornersForLast3_HomeOnly", "required": true},
+    {"type": "string", "name": "Home_AvgCornersAgainstLast3_HomeOnly", "required":
+    true}, {"type": "string", "name": "Home_AvgGoalsForLast3", "required": true},
+    {"type": "string", "name": "Home_AvgGoalsAgainstLast3", "required": true}, {"type":
+    "string", "name": "Home_AvgGoalsForLast3_HomeOnly", "required": true}, {"type":
+    "string", "name": "Home_AvgGoalsAgainstLast3_HomeOnly", "required": true}, {"type":
+    "string", "name": "Home_AvgShotsLast3", "required": true}, {"type": "string",
+    "name": "Home_AvgShotsOnGoalLast3", "required": true}, {"type": "string", "name":
+    "Home_AvgPossessionLast3", "required": true}, {"type": "string", "name": "Home_AvgCornersForLast5",
+    "required": true}, {"type": "string", "name": "Home_AvgCornersAgainstLast5", "required":
+    true}, {"type": "string", "name": "Home_AvgCornersForLast5_HomeOnly", "required":
+    true}, {"type": "string", "name": "Home_AvgCornersAgainstLast5_HomeOnly", "required":
+    true}, {"type": "string", "name": "Home_AvgGoalsForLast5", "required": true},
+    {"type": "string", "name": "Home_AvgGoalsAgainstLast5", "required": true}, {"type":
+    "string", "name": "Home_AvgGoalsForLast5_HomeOnly", "required": true}, {"type":
+    "string", "name": "Home_AvgGoalsAgainstLast5_HomeOnly", "required": true}, {"type":
+    "string", "name": "Home_AvgShotsLast5", "required": true}, {"type": "string",
+    "name": "Home_AvgShotsOnGoalLast5", "required": true}, {"type": "string", "name":
+    "Home_AvgPossessionLast5", "required": true}, {"type": "string", "name": "Home_AvgCornersForLast10",
+    "required": true}, {"type": "string", "name": "Home_AvgCornersAgainstLast10",
+    "required": true}, {"type": "string", "name": "Home_AvgCornersForLast10_HomeOnly",
+    "required": true}, {"type": "string", "name": "Home_AvgCornersAgainstLast10_HomeOnly",
+    "required": true}, {"type": "string", "name": "Home_AvgGoalsForLast10", "required":
+    true}, {"type": "string", "name": "Home_AvgGoalsAgainstLast10", "required": true},
+    {"type": "string", "name": "Home_AvgGoalsForLast10_HomeOnly", "required": true},
+    {"type": "string", "name": "Home_AvgGoalsAgainstLast10_HomeOnly", "required":
+    true}, {"type": "string", "name": "Home_AvgShotsLast10", "required": true}, {"type":
+    "string", "name": "Home_AvgShotsOnGoalLast10", "required": true}, {"type": "string",
+    "name": "Home_AvgPossessionLast10", "required": true}, {"type": "string", "name":
+    "Away_AvgCornersForLast3", "required": true}, {"type": "string", "name": "Away_AvgCornersAgainstLast3",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersForLast3_AwayOnly",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersAgainstLast3_AwayOnly",
+    "required": true}, {"type": "string", "name": "Away_AvgGoalsForLast3", "required":
+    true}, {"type": "string", "name": "Away_AvgGoalsAgainstLast3", "required": true},
+    {"type": "string", "name": "Away_AvgGoalsForLast3_AwayOnly", "required": true},
+    {"type": "string", "name": "Away_AvgGoalsAgainstLast3_AwayOnly", "required": true},
+    {"type": "string", "name": "Away_AvgShotsLast3", "required": true}, {"type": "string",
+    "name": "Away_AvgShotsOnGoalLast3", "required": true}, {"type": "string", "name":
+    "Away_AvgPossessionLast3", "required": true}, {"type": "string", "name": "Away_AvgCornersForLast5",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersAgainstLast5", "required":
+    true}, {"type": "string", "name": "Away_AvgCornersForLast5_AwayOnly", "required":
+    true}, {"type": "string", "name": "Away_AvgCornersAgainstLast5_AwayOnly", "required":
+    true}, {"type": "string", "name": "Away_AvgGoalsForLast5", "required": true},
+    {"type": "string", "name": "Away_AvgGoalsAgainstLast5", "required": true}, {"type":
+    "string", "name": "Away_AvgGoalsForLast5_AwayOnly", "required": true}, {"type":
+    "string", "name": "Away_AvgGoalsAgainstLast5_AwayOnly", "required": true}, {"type":
+    "string", "name": "Away_AvgShotsLast5", "required": true}, {"type": "string",
+    "name": "Away_AvgShotsOnGoalLast5", "required": true}, {"type": "string", "name":
+    "Away_AvgPossessionLast5", "required": true}, {"type": "string", "name": "Away_AvgCornersForLast10",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersAgainstLast10",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersForLast10_AwayOnly",
+    "required": true}, {"type": "string", "name": "Away_AvgCornersAgainstLast10_AwayOnly",
+    "required": true}, {"type": "string", "name": "Away_AvgGoalsForLast10", "required":
+    true}, {"type": "string", "name": "Away_AvgGoalsAgainstLast10", "required": true},
+    {"type": "string", "name": "Away_AvgGoalsForLast10_AwayOnly", "required": true},
+    {"type": "string", "name": "Away_AvgGoalsAgainstLast10_AwayOnly", "required":
+    true}, {"type": "string", "name": "Away_AvgShotsLast10", "required": true}, {"type":
+    "string", "name": "Away_AvgShotsOnGoalLast10", "required": true}, {"type": "string",
+    "name": "Away_AvgPossessionLast10", "required": true}, {"type": "string", "name":
+    "HomeFormation", "required": true}, {"type": "string", "name": "AwayFormation",
+    "required": true}, {"type": "integer", "name": "HomeHasFormation", "required":
+    true}, {"type": "integer", "name": "AwayHasFormation", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "int64", "shape": [-1]}}]'
+  params: null
+utc_time_created: '2026-05-04 03:08:46.311716'

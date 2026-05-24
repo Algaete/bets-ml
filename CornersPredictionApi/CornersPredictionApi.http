@@ -1,0 +1,68 @@
+@CornersPredictionApi_HostAddress = http://localhost:5070
+
+POST {{CornersPredictionApi_HostAddress}}/predict
+Content-Type: application/json
+Accept: application/json
+
+{
+  "League": "Premier League",
+  "HomeFormation": "4-3-3",
+  "AwayFormation": "4-4-2",
+  "Home_AvgCornersForLast3": 5.3,
+  "Home_AvgCornersAgainstLast3": 4.1,
+  "Home_AvgCornersForLast3_HomeOnly": 6.2,
+  "Home_AvgCornersAgainstLast3_HomeOnly": 3.8,
+  "Home_AvgGoalsForLast3": 1.8,
+  "Home_AvgGoalsAgainstLast3": 1.1,
+  "Home_AvgShotsLast10": 13.5,
+  "Home_AvgShotsOnGoalLast10": 6.2,
+  "Home_AvgPossessionLast10": 54.3,
+  "Away_AvgCornersForLast3": 4.2,
+  "Away_AvgCornersAgainstLast3": 5.0,
+  "Away_AvgGoalsForLast3": 1.2,
+  "Away_AvgGoalsAgainstLast3": 1.6,
+  "Away_AvgShotsLast10": 11.1,
+  "Away_AvgShotsOnGoalLast10": 4.9,
+  "Away_AvgPossessionLast10": 47.8
+}
+
+###
+
+GET {{CornersPredictionApi_HostAddress}}/api/matches?take=20
+Accept: application/json
+
+###
+
+GET {{CornersPredictionApi_HostAddress}}/api/teams/big3-leagues
+Accept: application/json
+
+###
+
+GET {{CornersPredictionApi_HostAddress}}/api/teams/big3-info?league=Premier%20League
+Accept: application/json
+
+###
+
+POST {{CornersPredictionApi_HostAddress}}/api/matches
+Content-Type: application/json
+Accept: application/json
+
+{
+  "League": "Premier League",
+  "Season": "2025-2026",
+  "MatchDate": "2026-05-03",
+  "HomeTeam": "Arsenal",
+  "AwayTeam": "Chelsea",
+  "HomeFormation": "4-3-3",
+  "AwayFormation": "4-2-3-1",
+  "HomeCorners": 6,
+  "AwayCorners": 4,
+  "HomeGoals": 2,
+  "AwayGoals": 1,
+  "HomeShots": 14,
+  "AwayShots": 10,
+  "HomeShotsOnGoal": 6,
+  "AwayShotsOnGoal": 4,
+  "HomePossession": 56.4,
+  "AwayPossession": 43.6
+}

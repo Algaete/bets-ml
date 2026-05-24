@@ -1,0 +1,722 @@
+@model CornersPrediction.Web.Models.Predictions.PredictionIndexViewModel
+
+@{
+    ViewData["Title"] = UiText.T(Context, "Predictions.Title");
+    var leagueOptions = Model.LeagueOptions.OrderBy(league => league).ToArray();
+    var formationOptions = Model.FormationOptions.OrderBy(formation => formation).ToArray();
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">Predict corners</h1>
+        <p class="text-muted mb-0">Select a league and teams, review their recent home/away history, then generate model features.</p>
+    </div>
+    <span id="historyStatusBadge" class="badge text-bg-secondary">Waiting for teams</span>
+</div>
+
+<div class="row g-4">
+    <div class="col-12 col-xl-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <h2 class="h5 mb-0">Match setup</h2>
+            </div>
+            <div class="card-body">
+                @if (leagueOptions.Length == 0)
+                {
+                    <div class="alert alert-warning">
+                        League options could not be loaded from the backend.
+                    </div>
+                }
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label" for="League">League</label>
+                        <input id="League" class="form-control" list="LeagueOptions" placeholder="Search or select league" autocomplete="off" />
+                        <datalist id="LeagueOptions">
+                            @foreach (var league in leagueOptions)
+                            {
+                                <option value="@league"></option>
+                            }
+                        </datalist>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="Season">Season</label>
+                        <input id="Season" class="form-control" value="2025-2026" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="MatchDate">Match date</label>
+                        <input id="MatchDate" class="form-control" type="date" value="@DateTime.Today.ToString("yyyy-MM-dd")" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="HomeTeam">Home team</label>
+                        <input id="HomeTeam" class="form-control" list="HomeTeamOptions" placeholder="Select league first" autocomplete="off" disabled />
+                        <datalist id="HomeTeamOptions"></datalist>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="AwayTeam">Away team</label>
+                        <input id="AwayTeam" class="form-control" list="AwayTeamOptions" placeholder="Select league first" autocomplete="off" disabled />
+                        <datalist id="AwayTeamOptions"></datalist>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="HomeFormation">Home formation</label>
+                        <input id="HomeFormation" class="form-control" list="FormationOptions" placeholder="4-3-3" autocomplete="off" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="AwayFormation">Away formation</label>
+                        <input id="AwayFormation" class="form-control" list="FormationOptions" placeholder="4-2-3-1" autocomplete="off" />
+                    </div>
+                    <datalist id="FormationOptions">
+                        @foreach (var formation in formationOptions)
+                        {
+                            <option value="@formation"></option>
+                        }
+                    </datalist>
+                </div>
+
+                <div class="d-grid gap-2 mt-4">
+                    <button id="LoadHistoryButton" type="button" class="btn btn-outline-primary">Load history</button>
+                    <button id="PredictButton" type="button" class="btn btn-primary" disabled>Predict total corners</button>
+                </div>
+
+                <div id="PredictionResult" class="card border-success mt-4 d-none">
+                    <div class="card-body">
+                        <div class="text-muted small">Predicted total corners</div>
+                        <div id="PredictionValue" class="display-6 fw-semibold"></div>
+                        <div class="row g-2 mt-2">
+                            <div class="col-6">
+                                <div class="small text-muted">Probable range</div>
+                                <div id="ProbableRangeValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Wide range</div>
+                                <div id="WideRangeValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Avg error</div>
+                                <div id="MaeValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Large-error risk</div>
+                                <div id="RmseValue" class="fw-semibold"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ModelComparison" class="card mt-3 d-none">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                            <div class="fw-semibold">Model comparison</div>
+                            <span id="ConsensusBadge" class="badge"></span>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <div class="small text-muted">AutoML Total</div>
+                                <div id="AutoMlTotalValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Home + Away</div>
+                                <div id="LegacyTotalValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Difference</div>
+                                <div id="ModelDifferenceValue" class="fw-semibold"></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="small text-muted">Consensus</div>
+                                <div id="ConsensusValue" class="fw-semibold"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="PredictionError" class="alert alert-danger mt-4 d-none"></div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-4">
+            <div class="card-header bg-white">
+                <h2 class="h5 mb-0">Generated features</h2>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 460px;">
+                    <table class="table table-sm mb-0">
+                        <tbody id="FeaturesBody">
+                            <tr>
+                                <td class="p-3 text-muted">Load history to calculate features.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-8">
+        <div class="row g-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h2 class="h5 mb-0">Home team last 10 as home</h2>
+                        <span id="HomeHistoryCount" class="badge text-bg-light">0 records</span>
+                    </div>
+                    <div id="HomeHistoryEmpty" class="p-4 text-muted">Select teams to load home history.</div>
+                    <div id="HomeHistoryTableWrap" class="table-responsive d-none" style="max-height: 360px;">
+                        <table class="table table-sm align-middle mb-0 table-sticky-head">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Match</th>
+                                    <th>Score</th>
+                                    <th>Corners</th>
+                                    <th>Shots</th>
+                                    <th>Poss.</th>
+                                </tr>
+                            </thead>
+                            <tbody id="HomeHistoryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h2 class="h5 mb-0">Away team last 10 as away</h2>
+                        <span id="AwayHistoryCount" class="badge text-bg-light">0 records</span>
+                    </div>
+                    <div id="AwayHistoryEmpty" class="p-4 text-muted">Select teams to load away history.</div>
+                    <div id="AwayHistoryTableWrap" class="table-responsive d-none" style="max-height: 360px;">
+                        <table class="table table-sm align-middle mb-0 table-sticky-head">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Match</th>
+                                    <th>Score</th>
+                                    <th>Corners</th>
+                                    <th>Shots</th>
+                                    <th>Poss.</th>
+                                </tr>
+                            </thead>
+                            <tbody id="AwayHistoryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (() => {
+            const leagueSelect = document.getElementById('League');
+            const seasonInput = document.getElementById('Season');
+            const matchDateInput = document.getElementById('MatchDate');
+            const homeTeamSelect = document.getElementById('HomeTeam');
+            const awayTeamSelect = document.getElementById('AwayTeam');
+            const homeTeamOptions = document.getElementById('HomeTeamOptions');
+            const awayTeamOptions = document.getElementById('AwayTeamOptions');
+            const homeFormationInput = document.getElementById('HomeFormation');
+            const awayFormationInput = document.getElementById('AwayFormation');
+            const loadHistoryButton = document.getElementById('LoadHistoryButton');
+            const predictButton = document.getElementById('PredictButton');
+            const historyStatusBadge = document.getElementById('historyStatusBadge');
+            const predictionResult = document.getElementById('PredictionResult');
+            const predictionValue = document.getElementById('PredictionValue');
+            const probableRangeValue = document.getElementById('ProbableRangeValue');
+            const wideRangeValue = document.getElementById('WideRangeValue');
+            const maeValue = document.getElementById('MaeValue');
+            const rmseValue = document.getElementById('RmseValue');
+            const modelComparison = document.getElementById('ModelComparison');
+            const consensusBadge = document.getElementById('ConsensusBadge');
+            const autoMlTotalValue = document.getElementById('AutoMlTotalValue');
+            const legacyTotalValue = document.getElementById('LegacyTotalValue');
+            const modelDifferenceValue = document.getElementById('ModelDifferenceValue');
+            const consensusValue = document.getElementById('ConsensusValue');
+            const predictionError = document.getElementById('PredictionError');
+            const featuresBody = document.getElementById('FeaturesBody');
+
+            const homeHistoryBody = document.getElementById('HomeHistoryBody');
+            const awayHistoryBody = document.getElementById('AwayHistoryBody');
+            const homeHistoryEmpty = document.getElementById('HomeHistoryEmpty');
+            const awayHistoryEmpty = document.getElementById('AwayHistoryEmpty');
+            const homeHistoryTableWrap = document.getElementById('HomeHistoryTableWrap');
+            const awayHistoryTableWrap = document.getElementById('AwayHistoryTableWrap');
+            const homeHistoryCount = document.getElementById('HomeHistoryCount');
+            const awayHistoryCount = document.getElementById('AwayHistoryCount');
+
+            let teamRequestController;
+            let historyRequestController;
+            let currentFeatures = null;
+            let currentHomeMatches = [];
+            let currentAwayMatches = [];
+            let currentTeams = [];
+            let lastLoadedLeague = '';
+
+            const MAE_TOTAL = 2.6727;
+            const RMSE_TOTAL = 3.3707;
+
+            const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+            const round = value => Math.round((Number(value) || 0) * 100) / 100;
+            const formatDecimal = (value, decimals = 2) => Number(value || 0).toFixed(decimals);
+            const formatRange = (low, high) => `${Math.round(Number(low || 0))} - ${Math.round(Number(high || 0))} corners`;
+            const average = values => values.length === 0 ? 0 : round(values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length);
+            const take = (items, count) => items.slice(0, Math.min(count, items.length));
+            const getTeamName = team => team.team ?? team.Team ?? '';
+            const getLeagueName = team => team.league ?? team.League ?? '';
+            const getSeason = team => team.season ?? team.Season ?? '';
+            const getIsBig3 = team => team?.isBig3 ?? team?.IsBig3 ?? false;
+            const normalizeText = value => String(value ?? '').trim().toLocaleLowerCase();
+
+            const findTeamInfo = teamName => {
+                const selectedName = normalizeText(teamName);
+                const selectedSeason = normalizeText(seasonInput.value);
+
+                return currentTeams.find(team =>
+                    normalizeText(getTeamName(team)) === selectedName &&
+                    normalizeText(getSeason(team)) === selectedSeason) ??
+                    currentTeams.find(team => normalizeText(getTeamName(team)) === selectedName);
+            };
+
+            const getBig3Flag = teamName => getIsBig3(findTeamInfo(teamName)) ? 1 : 0;
+
+            const setError = message => {
+                predictionError.textContent = message;
+                predictionError.classList.toggle('d-none', !message);
+            };
+
+            const getPredictionNumber = result => Number(result.predictedTotalCorners ?? result.predicted_total_corners ?? 0);
+            const getOptionalNumber = (result, camelName, snakeName) => {
+                const value = result[camelName] ?? result[snakeName];
+                return value === null || value === undefined ? null : Number(value);
+            };
+
+            const getConsensusClass = consensus => {
+                switch (String(consensus ?? '').toLowerCase()) {
+                    case 'high':
+                        return 'text-bg-success';
+                    case 'medium':
+                        return 'text-bg-warning';
+                    case 'low':
+                        return 'text-bg-danger';
+                    default:
+                        return 'text-bg-secondary';
+                }
+            };
+
+            const setPrediction = result => {
+                const predictedTotalCorners = getPredictionNumber(result);
+                const mae = getOptionalNumber(result, 'mae') ?? MAE_TOTAL;
+                const rmse = getOptionalNumber(result, 'rmse') ?? RMSE_TOTAL;
+                const probableRangeLow = getOptionalNumber(result, 'probableRangeLow') ?? Math.max(0, predictedTotalCorners - mae);
+                const probableRangeHigh = getOptionalNumber(result, 'probableRangeHigh') ?? predictedTotalCorners + mae;
+                const wideRangeLow = getOptionalNumber(result, 'wideRangeLow') ?? Math.max(0, predictedTotalCorners - rmse);
+                const wideRangeHigh = getOptionalNumber(result, 'wideRangeHigh') ?? predictedTotalCorners + rmse;
+
+                predictionValue.textContent = formatDecimal(predictedTotalCorners);
+                probableRangeValue.textContent = formatRange(probableRangeLow, probableRangeHigh);
+                wideRangeValue.textContent = formatRange(wideRangeLow, wideRangeHigh);
+                maeValue.textContent = `±${formatDecimal(mae)}`;
+                rmseValue.textContent = `±${formatDecimal(rmse)}`;
+                predictionResult.classList.remove('d-none');
+
+                const legacyTotalCorners = getOptionalNumber(result, 'legacyTotalCorners');
+                if (legacyTotalCorners === null) {
+                    modelComparison.classList.add('d-none');
+                    return;
+                }
+
+                const modelDifference = getOptionalNumber(result, 'modelDifference') ?? Math.abs(predictedTotalCorners - legacyTotalCorners);
+                const consensus = result.modelConsensus ?? (
+                    modelDifference <= 1.0 ? 'High' :
+                    modelDifference <= 2.0 ? 'Medium' : 'Low'
+                );
+
+                autoMlTotalValue.textContent = formatDecimal(predictedTotalCorners);
+                legacyTotalValue.textContent = formatDecimal(legacyTotalCorners);
+                modelDifferenceValue.textContent = `${formatDecimal(modelDifference)} corners`;
+                consensusValue.textContent = consensus;
+                consensusBadge.textContent = consensus;
+                consensusBadge.className = `badge ${getConsensusClass(consensus)}`;
+                modelComparison.classList.remove('d-none');
+            };
+
+            const resetPrediction = () => {
+                predictionResult.classList.add('d-none');
+                modelComparison.classList.add('d-none');
+                predictionValue.textContent = '';
+                probableRangeValue.textContent = '';
+                wideRangeValue.textContent = '';
+                maeValue.textContent = '';
+                rmseValue.textContent = '';
+                autoMlTotalValue.textContent = '';
+                legacyTotalValue.textContent = '';
+                modelDifferenceValue.textContent = '';
+                consensusValue.textContent = '';
+                consensusBadge.textContent = '';
+                setError('');
+            };
+
+            const wireRefreshableDatalist = input => {
+                let previousValue = '';
+
+                input.addEventListener('focus', () => {
+                    previousValue = input.value;
+                    if (previousValue) {
+                        input.value = '';
+                    }
+                });
+
+                input.addEventListener('blur', () => {
+                    if (!input.value && previousValue) {
+                        input.value = previousValue;
+                    }
+                    previousValue = '';
+                });
+            };
+
+            const setTeamOptions = (optionsElement, teams) => {
+                optionsElement.replaceChildren();
+
+                for (const team of teams) {
+                    const name = getTeamName(team);
+                    if (!name) {
+                        continue;
+                    }
+
+                    const league = getLeagueName(team);
+                    const season = getSeason(team);
+                    const labelParts = [name];
+                    if (league || season) {
+                        labelParts.push(`(${[league, season].filter(Boolean).join(' - ')})`);
+                    }
+                    if (getIsBig3(team)) {
+                        labelParts.push('- Big3');
+                    }
+
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.label = labelParts.join(' ');
+                    optionsElement.appendChild(option);
+                }
+            };
+
+            const renderMatchRows = (matches, body, empty, tableWrap, countBadge, emptyMessage) => {
+                body.replaceChildren();
+                countBadge.textContent = `${matches.length} records`;
+
+                if (matches.length === 0) {
+                    empty.textContent = emptyMessage;
+                    empty.classList.remove('d-none');
+                    tableWrap.classList.add('d-none');
+                    return;
+                }
+
+                for (const match of matches) {
+                    const row = document.createElement('tr');
+                    const matchDate = getValue(match, 'MatchDate') ?? '';
+                    const league = getValue(match, 'League') ?? '';
+                    const season = getValue(match, 'Season') ?? '';
+                    const homeTeam = getValue(match, 'HomeTeam') ?? '';
+                    const awayTeam = getValue(match, 'AwayTeam') ?? '';
+                    const homeGoals = getValue(match, 'HomeGoals') ?? 0;
+                    const awayGoals = getValue(match, 'AwayGoals') ?? 0;
+                    const homeCorners = getValue(match, 'HomeCorners') ?? 0;
+                    const awayCorners = getValue(match, 'AwayCorners') ?? 0;
+                    const homeShots = getValue(match, 'HomeShots') ?? 0;
+                    const awayShots = getValue(match, 'AwayShots') ?? 0;
+                    const homePossession = getValue(match, 'HomePossession') ?? 0;
+                    const awayPossession = getValue(match, 'AwayPossession') ?? 0;
+
+                    row.innerHTML = `
+                        <td class="text-nowrap"></td>
+                        <td>
+                            <div class="fw-semibold"></div>
+                            <div class="text-muted small"></div>
+                        </td>
+                        <td><span class="badge text-bg-light stat-pill"></span></td>
+                        <td>
+                            <span class="badge text-bg-primary stat-pill"></span>
+                            <div class="small text-muted"></div>
+                        </td>
+                        <td class="text-nowrap"></td>
+                        <td class="text-nowrap"></td>`;
+
+                    row.children[0].textContent = matchDate;
+                    row.children[1].children[0].textContent = `${homeTeam} vs ${awayTeam}`;
+                    row.children[1].children[1].textContent = `${league} · ${season}`;
+                    row.children[2].children[0].textContent = `${homeGoals} - ${awayGoals}`;
+                    row.children[3].children[0].textContent = `${homeCorners} - ${awayCorners}`;
+                    row.children[3].children[1].textContent = `Total ${Number(homeCorners) + Number(awayCorners)}`;
+                    row.children[4].textContent = `${homeShots} - ${awayShots}`;
+                    row.children[5].textContent = `${round(homePossession)}% - ${round(awayPossession)}%`;
+
+                    body.appendChild(row);
+                }
+
+                empty.classList.add('d-none');
+                tableWrap.classList.remove('d-none');
+            };
+
+            const renderFeatures = features => {
+                featuresBody.replaceChildren();
+
+                for (const [key, value] of Object.entries(features)) {
+                    const row = document.createElement('tr');
+                    const nameCell = document.createElement('td');
+                    const valueCell = document.createElement('td');
+                    nameCell.className = 'small text-muted';
+                    valueCell.className = 'text-end fw-semibold';
+                    nameCell.textContent = key;
+                    valueCell.textContent = typeof value === 'number' ? round(value).toString() : String(value ?? '');
+                    row.append(nameCell, valueCell);
+                    featuresBody.appendChild(row);
+                }
+            };
+
+            const addHomeWindowFeatures = (features, matches, count) => {
+                const window = take(matches, count);
+                features[`Home_AvgCornersForLast${count}`] = average(window.map(match => getValue(match, 'HomeCorners')));
+                features[`Home_AvgCornersAgainstLast${count}`] = average(window.map(match => getValue(match, 'AwayCorners')));
+                features[`Home_AvgCornersForLast${count}_HomeOnly`] = features[`Home_AvgCornersForLast${count}`];
+                features[`Home_AvgCornersAgainstLast${count}_HomeOnly`] = features[`Home_AvgCornersAgainstLast${count}`];
+                features[`Home_AvgGoalsForLast${count}`] = average(window.map(match => getValue(match, 'HomeGoals')));
+                features[`Home_AvgGoalsAgainstLast${count}`] = average(window.map(match => getValue(match, 'AwayGoals')));
+                features[`Home_AvgGoalsForLast${count}_HomeOnly`] = features[`Home_AvgGoalsForLast${count}`];
+                features[`Home_AvgGoalsAgainstLast${count}_HomeOnly`] = features[`Home_AvgGoalsAgainstLast${count}`];
+                features[`Home_AvgShotsLast${count}`] = average(window.map(match => getValue(match, 'HomeShots')));
+                features[`Home_AvgShotsOnGoalLast${count}`] = average(window.map(match => getValue(match, 'HomeShotsOnGoal')));
+                features[`Home_AvgPossessionLast${count}`] = average(window.map(match => getValue(match, 'HomePossession')));
+            };
+
+            const addAwayWindowFeatures = (features, matches, count) => {
+                const window = take(matches, count);
+                features[`Away_AvgCornersForLast${count}`] = average(window.map(match => getValue(match, 'AwayCorners')));
+                features[`Away_AvgCornersAgainstLast${count}`] = average(window.map(match => getValue(match, 'HomeCorners')));
+                features[`Away_AvgCornersForLast${count}_AwayOnly`] = features[`Away_AvgCornersForLast${count}`];
+                features[`Away_AvgCornersAgainstLast${count}_AwayOnly`] = features[`Away_AvgCornersAgainstLast${count}`];
+                features[`Away_AvgGoalsForLast${count}`] = average(window.map(match => getValue(match, 'AwayGoals')));
+                features[`Away_AvgGoalsAgainstLast${count}`] = average(window.map(match => getValue(match, 'HomeGoals')));
+                features[`Away_AvgGoalsForLast${count}_AwayOnly`] = features[`Away_AvgGoalsForLast${count}`];
+                features[`Away_AvgGoalsAgainstLast${count}_AwayOnly`] = features[`Away_AvgGoalsAgainstLast${count}`];
+                features[`Away_AvgShotsLast${count}`] = average(window.map(match => getValue(match, 'AwayShots')));
+                features[`Away_AvgShotsOnGoalLast${count}`] = average(window.map(match => getValue(match, 'AwayShotsOnGoal')));
+                features[`Away_AvgPossessionLast${count}`] = average(window.map(match => getValue(match, 'AwayPossession')));
+            };
+
+            const buildFeatures = () => {
+                const features = {
+                    League: leagueSelect.value,
+                    Season: seasonInput.value.trim(),
+                    MatchDate: matchDateInput.value,
+                    big3home: getBig3Flag(homeTeamSelect.value),
+                    big3away: getBig3Flag(awayTeamSelect.value),
+                    HomeFormation: homeFormationInput.value.trim() || 'UNKNOWN',
+                    AwayFormation: awayFormationInput.value.trim() || 'UNKNOWN',
+                    HomeHasFormation: homeFormationInput.value.trim() ? 1 : 0,
+                    AwayHasFormation: awayFormationInput.value.trim() ? 1 : 0
+                };
+
+                for (const count of [3, 5, 10]) {
+                    addHomeWindowFeatures(features, currentHomeMatches, count);
+                    addAwayWindowFeatures(features, currentAwayMatches, count);
+                }
+
+                return features;
+            };
+
+            const loadTeams = async () => {
+                const league = leagueSelect.value.trim();
+                resetPrediction();
+                predictButton.disabled = true;
+                currentFeatures = null;
+                currentHomeMatches = [];
+                currentAwayMatches = [];
+                currentTeams = [];
+                homeTeamSelect.value = '';
+                awayTeamSelect.value = '';
+
+                if (!league) {
+                    setTeamOptions(homeTeamOptions, []);
+                    setTeamOptions(awayTeamOptions, []);
+                    homeTeamSelect.disabled = true;
+                    awayTeamSelect.disabled = true;
+                    homeTeamSelect.placeholder = 'Select league first';
+                    awayTeamSelect.placeholder = 'Select league first';
+                    historyStatusBadge.textContent = 'Waiting for teams';
+                    lastLoadedLeague = '';
+                    return;
+                }
+
+                if (league === lastLoadedLeague && currentTeams.length > 0) {
+                    return;
+                }
+
+                teamRequestController?.abort();
+                teamRequestController = new AbortController();
+                setTeamOptions(homeTeamOptions, []);
+                setTeamOptions(awayTeamOptions, []);
+                homeTeamSelect.placeholder = 'Loading teams...';
+                awayTeamSelect.placeholder = 'Loading teams...';
+                homeTeamSelect.disabled = true;
+                awayTeamSelect.disabled = true;
+
+                try {
+                    const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league)}`, {
+                        signal: teamRequestController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Team options request failed with ${response.status}`);
+                    }
+
+                    const teams = await response.json();
+                    currentTeams = teams;
+                    setTeamOptions(homeTeamOptions, teams);
+                    setTeamOptions(awayTeamOptions, teams);
+                    homeTeamSelect.placeholder = 'Search or select home team';
+                    awayTeamSelect.placeholder = 'Search or select away team';
+                    homeTeamSelect.disabled = false;
+                    awayTeamSelect.disabled = false;
+                    lastLoadedLeague = league;
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    setTeamOptions(homeTeamOptions, []);
+                    setTeamOptions(awayTeamOptions, []);
+                    homeTeamSelect.placeholder = 'Teams unavailable';
+                    awayTeamSelect.placeholder = 'Teams unavailable';
+                }
+            };
+
+            const loadHistory = async () => {
+                resetPrediction();
+                const homeTeam = homeTeamSelect.value.trim();
+                const awayTeam = awayTeamSelect.value.trim();
+
+                if (!homeTeam || !awayTeam) {
+                    setError('Select both teams before loading history.');
+                    return;
+                }
+
+                if (homeTeam === awayTeam) {
+                    setError('Home team and away team must be different.');
+                    return;
+                }
+
+                historyRequestController?.abort();
+                historyRequestController = new AbortController();
+                historyStatusBadge.textContent = 'Loading history';
+                predictButton.disabled = true;
+
+                try {
+                    const response = await fetch(`/MatchHistory/RecentMatches?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}`, {
+                        signal: historyRequestController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`History request failed with ${response.status}`);
+                    }
+
+                    const matches = await response.json();
+                    currentHomeMatches = matches.filter(match => String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'HOME');
+                    currentAwayMatches = matches.filter(match => String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'AWAY');
+
+                    renderMatchRows(currentHomeMatches, homeHistoryBody, homeHistoryEmpty, homeHistoryTableWrap, homeHistoryCount, 'No home history found.');
+                    renderMatchRows(currentAwayMatches, awayHistoryBody, awayHistoryEmpty, awayHistoryTableWrap, awayHistoryCount, 'No away history found.');
+
+                    currentFeatures = buildFeatures();
+                    renderFeatures(currentFeatures);
+                    predictButton.disabled = currentHomeMatches.length === 0 || currentAwayMatches.length === 0;
+                    historyStatusBadge.textContent = `${matches.length} records loaded`;
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    setError('Historical matches could not be loaded.');
+                    historyStatusBadge.textContent = 'History unavailable';
+                }
+            };
+
+            const predict = async () => {
+                if (!currentFeatures) {
+                    setError('Load history before requesting a prediction.');
+                    return;
+                }
+
+                currentFeatures = buildFeatures();
+                renderFeatures(currentFeatures);
+                resetPrediction();
+                predictButton.disabled = true;
+                predictButton.textContent = 'Predicting...';
+
+                try {
+                    const response = await fetch('/Predictions/Predict', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(currentFeatures)
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({ error: 'Prediction failed.' }));
+                        throw new Error(error.error ?? 'Prediction failed.');
+                    }
+
+                    const result = await response.json();
+                    setPrediction(result);
+                } catch (error) {
+                    setError(error.message);
+                } finally {
+                    predictButton.disabled = false;
+                    predictButton.textContent = 'Predict total corners';
+                }
+            };
+
+            leagueSelect.addEventListener('change', loadTeams);
+            leagueSelect.addEventListener('blur', loadTeams);
+            homeTeamSelect.addEventListener('change', loadHistory);
+            homeTeamSelect.addEventListener('blur', loadHistory);
+            awayTeamSelect.addEventListener('change', loadHistory);
+            awayTeamSelect.addEventListener('blur', loadHistory);
+            wireRefreshableDatalist(leagueSelect);
+            wireRefreshableDatalist(homeTeamSelect);
+            wireRefreshableDatalist(awayTeamSelect);
+            wireRefreshableDatalist(homeFormationInput);
+            wireRefreshableDatalist(awayFormationInput);
+            homeFormationInput.addEventListener('input', () => {
+                if (!currentFeatures) {
+                    return;
+                }
+
+                currentFeatures = buildFeatures();
+                renderFeatures(currentFeatures);
+            });
+            awayFormationInput.addEventListener('input', () => {
+                if (!currentFeatures) {
+                    return;
+                }
+
+                currentFeatures = buildFeatures();
+                renderFeatures(currentFeatures);
+            });
+            seasonInput.addEventListener('input', () => {
+                if (currentFeatures) {
+                    currentFeatures = buildFeatures();
+                    renderFeatures(currentFeatures);
+                }
+            });
+            matchDateInput.addEventListener('change', () => {
+                if (currentFeatures) {
+                    currentFeatures = buildFeatures();
+                    renderFeatures(currentFeatures);
+                }
+            });
+            loadHistoryButton.addEventListener('click', loadHistory);
+            predictButton.addEventListener('click', predict);
+        })();
+    </script>
+}

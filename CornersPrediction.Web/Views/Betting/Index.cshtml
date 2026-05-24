@@ -1,0 +1,342 @@
+@model CornersPrediction.Web.Models.Betting.BettingIndexViewModel
+@using CornersPrediction.Web.Models.Betting
+
+@{
+    Func<string, string> T = key => UiText.T(Context, key);
+    ViewData["Title"] = T("Betting.Title");
+    var moneyStep = Model.WorkingCurrencyCode == "CLP" ? "1" : "0.01";
+}
+
+@functions {
+    private static string StatusBadge(string status) => status switch
+    {
+        "Won" => "text-bg-success",
+        "Lost" => "text-bg-danger",
+        "Pending" => "text-bg-warning",
+        "Void" => "text-bg-info",
+        "Cashout" => "text-bg-secondary",
+        _ => "text-bg-light"
+    };
+
+    private static string MoneyClass(decimal value) => value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-muted";
+
+    private static string Money(decimal value, string currencyCode) =>
+        currencyCode == "CLP" ? $"{currencyCode} {value:N0}" : $"{currencyCode} {value:N2}";
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">@T("Betting.Title")</h1>
+        <p class="text-muted mb-0">@T("Betting.Description")</p>
+    </div>
+    <a class="btn btn-primary" asp-controller="Betting" asp-action="Create" asp-route-currencyCode="@Model.WorkingCurrencyCode">@T("Betting.Create")</a>
+</div>
+
+@if (TempData["SuccessMessage"] is string successMessage)
+{
+    <div class="alert alert-success">@successMessage</div>
+}
+@if (TempData["ErrorMessage"] is string errorMessage)
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+
+<div class="row g-3 mb-4">
+    <div class="col-12 col-xl-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <div class="small text-muted">@T("Betting.CurrentBankroll") (@Model.WorkingCurrencyCode)</div>
+                <div class="display-6 fw-semibold">@Money(Model.CurrentBankroll, Model.WorkingCurrencyCode)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-xl-8">
+        <form method="post" asp-controller="Betting" asp-action="CreateBankrollTransaction" class="card shadow-sm">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="CurrencyCode" value="@Model.WorkingCurrencyCode" />
+            <div class="card-header bg-white">
+                <h2 class="h6 mb-0">@T("Betting.BankrollTransaction")</h2>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label" for="BankrollTransactionDate">@T("Fields.Date")</label>
+                        <input id="BankrollTransactionDate" name="TransactionDate" type="date" class="form-control" value="@Model.BankrollForm.TransactionDate.ToString("yyyy-MM-dd")" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" for="BankrollType">@T("Fields.Type")</label>
+                        <select id="BankrollType" name="Type" class="form-select">
+                            @foreach (var type in BettingOptions.BankrollTransactionTypes)
+                            {
+                                <option value="@type">@type</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" for="BankrollAmount">@T("Fields.Amount")</label>
+                        <input id="BankrollAmount" name="Amount" type="number" step="@moneyStep" class="form-control" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" for="BankrollBettingRecordId">@T("Fields.BetId")</label>
+                        <input id="BankrollBettingRecordId" name="BettingRecordId" type="number" class="form-control" />
+                    </div>
+                    <div class="col-md-9">
+                        <label class="form-label" for="BankrollNotes">@T("Fields.Notes")</label>
+                        <input id="BankrollNotes" name="Notes" class="form-control" />
+                    </div>
+                    <div class="col-md-3 d-grid">
+                        <button class="btn btn-outline-primary" type="submit">@T("Betting.AddMovement")</button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<form method="get" class="card shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h2 class="h6 mb-0">@T("Betting.Filters")</h2>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label" for="CurrencyCode">@T("Fields.Currency")</label>
+                <select id="CurrencyCode" name="CurrencyCode" class="form-select">
+                    @if (string.IsNullOrWhiteSpace(Model.Filters.CurrencyCode))
+                    {
+                        <option value="" selected>@T("Common.All")</option>
+                    }
+                    else
+                    {
+                        <option value="">@T("Common.All")</option>
+                    }
+                    @foreach (var currencyCode in BettingOptions.CurrencyCodes)
+                    {
+                        if (Model.Filters.CurrencyCode == currencyCode)
+                        {
+                            <option value="@currencyCode" selected>@currencyCode</option>
+                        }
+                        else
+                        {
+                            <option value="@currencyCode">@currencyCode</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="League">@T("Fields.League")</label>
+                <input id="League" name="League" class="form-control" value="@Model.Filters.League" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="Season">@T("Fields.Season")</label>
+                <input id="Season" name="Season" class="form-control" value="@Model.Filters.Season" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="HomeTeam">@T("Fields.HomeTeam")</label>
+                <input id="HomeTeam" name="HomeTeam" class="form-control" value="@Model.Filters.HomeTeam" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="AwayTeam">@T("Fields.AwayTeam")</label>
+                <input id="AwayTeam" name="AwayTeam" class="form-control" value="@Model.Filters.AwayTeam" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="Status">@T("Fields.Status")</label>
+                <select id="Status" name="Status" class="form-select">
+                    <option value="">@T("Common.All")</option>
+                    @foreach (var status in BettingOptions.Statuses)
+                    {
+                        if (Model.Filters.Status == status)
+                        {
+                            <option value="@status" selected>@status</option>
+                        }
+                        else
+                        {
+                            <option value="@status">@status</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="MarketType">@T("Fields.Market")</label>
+                <select id="MarketType" name="MarketType" class="form-select">
+                    <option value="">@T("Common.All")</option>
+                    @foreach (var marketType in BettingOptions.MarketTypes)
+                    {
+                        if (Model.Filters.MarketType == marketType)
+                        {
+                            <option value="@marketType" selected>@marketType</option>
+                        }
+                        else
+                        {
+                            <option value="@marketType">@marketType</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="Bookmaker">@T("Fields.Bookmaker")</label>
+                <input id="Bookmaker" name="Bookmaker" class="form-control" value="@Model.Filters.Bookmaker" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="DateFrom">@T("Fields.DateFrom")</label>
+                <input id="DateFrom" name="DateFrom" class="form-control" type="date" value="@Model.Filters.DateFrom?.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="DateTo">@T("Fields.DateTo")</label>
+                <input id="DateTo" name="DateTo" class="form-control" type="date" value="@Model.Filters.DateTo?.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-md-2 d-grid">
+                <button class="btn btn-outline-primary" type="submit">@T("Common.Apply")</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+<div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.TotalStake")</div><div class="h5 mb-0">@Money(Model.Summary.TotalStake, Model.WorkingCurrencyCode)</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.NetPL")</div><div class="h5 mb-0 @MoneyClass(Model.Summary.TotalProfitLoss)">@Money(Model.Summary.TotalProfitLoss, Model.WorkingCurrencyCode)</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.Roi")</div><div class="h5 mb-0">@Model.Summary.RoiPercent.ToString("N2")%</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.WinRate")</div><div class="h5 mb-0">@Model.Summary.WinRatePercent.ToString("N2")%</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.Won")</div><div class="h5 mb-0 text-success">@Model.Summary.WonBets</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.Lost")</div><div class="h5 mb-0 text-danger">@Model.Summary.LostBets</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.Pending")</div><div class="h5 mb-0">@Model.Summary.PendingBets</div></div></div>
+    </div>
+    <div class="col-6 col-xl-3">
+        <div class="card shadow-sm"><div class="card-body"><div class="small text-muted">@T("Betting.AverageOdds")</div><div class="h5 mb-0">@Model.Summary.AverageOdds.ToString("N2")</div></div></div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">@T("Betting.BankrollMovements")</h2>
+        <span class="badge text-bg-light">@Model.BankrollTransactions.Count @T("Common.Records")</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>@T("Fields.Date")</th>
+                    <th>@T("Fields.Currency")</th>
+                    <th>@T("Fields.Type")</th>
+                    <th>@T("Fields.Amount")</th>
+                    <th>@T("Fields.BalanceAfter")</th>
+                    <th>@T("Fields.BetId")</th>
+                    <th>@T("Fields.Notes")</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var transaction in Model.BankrollTransactions.Take(10))
+                {
+                    <tr>
+                        <td class="text-nowrap">@transaction.TransactionDate.ToString("yyyy-MM-dd")</td>
+                        <td>@transaction.CurrencyCode</td>
+                        <td>@transaction.Type</td>
+                        <td class="@MoneyClass(transaction.Amount) fw-semibold">@Money(transaction.Amount, transaction.CurrencyCode)</td>
+                        <td>@Money(transaction.BalanceAfter, transaction.CurrencyCode)</td>
+                        <td>@(transaction.BettingRecordId?.ToString() ?? "-")</td>
+                        <td>@transaction.Notes</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">@T("Betting.Records")</h2>
+        <span class="badge text-bg-light">@Model.Records.Count @T("Common.Records")</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>@T("Fields.Date")</th>
+                    <th>@T("Fields.Currency")</th>
+                    <th>@T("Fields.League")</th>
+                    <th>@T("Fields.Season")</th>
+                    <th>@T("Fields.Match")</th>
+                    <th>@T("Fields.Bookmaker")</th>
+                    <th>@T("Fields.Market")</th>
+                    <th>@T("Fields.Pick")</th>
+                    <th>@T("Fields.Line")</th>
+                    <th>@T("Fields.Odds")</th>
+                    <th>@T("Fields.Stake")</th>
+                    <th>@T("Fields.Status")</th>
+                    <th>@T("Fields.Corners")</th>
+                    <th>@T("Fields.Potential")</th>
+                    <th>@T("Fields.Net")</th>
+                    <th>@T("Fields.ProfitLoss")</th>
+                    <th>@T("Betting.Roi")</th>
+                    <th>@T("Fields.BankBefore")</th>
+                    <th>@T("Fields.BankAfter")</th>
+                    <th>@T("Fields.Confidence")</th>
+                    <th>@T("Fields.Notes")</th>
+                    <th class="text-end">@T("Common.Actions")</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in Model.Records)
+                {
+                    <tr>
+                        <td class="text-nowrap">@record.MatchDate.ToString("yyyy-MM-dd")</td>
+                        <td>@record.CurrencyCode</td>
+                        <td>@record.League</td>
+                        <td>@record.Season</td>
+                        <td><span class="fw-semibold">@record.HomeTeam</span> vs @record.AwayTeam</td>
+                        <td>@record.Bookmaker</td>
+                        <td>@record.MarketType</td>
+                        <td>@record.BetSelection</td>
+                        <td>@record.Line.ToString("N2")</td>
+                        <td>@record.Odds.ToString("N2")</td>
+                        <td>@Money(record.Stake, record.CurrencyCode)</td>
+                        <td><span class="badge @StatusBadge(record.Status)">@record.Status</span></td>
+                        <td>@(record.ActualTotalCorners?.ToString() ?? "-")</td>
+                        <td>@Money(record.PotentialReturn, record.CurrencyCode)</td>
+                        <td>@Money(record.NetReturn, record.CurrencyCode)</td>
+                        <td class="@MoneyClass(record.ProfitLoss) fw-semibold">@Money(record.ProfitLoss, record.CurrencyCode)</td>
+                        <td>@record.RoiPercent.ToString("N2")%</td>
+                        <td>@(record.BankrollBefore.HasValue ? Money(record.BankrollBefore.Value, record.CurrencyCode) : "-")</td>
+                        <td>@(record.BankrollAfter.HasValue ? Money(record.BankrollAfter.Value, record.CurrencyCode) : "-")</td>
+                        <td>@record.ConfidenceLevel</td>
+                        <td class="text-truncate" style="max-width: 220px;">@record.Notes</td>
+                        <td>
+                            <div class="d-flex justify-content-end gap-1">
+                                <a class="btn btn-sm btn-outline-secondary" asp-controller="Betting" asp-action="Details" asp-route-id="@record.Id">@T("Common.View")</a>
+                                <a class="btn btn-sm btn-outline-primary" asp-controller="Betting" asp-action="Edit" asp-route-id="@record.Id">@T("Common.Edit")</a>
+                                @foreach (var status in new[] { "Won", "Lost", "Void", "Cashout" })
+                                {
+                                    <form method="post" asp-controller="Betting" asp-action="MarkStatus" class="d-inline">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="id" value="@record.Id" />
+                                        <input type="hidden" name="status" value="@status" />
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">@status</button>
+                                    </form>
+                                }
+                                <form method="post" asp-controller="Betting" asp-action="Delete" class="d-inline" onsubmit="return confirm('@T("Common.DeleteBetConfirm")');">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="id" value="@record.Id" />
+                                    <input type="hidden" name="currencyCode" value="@record.CurrencyCode" />
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">@T("Common.Delete")</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

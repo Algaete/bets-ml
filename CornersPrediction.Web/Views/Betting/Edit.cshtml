@@ -1,0 +1,183 @@
+@model CornersPrediction.Web.Models.Betting.BettingRecordFormViewModel
+@using CornersPrediction.Web.Models.Betting
+
+@{
+    Func<string, string> T = key => UiText.T(Context, key);
+    ViewData["Title"] = T("Betting.Edit");
+    var moneyStep = Model.CurrencyCode == "CLP" ? "1" : "0.01";
+    var moneyFormat = Model.CurrencyCode == "CLP" ? "{0:0}" : "{0:0.00}";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 mb-1">@T("Betting.Edit")</h1>
+        <p class="text-muted mb-0">@T("Betting.EditDescription")</p>
+    </div>
+    <a class="btn btn-outline-secondary" asp-controller="Betting" asp-action="Index" asp-route-currencyCode="@Model.CurrencyCode">@T("Common.Back")</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+    <input asp-for="Id" type="hidden" />
+    <div class="card-body">
+        <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+        <div class="row g-3">
+            <div class="col-md-2">
+                <label asp-for="CurrencyCode" class="form-label">@T("Fields.Currency")</label>
+                <select asp-for="CurrencyCode" class="form-select" id="CurrencyCode">
+                    @foreach (var item in BettingOptions.CurrencyCodes)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label asp-for="League" class="form-label">@T("Fields.League")</label>
+                <input asp-for="League" class="form-control" />
+            </div>
+            <div class="col-md-2">
+                <label asp-for="Season" class="form-label">@T("Fields.Season")</label>
+                <input asp-for="Season" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="MatchDate" class="form-label">@T("Fields.MatchDate")</label>
+                <input asp-for="MatchDate" class="form-control" type="date" />
+            </div>
+            <div class="col-md-2">
+                <label asp-for="Bookmaker" class="form-label">@T("Fields.Bookmaker")</label>
+                <input asp-for="Bookmaker" class="form-control" />
+            </div>
+            <div class="col-md-6">
+                <label asp-for="HomeTeam" class="form-label">@T("Fields.HomeTeam")</label>
+                <input asp-for="HomeTeam" class="form-control" />
+            </div>
+            <div class="col-md-6">
+                <label asp-for="AwayTeam" class="form-label">@T("Fields.AwayTeam")</label>
+                <input asp-for="AwayTeam" class="form-control" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="MarketType" class="form-label">@T("Fields.MarketType")</label>
+                <select asp-for="MarketType" class="form-select">
+                    @foreach (var item in BettingOptions.MarketTypes)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label asp-for="BetSelection" class="form-label">@T("Fields.BetSelection")</label>
+                <select asp-for="BetSelection" class="form-select">
+                    @foreach (var item in BettingOptions.BetSelections)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label asp-for="Line" class="form-label">@T("Fields.Line")</label>
+                <input asp-for="Line" class="form-control" type="number" step="0.01" />
+            </div>
+            <div class="col-md-2">
+                <label asp-for="Odds" class="form-label">@T("Fields.Odds")</label>
+                <input asp-for="Odds" class="form-control" type="number" step="0.01" />
+            </div>
+            <div class="col-md-2">
+                <label asp-for="Stake" class="form-label">@T("Fields.Stake")</label>
+                <input asp-for="Stake" asp-format="@moneyFormat" class="form-control" type="number" step="@moneyStep" data-money-input />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="Status" class="form-label">@T("Fields.Status")</label>
+                <select asp-for="Status" class="form-select" id="Status">
+                    @foreach (var item in BettingOptions.Statuses)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualHomeCorners" class="form-label">@T("Fields.ActualHomeCorners")</label>
+                <input asp-for="ActualHomeCorners" class="form-control" type="number" min="0" id="ActualHomeCorners" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualAwayCorners" class="form-label">@T("Fields.ActualAwayCorners")</label>
+                <input asp-for="ActualAwayCorners" class="form-control" type="number" min="0" id="ActualAwayCorners" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualTotalCorners" class="form-label">@T("Fields.ActualTotalCorners")</label>
+                <input asp-for="ActualTotalCorners" class="form-control" type="number" min="0" id="ActualTotalCorners" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="CashoutAmount" class="form-label">@T("Fields.CashoutAmount")</label>
+                <input asp-for="CashoutAmount" asp-format="@moneyFormat" class="form-control" type="number" step="@moneyStep" id="CashoutAmount" data-money-input />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="BankrollBefore" class="form-label">@T("Fields.BankrollBefore")</label>
+                <input asp-for="BankrollBefore" asp-format="@moneyFormat" class="form-control" type="number" step="@moneyStep" data-money-input />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ClosingOdds" class="form-label">@T("Fields.ClosingOdds")</label>
+                <input asp-for="ClosingOdds" class="form-control" type="number" step="0.01" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ConfidenceLevel" class="form-label">@T("Fields.ConfidenceLevel")</label>
+                <select asp-for="ConfidenceLevel" class="form-select">
+                    <option value="">@T("Common.None")</option>
+                    @foreach (var item in BettingOptions.ConfidenceLevels)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check">
+                    <input asp-for="AutoResolveStatus" class="form-check-input" />
+                    <label asp-for="AutoResolveStatus" class="form-check-label">@T("Fields.AutoResolve")</label>
+                </div>
+            </div>
+            <div class="col-12">
+                <label asp-for="Notes" class="form-label">@T("Fields.Notes")</label>
+                <textarea asp-for="Notes" class="form-control" rows="3"></textarea>
+            </div>
+        </div>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-end gap-2">
+        <a class="btn btn-outline-secondary" asp-controller="Betting" asp-action="Index" asp-route-currencyCode="@Model.CurrencyCode">@T("Common.Cancel")</a>
+        <button class="btn btn-primary" type="submit">@T("Common.SaveChanges")</button>
+    </div>
+</form>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        (() => {
+            const home = document.getElementById('ActualHomeCorners');
+            const away = document.getElementById('ActualAwayCorners');
+            const total = document.getElementById('ActualTotalCorners');
+            const status = document.getElementById('Status');
+            const cashout = document.getElementById('CashoutAmount');
+            const currency = document.getElementById('CurrencyCode');
+            const moneyInputs = document.querySelectorAll('[data-money-input]');
+
+            const updateTotal = () => {
+                if (home.value !== '' && away.value !== '') {
+                    total.value = Number(home.value) + Number(away.value);
+                }
+            };
+
+            const updateCashout = () => {
+                cashout.required = status.value === 'Cashout';
+            };
+
+            const updateMoneyStep = () => {
+                const step = currency.value === 'CLP' ? '1' : '0.01';
+                moneyInputs.forEach(input => input.step = step);
+            };
+
+            home.addEventListener('input', updateTotal);
+            away.addEventListener('input', updateTotal);
+            status.addEventListener('change', updateCashout);
+            currency.addEventListener('change', updateMoneyStep);
+            updateCashout();
+            updateMoneyStep();
+        })();
+    </script>
+}

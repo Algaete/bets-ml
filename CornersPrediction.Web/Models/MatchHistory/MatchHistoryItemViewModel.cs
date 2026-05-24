@@ -1,0 +1,25 @@
+namespace CornersPrediction.Web.Models.MatchHistory;
+
+public sealed record MatchHistoryItemViewModel(
+    int Id,
+    string? TeamCondition,
+    string League,
+    string Season,
+    DateOnly MatchDate,
+    bool IsKnockout,
+    string HomeTeam,
+    string AwayTeam,
+    string? HomeFormation,
+    string? AwayFormation,
+    int HomeCorners,
+    int AwayCorners,
+    int HomeGoals,
+    int AwayGoals,
+    int HomeShots,
+    int AwayShots,
+    int HomeShotsOnGoal,
+    int AwayShotsOnGoal,
+    double HomePossession,
+    double AwayPossession,
+    int TotalCorners,
+    DateTime CreatedAtUtc);

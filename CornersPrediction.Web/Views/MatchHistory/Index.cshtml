@@ -1,0 +1,916 @@
+@model CornersPrediction.Web.Models.MatchHistory.MatchHistoryIndexViewModel
+
+@{
+    ViewData["Title"] = UiText.T(Context, "MatchHistory.Title");
+    var leagueOptions = Model.LeagueOptions
+        .OrderBy(league => league)
+        .ToArray();
+    var teamOptions = Model.TeamOptions
+        .OrderBy(team => team.League)
+        .ThenBy(team => team.Team)
+        .ToArray();
+    var formationOptions = Model.FormationOptions
+        .OrderBy(formation => formation)
+        .ToArray();
+    var homeHistory = Model.RecentMatches
+        .Where(match => string.Equals(match.TeamCondition, "HOME", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    var awayHistory = Model.RecentMatches
+        .Where(match => string.Equals(match.TeamCondition, "AWAY", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    var initialHistoryJson = System.Text.Json.JsonSerializer.Serialize(Model.RecentMatches);
+    var hasSelectedLeague = !string.IsNullOrWhiteSpace(Model.Form.League);
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">Match history</h1>
+        <p class="text-muted mb-0">Store completed match stats that will later feed last 3/5/10 average calculations.</p>
+    </div>
+    <span id="recentMatchesCount" class="badge text-bg-secondary">@Model.RecentMatches.Count history records</span>
+</div>
+
+@if (TempData["SuccessMessage"] is string successMessage)
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @successMessage
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+}
+
+<div class="row g-4">
+    <div class="col-12 col-xl-5">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <h2 class="h5 mb-0">Add match</h2>
+            </div>
+            <div class="card-body">
+                <form asp-action="Create" method="post">
+                    @Html.AntiForgeryToken()
+                    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+                    @if (leagueOptions.Length == 0)
+                    {
+                        <div class="alert alert-warning">
+                            League dropdown data could not be loaded from the backend. Check that the API is running and that sp_GetTeamBig3Leagues exists in SQL Server.
+                        </div>
+                    }
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label asp-for="Form.League" class="form-label"></label>
+                            <select asp-for="Form.League" class="form-select">
+                                <option value="">Select league</option>
+                                @foreach (var league in leagueOptions)
+                                {
+                                    <option value="@league">@league</option>
+                                }
+                            </select>
+                            <span asp-validation-for="Form.League" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="Form.Season" class="form-label"></label>
+                            <input asp-for="Form.Season" class="form-control" />
+                            <span asp-validation-for="Form.Season" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="Form.MatchDate" class="form-label"></label>
+                            <input asp-for="Form.MatchDate" class="form-control" />
+                            <span asp-validation-for="Form.MatchDate" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input asp-for="Form.IsKnockout" class="form-check-input" />
+                                <label asp-for="Form.IsKnockout" class="form-check-label"></label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3 class="h6 mb-3">Teams</h3>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label asp-for="Form.HomeTeam" class="form-label"></label>
+                                <select asp-for="Form.HomeTeam" class="form-select" disabled="@(!hasSelectedLeague)">
+                                    <option value="">@(hasSelectedLeague ? "Select home team" : "Select league first")</option>
+                                    @foreach (var team in teamOptions)
+                                    {
+                                        var teamContext = string.Join(" - ", new[] { team.League, team.Season }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                                        <option value="@team.Team">
+                                            @team.Team@(string.IsNullOrWhiteSpace(teamContext) ? "" : $" ({teamContext})")@(team.IsBig3 ? " - Big3" : "")
+                                        </option>
+                                    }
+                                </select>
+                                <span asp-validation-for="Form.HomeTeam" class="text-danger"></span>
+                            </div>
+                            <div class="col-md-6">
+                                <label asp-for="Form.AwayTeam" class="form-label"></label>
+                                <select asp-for="Form.AwayTeam" class="form-select" disabled="@(!hasSelectedLeague)">
+                                    <option value="">@(hasSelectedLeague ? "Select away team" : "Select league first")</option>
+                                    @foreach (var team in teamOptions)
+                                    {
+                                        var teamContext = string.Join(" - ", new[] { team.League, team.Season }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                                        <option value="@team.Team">
+                                            @team.Team@(string.IsNullOrWhiteSpace(teamContext) ? "" : $" ({teamContext})")@(team.IsBig3 ? " - Big3" : "")
+                                        </option>
+                                    }
+                                </select>
+                                <span asp-validation-for="Form.AwayTeam" class="text-danger"></span>
+                            </div>
+                            <div class="col-md-6">
+                                <label asp-for="Form.HomeFormation" class="form-label"></label>
+                                <input asp-for="Form.HomeFormation" class="form-control" list="FormationOptions" placeholder="4-3-3" autocomplete="off" />
+                            </div>
+                            <div class="col-md-6">
+                                <label asp-for="Form.AwayFormation" class="form-label"></label>
+                                <input asp-for="Form.AwayFormation" class="form-control" list="FormationOptions" placeholder="4-2-3-1" autocomplete="off" />
+                            </div>
+                            <datalist id="FormationOptions">
+                                @foreach (var formation in formationOptions)
+                                {
+                                    <option value="@formation"></option>
+                                }
+                            </datalist>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3 class="h6 mb-3">Result and corners</h3>
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.HomeGoals" class="form-label"></label>
+                                <input asp-for="Form.HomeGoals" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.AwayGoals" class="form-label"></label>
+                                <input asp-for="Form.AwayGoals" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.HomeCorners" class="form-label"></label>
+                                <input asp-for="Form.HomeCorners" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.AwayCorners" class="form-label"></label>
+                                <input asp-for="Form.AwayCorners" class="form-control" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3 class="h6 mb-3">Match stats</h3>
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.HomeShots" class="form-label"></label>
+                                <input asp-for="Form.HomeShots" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.AwayShots" class="form-label"></label>
+                                <input asp-for="Form.AwayShots" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.HomeShotsOnGoal" class="form-label"></label>
+                                <input asp-for="Form.HomeShotsOnGoal" class="form-control" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label asp-for="Form.AwayShotsOnGoal" class="form-label"></label>
+                                <input asp-for="Form.AwayShotsOnGoal" class="form-control" />
+                            </div>
+                            <div class="col-6">
+                                <label asp-for="Form.HomePossession" class="form-label"></label>
+                                <div class="input-group">
+                                    <input asp-for="Form.HomePossession" class="form-control" type="number" min="0" max="100" step="0.01" />
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label asp-for="Form.AwayPossession" class="form-label"></label>
+                                <div class="input-group">
+                                    <input asp-for="Form.AwayPossession" class="form-control" type="number" min="0" max="100" step="0.01" />
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-primary">Save match</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-7">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h2 class="h5 mb-0">Recent matches</h2>
+                <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Refresh</a>
+            </div>
+            <div class="card-body p-0">
+                <div id="recentMatchesEmpty" class="p-4 text-muted @(Model.RecentMatches.Count == 0 ? "" : "d-none")">
+                    Select a home team and an away team to load their last 10 matching historical records.
+                </div>
+                <div id="recentMatchesTableWrap" class="@(Model.RecentMatches.Count == 0 ? "d-none" : "")">
+                    <div class="border-bottom">
+                        <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center">
+                            <h3 class="h6 mb-0">Home team last 10 as home</h3>
+                            <span id="homeHistoryCount" class="badge text-bg-light">@homeHistory.Length records</span>
+                        </div>
+                        <div id="homeHistoryEmpty" class="p-3 text-muted @(homeHistory.Length == 0 ? "" : "d-none")">
+                            No home history found.
+                        </div>
+                        <div id="homeHistoryTableWrap" class="table-responsive @(homeHistory.Length == 0 ? "d-none" : "")" style="max-height: 330px;">
+                            <table class="table table-sm align-middle mb-0 table-sticky-head">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Match</th>
+                                        <th>Score</th>
+                                        <th>Corners</th>
+                                        <th>Shots</th>
+                                        <th>Poss.</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="homeHistoryBody">
+                                    @foreach (var match in homeHistory)
+                                    {
+                                        <tr>
+                                            <td class="text-nowrap">@match.MatchDate.ToString("yyyy-MM-dd")</td>
+                                            <td>
+                                                <div class="fw-semibold">@match.HomeTeam vs @match.AwayTeam</div>
+                                                <div class="text-muted small">
+                                                    @match.League · @match.Season@(match.IsKnockout ? " · Knockout" : "")
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="badge text-bg-light stat-pill">@match.HomeGoals - @match.AwayGoals</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
+                                                <div class="small text-muted">Total @match.TotalCorners</div>
+                                            </td>
+                                            <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
+                                            <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
+                                            <td class="text-end text-nowrap">
+                                                <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center">
+                            <h3 class="h6 mb-0">Away team last 10 as away</h3>
+                            <span id="awayHistoryCount" class="badge text-bg-light">@awayHistory.Length records</span>
+                        </div>
+                        <div id="awayHistoryEmpty" class="p-3 text-muted @(awayHistory.Length == 0 ? "" : "d-none")">
+                            No away history found.
+                        </div>
+                        <div id="awayHistoryTableWrap" class="table-responsive @(awayHistory.Length == 0 ? "d-none" : "")" style="max-height: 330px;">
+                            <table class="table table-sm align-middle mb-0 table-sticky-head">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Match</th>
+                                        <th>Score</th>
+                                        <th>Corners</th>
+                                        <th>Shots</th>
+                                        <th>Poss.</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="awayHistoryBody">
+                                    @foreach (var match in awayHistory)
+                                    {
+                                        <tr>
+                                            <td class="text-nowrap">@match.MatchDate.ToString("yyyy-MM-dd")</td>
+                                            <td>
+                                                <div class="fw-semibold">@match.HomeTeam vs @match.AwayTeam</div>
+                                                <div class="text-muted small">
+                                                    @match.League · @match.Season@(match.IsKnockout ? " · Knockout" : "")
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="badge text-bg-light stat-pill">@match.HomeGoals - @match.AwayGoals</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
+                                                <div class="small text-muted">Total @match.TotalCorners</div>
+                                            </td>
+                                            <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
+                                            <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
+                                            <td class="text-end text-nowrap">
+                                                <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="editMatchModal" tabindex="-1" aria-labelledby="editMatchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="editMatchForm">
+                <div class="modal-header">
+                    <h2 class="modal-title h5" id="editMatchModalLabel">Edit match</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="Edit_Id" />
+
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label" for="Edit_League">League</label>
+                            <input id="Edit_League" class="form-control" required />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="Edit_Season">Season</label>
+                            <input id="Edit_Season" class="form-control" required />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="Edit_MatchDate">Match date</label>
+                            <input id="Edit_MatchDate" class="form-control" type="date" required />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="Edit_HomeTeam">Home team</label>
+                            <input id="Edit_HomeTeam" class="form-control" required />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="Edit_AwayTeam">Away team</label>
+                            <input id="Edit_AwayTeam" class="form-control" required />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="Edit_HomeFormation">Home formation</label>
+                            <input id="Edit_HomeFormation" class="form-control" list="FormationOptions" autocomplete="off" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="Edit_AwayFormation">Away formation</label>
+                            <input id="Edit_AwayFormation" class="form-control" list="FormationOptions" autocomplete="off" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_HomeGoals">Home goals</label>
+                            <input id="Edit_HomeGoals" class="form-control" type="number" min="0" max="30" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_AwayGoals">Away goals</label>
+                            <input id="Edit_AwayGoals" class="form-control" type="number" min="0" max="30" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_HomeCorners">Home corners</label>
+                            <input id="Edit_HomeCorners" class="form-control" type="number" min="0" max="50" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_AwayCorners">Away corners</label>
+                            <input id="Edit_AwayCorners" class="form-control" type="number" min="0" max="50" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_HomeShots">Home shots</label>
+                            <input id="Edit_HomeShots" class="form-control" type="number" min="0" max="80" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_AwayShots">Away shots</label>
+                            <input id="Edit_AwayShots" class="form-control" type="number" min="0" max="80" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_HomeShotsOnGoal">Home shots on goal</label>
+                            <input id="Edit_HomeShotsOnGoal" class="form-control" type="number" min="0" max="80" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="Edit_AwayShotsOnGoal">Away shots on goal</label>
+                            <input id="Edit_AwayShotsOnGoal" class="form-control" type="number" min="0" max="80" required />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="Edit_HomePossession">Home possession</label>
+                            <div class="input-group">
+                                <input id="Edit_HomePossession" class="form-control" type="number" min="0" max="100" step="0.01" required />
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="Edit_AwayPossession">Away possession</label>
+                            <div class="input-group">
+                                <input id="Edit_AwayPossession" class="form-control" type="number" min="0" max="100" step="0.01" required />
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input id="Edit_IsKnockout" class="form-check-input" type="checkbox" />
+                                <label class="form-check-label" for="Edit_IsKnockout">Knockout match</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="editMatchError" class="alert alert-danger mt-3 mb-0 d-none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        (() => {
+            const leagueInput = document.getElementById('Form_League');
+            const homeTeamSelect = document.getElementById('Form_HomeTeam');
+            const awayTeamSelect = document.getElementById('Form_AwayTeam');
+            const formHomePossession = document.getElementById('Form_HomePossession');
+            const formAwayPossession = document.getElementById('Form_AwayPossession');
+            const recentMatchesEmpty = document.getElementById('recentMatchesEmpty');
+            const recentMatchesTableWrap = document.getElementById('recentMatchesTableWrap');
+            const recentMatchesCount = document.getElementById('recentMatchesCount');
+            const homeHistoryBody = document.getElementById('homeHistoryBody');
+            const awayHistoryBody = document.getElementById('awayHistoryBody');
+            const homeHistoryEmpty = document.getElementById('homeHistoryEmpty');
+            const awayHistoryEmpty = document.getElementById('awayHistoryEmpty');
+            const homeHistoryTableWrap = document.getElementById('homeHistoryTableWrap');
+            const awayHistoryTableWrap = document.getElementById('awayHistoryTableWrap');
+            const homeHistoryCount = document.getElementById('homeHistoryCount');
+            const awayHistoryCount = document.getElementById('awayHistoryCount');
+            const editMatchForm = document.getElementById('editMatchForm');
+            const editMatchError = document.getElementById('editMatchError');
+            const editMatchModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('editMatchModal'));
+            const historyItemsById = new Map();
+            const initialMatches = @Html.Raw(initialHistoryJson);
+            const editFields = {
+                Id: document.getElementById('Edit_Id'),
+                League: document.getElementById('Edit_League'),
+                Season: document.getElementById('Edit_Season'),
+                MatchDate: document.getElementById('Edit_MatchDate'),
+                IsKnockout: document.getElementById('Edit_IsKnockout'),
+                HomeTeam: document.getElementById('Edit_HomeTeam'),
+                AwayTeam: document.getElementById('Edit_AwayTeam'),
+                HomeFormation: document.getElementById('Edit_HomeFormation'),
+                AwayFormation: document.getElementById('Edit_AwayFormation'),
+                HomeGoals: document.getElementById('Edit_HomeGoals'),
+                AwayGoals: document.getElementById('Edit_AwayGoals'),
+                HomeCorners: document.getElementById('Edit_HomeCorners'),
+                AwayCorners: document.getElementById('Edit_AwayCorners'),
+                HomeShots: document.getElementById('Edit_HomeShots'),
+                AwayShots: document.getElementById('Edit_AwayShots'),
+                HomeShotsOnGoal: document.getElementById('Edit_HomeShotsOnGoal'),
+                AwayShotsOnGoal: document.getElementById('Edit_AwayShotsOnGoal'),
+                HomePossession: document.getElementById('Edit_HomePossession'),
+                AwayPossession: document.getElementById('Edit_AwayPossession')
+            };
+            let debounceHandle;
+            let requestController;
+            let historyRequestController;
+
+            const getTeamName = team => team.team ?? team.Team ?? '';
+            const getLeagueName = team => team.league ?? team.League ?? '';
+            const getSeason = team => team.season ?? team.Season ?? '';
+            const getIsBig3 = team => team.isBig3 ?? team.IsBig3 ?? false;
+            const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+
+            const formatNumber = value => {
+                const number = Number(value ?? 0);
+                return Number.isInteger(number) ? number.toString() : number.toFixed(1);
+            };
+
+            const formatPossessionInput = value => {
+                const rounded = Math.round(value * 100) / 100;
+                return Number.isInteger(rounded)
+                    ? rounded.toString()
+                    : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+            };
+
+            const clampPossession = value => Math.min(100, Math.max(0, Number(value)));
+
+            const syncPossessionPair = (source, target) => {
+                if (source.value === '') {
+                    return;
+                }
+
+                const sourceValue = Number(source.value);
+                if (Number.isNaN(sourceValue)) {
+                    return;
+                }
+
+                const clampedSourceValue = clampPossession(sourceValue);
+                source.value = formatPossessionInput(clampedSourceValue);
+                target.value = formatPossessionInput(100 - clampedSourceValue);
+            };
+
+            const wirePossessionPair = (homeInput, awayInput) => {
+                homeInput.addEventListener('input', () => syncPossessionPair(homeInput, awayInput));
+                awayInput.addEventListener('input', () => syncPossessionPair(awayInput, homeInput));
+                homeInput.addEventListener('blur', () => syncPossessionPair(homeInput, awayInput));
+                awayInput.addEventListener('blur', () => syncPossessionPair(awayInput, homeInput));
+            };
+
+            const escapeHtml = value => String(value ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+
+            const getAntiForgeryToken = () =>
+                document.querySelector('input[name="__RequestVerificationToken"]')?.value ?? '';
+
+            const toDateInputValue = value => String(value ?? '').slice(0, 10);
+
+            const setEditError = message => {
+                editMatchError.textContent = message;
+                editMatchError.classList.toggle('d-none', !message);
+            };
+
+            const getNumberValue = name => Number(editFields[name].value || 0);
+
+            const getEditPayload = () => ({
+                id: Number(editFields.Id.value),
+                league: editFields.League.value.trim(),
+                season: editFields.Season.value.trim(),
+                matchDate: editFields.MatchDate.value,
+                isKnockout: editFields.IsKnockout.checked,
+                homeTeam: editFields.HomeTeam.value.trim(),
+                awayTeam: editFields.AwayTeam.value.trim(),
+                homeFormation: editFields.HomeFormation.value.trim() || null,
+                awayFormation: editFields.AwayFormation.value.trim() || null,
+                homeGoals: getNumberValue('HomeGoals'),
+                awayGoals: getNumberValue('AwayGoals'),
+                homeCorners: getNumberValue('HomeCorners'),
+                awayCorners: getNumberValue('AwayCorners'),
+                homeShots: getNumberValue('HomeShots'),
+                awayShots: getNumberValue('AwayShots'),
+                homeShotsOnGoal: getNumberValue('HomeShotsOnGoal'),
+                awayShotsOnGoal: getNumberValue('AwayShotsOnGoal'),
+                homePossession: getNumberValue('HomePossession'),
+                awayPossession: getNumberValue('AwayPossession')
+            });
+
+            wirePossessionPair(formHomePossession, formAwayPossession);
+            wirePossessionPair(editFields.HomePossession, editFields.AwayPossession);
+
+            const setHistoryMessage = message => {
+                historyItemsById.clear();
+                homeHistoryBody.replaceChildren();
+                awayHistoryBody.replaceChildren();
+                recentMatchesEmpty.textContent = message;
+                recentMatchesEmpty.classList.remove('d-none');
+                recentMatchesTableWrap.classList.add('d-none');
+                recentMatchesCount.textContent = '0 history records';
+                homeHistoryCount.textContent = '0 records';
+                awayHistoryCount.textContent = '0 records';
+            };
+
+            const createHistoryRow = match => {
+                const row = document.createElement('tr');
+                const matchDate = escapeHtml(getValue(match, 'MatchDate') ?? '');
+                const league = escapeHtml(getValue(match, 'League') ?? '');
+                const season = escapeHtml(getValue(match, 'Season') ?? '');
+                const isKnockout = Boolean(getValue(match, 'IsKnockout'));
+                const homeTeam = escapeHtml(getValue(match, 'HomeTeam') ?? '');
+                const awayTeam = escapeHtml(getValue(match, 'AwayTeam') ?? '');
+                const homeGoals = getValue(match, 'HomeGoals') ?? 0;
+                const awayGoals = getValue(match, 'AwayGoals') ?? 0;
+                const homeCorners = getValue(match, 'HomeCorners') ?? 0;
+                const awayCorners = getValue(match, 'AwayCorners') ?? 0;
+                const totalCorners = getValue(match, 'TotalCorners') ?? Number(homeCorners) + Number(awayCorners);
+                const homeShots = getValue(match, 'HomeShots') ?? 0;
+                const awayShots = getValue(match, 'AwayShots') ?? 0;
+                const homePossession = getValue(match, 'HomePossession') ?? 0;
+                const awayPossession = getValue(match, 'AwayPossession') ?? 0;
+                const id = Number(getValue(match, 'Id'));
+
+                row.innerHTML = `
+                    <td class="text-nowrap">${matchDate}</td>
+                    <td>
+                        <div class="fw-semibold">${homeTeam} vs ${awayTeam}</div>
+                        <div class="text-muted small">
+                            ${league} · ${season}${isKnockout ? ' · Knockout' : ''}
+                        </div>
+                    </td>
+                    <td><span class="badge text-bg-light stat-pill">${homeGoals} - ${awayGoals}</span></td>
+                    <td>
+                        <span class="badge text-bg-primary stat-pill">${homeCorners} - ${awayCorners}</span>
+                        <div class="small text-muted">Total ${totalCorners}</div>
+                    </td>
+                    <td class="text-nowrap">${homeShots} - ${awayShots}</td>
+                    <td class="text-nowrap">${formatNumber(homePossession)}% - ${formatNumber(awayPossession)}%</td>
+                    <td class="text-end text-nowrap">
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="${id}">Edit</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="${id}">Delete</button>
+                    </td>`;
+
+                return row;
+            };
+
+            const renderHistoryGroup = (matches, body, empty, tableWrap, countBadge, emptyMessage) => {
+                body.replaceChildren();
+                countBadge.textContent = `${matches.length} records`;
+
+                if (matches.length === 0) {
+                    empty.textContent = emptyMessage;
+                    empty.classList.remove('d-none');
+                    tableWrap.classList.add('d-none');
+                    return;
+                }
+
+                for (const match of matches) {
+                    body.appendChild(createHistoryRow(match));
+                }
+
+                empty.classList.add('d-none');
+                tableWrap.classList.remove('d-none');
+            };
+
+            const renderHistory = matches => {
+                historyItemsById.clear();
+                for (const match of matches) {
+                    historyItemsById.set(String(getValue(match, 'Id')), match);
+                }
+
+                const homeMatches = matches.filter(match =>
+                    String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'HOME');
+                const awayMatches = matches.filter(match =>
+                    String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'AWAY');
+
+                recentMatchesCount.textContent = `${matches.length} history records`;
+
+                if (matches.length === 0) {
+                    setHistoryMessage('No historical matches were found for the selected teams.');
+                    return;
+                }
+
+                renderHistoryGroup(
+                    homeMatches,
+                    homeHistoryBody,
+                    homeHistoryEmpty,
+                    homeHistoryTableWrap,
+                    homeHistoryCount,
+                    'No home history found.');
+                renderHistoryGroup(
+                    awayMatches,
+                    awayHistoryBody,
+                    awayHistoryEmpty,
+                    awayHistoryTableWrap,
+                    awayHistoryCount,
+                    'No away history found.');
+
+                recentMatchesEmpty.classList.add('d-none');
+                recentMatchesTableWrap.classList.remove('d-none');
+            };
+
+            const loadHistory = async () => {
+                const homeTeam = homeTeamSelect.value.trim();
+                const awayTeam = awayTeamSelect.value.trim();
+
+                if (!homeTeam || !awayTeam) {
+                    setHistoryMessage('Select a home team and an away team to load their last 10 matching historical records.');
+                    return;
+                }
+
+                if (homeTeam === awayTeam) {
+                    setHistoryMessage('Home team and away team must be different.');
+                    return;
+                }
+
+                historyRequestController?.abort();
+                historyRequestController = new AbortController();
+                setHistoryMessage('Loading historical matches...');
+
+                try {
+                    const response = await fetch(`/MatchHistory/RecentMatches?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}`, {
+                        signal: historyRequestController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Recent matches request failed with ${response.status}`);
+                    }
+
+                    renderHistory(await response.json());
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    setHistoryMessage('Historical matches could not be loaded from the backend.');
+                }
+            };
+
+            const openEditModal = id => {
+                const match = historyItemsById.get(String(id));
+                if (!match) {
+                    return;
+                }
+
+                setEditError('');
+                editFields.Id.value = getValue(match, 'Id') ?? '';
+                editFields.League.value = getValue(match, 'League') ?? '';
+                editFields.Season.value = getValue(match, 'Season') ?? '';
+                editFields.MatchDate.value = toDateInputValue(getValue(match, 'MatchDate'));
+                editFields.IsKnockout.checked = Boolean(getValue(match, 'IsKnockout'));
+                editFields.HomeTeam.value = getValue(match, 'HomeTeam') ?? '';
+                editFields.AwayTeam.value = getValue(match, 'AwayTeam') ?? '';
+                editFields.HomeFormation.value = getValue(match, 'HomeFormation') ?? '';
+                editFields.AwayFormation.value = getValue(match, 'AwayFormation') ?? '';
+                editFields.HomeGoals.value = getValue(match, 'HomeGoals') ?? 0;
+                editFields.AwayGoals.value = getValue(match, 'AwayGoals') ?? 0;
+                editFields.HomeCorners.value = getValue(match, 'HomeCorners') ?? 0;
+                editFields.AwayCorners.value = getValue(match, 'AwayCorners') ?? 0;
+                editFields.HomeShots.value = getValue(match, 'HomeShots') ?? 0;
+                editFields.AwayShots.value = getValue(match, 'AwayShots') ?? 0;
+                editFields.HomeShotsOnGoal.value = getValue(match, 'HomeShotsOnGoal') ?? 0;
+                editFields.AwayShotsOnGoal.value = getValue(match, 'AwayShotsOnGoal') ?? 0;
+                editFields.HomePossession.value = getValue(match, 'HomePossession') ?? 0;
+                editFields.AwayPossession.value = getValue(match, 'AwayPossession') ?? 0;
+
+                editMatchModal.show();
+            };
+
+            const updateMatch = async () => {
+                const payload = getEditPayload();
+                const response = await fetch('/MatchHistory/Edit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'RequestVerificationToken': getAntiForgeryToken()
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({ error: 'The match could not be updated.' }));
+                    throw new Error(error.error ?? 'The match could not be updated.');
+                }
+            };
+
+            const deleteMatch = async id => {
+                const response = await fetch('/MatchHistory/Delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'RequestVerificationToken': getAntiForgeryToken()
+                    },
+                    body: JSON.stringify({ id: Number(id) })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({ error: 'The match could not be deleted.' }));
+                    throw new Error(error.error ?? 'The match could not be deleted.');
+                }
+            };
+
+            const handleHistoryAction = async event => {
+                const button = event.target.closest('button[data-action]');
+                if (!button) {
+                    return;
+                }
+
+                const id = button.dataset.id;
+                if (button.dataset.action === 'edit') {
+                    openEditModal(id);
+                    return;
+                }
+
+                if (button.dataset.action !== 'delete') {
+                    return;
+                }
+
+                const match = historyItemsById.get(String(id));
+                const homeTeam = getValue(match, 'HomeTeam') ?? 'this match';
+                const awayTeam = getValue(match, 'AwayTeam') ?? '';
+                if (!window.confirm(`Delete ${homeTeam}${awayTeam ? ` vs ${awayTeam}` : ''}?`)) {
+                    return;
+                }
+
+                button.disabled = true;
+                try {
+                    await deleteMatch(id);
+                    await loadHistory();
+                } catch (error) {
+                    window.alert(error.message);
+                    button.disabled = false;
+                }
+            };
+
+            const setLoading = () => {
+                setOptions(homeTeamSelect, 'Loading teams...', []);
+                setOptions(awayTeamSelect, 'Loading teams...', []);
+                homeTeamSelect.disabled = true;
+                awayTeamSelect.disabled = true;
+            };
+
+            const setOptions = (select, placeholder, teams) => {
+                const previousValue = select.value;
+                select.replaceChildren(new Option(placeholder, ''));
+
+                for (const team of teams) {
+                    const name = getTeamName(team);
+                    if (!name) {
+                        continue;
+                    }
+
+                    const labelParts = [name];
+                    const league = getLeagueName(team);
+                    const season = getSeason(team);
+                    if (league || season) {
+                        labelParts.push(`(${[league, season].filter(Boolean).join(' - ')})`);
+                    }
+                    if (getIsBig3(team)) {
+                        labelParts.push('- Big3');
+                    }
+
+                    select.appendChild(new Option(labelParts.join(' '), name));
+                }
+
+                if ([...select.options].some(option => option.value === previousValue)) {
+                    select.value = previousValue;
+                }
+            };
+
+            const loadTeams = async () => {
+                const league = leagueInput.value.trim();
+                if (!league) {
+                    setOptions(homeTeamSelect, 'Select league first', []);
+                    setOptions(awayTeamSelect, 'Select league first', []);
+                    homeTeamSelect.disabled = true;
+                    awayTeamSelect.disabled = true;
+                    setHistoryMessage('Select a home team and an away team to load their last 10 matching historical records.');
+                    return;
+                }
+
+                requestController?.abort();
+                requestController = new AbortController();
+                setLoading();
+
+                try {
+                    const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league)}`, {
+                        signal: requestController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Team options request failed with ${response.status}`);
+                    }
+
+                    const teams = await response.json();
+                    setOptions(homeTeamSelect, 'Select home team', teams);
+                    setOptions(awayTeamSelect, 'Select away team', teams);
+                    homeTeamSelect.disabled = false;
+                    awayTeamSelect.disabled = false;
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    setOptions(homeTeamSelect, 'Teams unavailable', []);
+                    setOptions(awayTeamSelect, 'Teams unavailable', []);
+                    homeTeamSelect.disabled = true;
+                    awayTeamSelect.disabled = true;
+                }
+            };
+
+            const scheduleLoadTeams = () => {
+                window.clearTimeout(debounceHandle);
+                debounceHandle = window.setTimeout(loadTeams, 300);
+            };
+
+            leagueInput.addEventListener('input', scheduleLoadTeams);
+            leagueInput.addEventListener('change', loadTeams);
+            homeTeamSelect.addEventListener('change', loadHistory);
+            awayTeamSelect.addEventListener('change', loadHistory);
+            homeHistoryBody.addEventListener('click', handleHistoryAction);
+            awayHistoryBody.addEventListener('click', handleHistoryAction);
+            editMatchForm.addEventListener('submit', async event => {
+                event.preventDefault();
+
+                if (!editMatchForm.reportValidity()) {
+                    return;
+                }
+
+                setEditError('');
+
+                try {
+                    await updateMatch();
+                    editMatchModal.hide();
+                    await loadHistory();
+                } catch (error) {
+                    setEditError(error.message);
+                }
+            });
+
+            if (initialMatches.length > 0) {
+                renderHistory(initialMatches);
+            }
+        })();
+    </script>
+}
