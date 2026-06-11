@@ -1,9 +1,41 @@
 ﻿@{
-    ViewData["Title"] = "Home";
+    var language = UiText.GetLanguage(Context);
+    string T(string key) => UiText.T(language, key);
+    ViewData["Title"] = T("Home.Title");
 }
 
-<div class="text-center py-5">
-    <h1 class="h3 mb-3">Corners Prediction</h1>
-    <p class="text-muted mb-4">Manage historical match stats used by the ML feature pipeline.</p>
-    <a class="btn btn-primary" asp-controller="MatchHistory" asp-action="Index">Open match history</a>
-</div>
+<section class="dashboard-hero surface-panel mb-4">
+    <div>
+        <div class="text-muted small text-uppercase fw-semibold">@T("Home.Eyebrow")</div>
+        <h1 class="display-6 fw-bold mb-2">Corners Prediction</h1>
+        <p class="text-muted mb-0">@T("Home.Copy")</p>
+    </div>
+    <div class="dashboard-hero-actions">
+        <a class="btn btn-ml" asp-controller="Predictions" asp-action="Index">@T("Home.CreatePrediction")</a>
+        <a class="btn btn-outline-theme" asp-controller="UpcomingMatches" asp-action="Index">@T("Home.ViewUpcoming")</a>
+    </div>
+</section>
+
+<section class="dashboard-card-grid">
+    <a class="dashboard-action-card" asp-controller="UpcomingMatches" asp-action="Index">
+        <span class="dashboard-action-icon premium">UP</span>
+        <span>
+            <span class="dashboard-action-title">@T("UpcomingMatches.Title")</span>
+            <span class="dashboard-action-copy">@T("Home.UpcomingCopy")</span>
+        </span>
+    </a>
+    <a class="dashboard-action-card" asp-controller="Predictions" asp-action="Index">
+        <span class="dashboard-action-icon ml">ML</span>
+        <span>
+            <span class="dashboard-action-title">@T("Home.PredictionsTitle")</span>
+            <span class="dashboard-action-copy">@T("Home.PredictionsCopy")</span>
+        </span>
+    </a>
+    <a class="dashboard-action-card" asp-controller="Betting" asp-action="Index">
+        <span class="dashboard-action-icon success">BT</span>
+        <span>
+            <span class="dashboard-action-title">@T("Home.BettingTitle")</span>
+            <span class="dashboard-action-copy">@T("Home.BettingCopy")</span>
+        </span>
+    </a>
+</section>

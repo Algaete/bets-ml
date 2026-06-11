@@ -1,4 +1,5 @@
 using CornersPrediction.Application.Abstractions.Persistence;
+using CornersPrediction.Application.Teams;
 
 namespace CornersPrediction.Application.MatchHistory;
 
@@ -17,13 +18,18 @@ public sealed class GetRecentMatchHistoryUseCase : IGetRecentMatchHistoryUseCase
     public async Task<IReadOnlyList<MatchHistoryItemDto>> GetAsync(
         string homeTeam,
         string awayTeam,
+        string? league,
+        string? teamGender,
         CancellationToken cancellationToken)
     {
         Validate(homeTeam, awayTeam);
+        var normalizedTeamGender = TeamGenderOptions.Normalize(teamGender);
 
         var items = await _repository.GetRecentAsync(
             homeTeam.Trim(),
             awayTeam.Trim(),
+            string.IsNullOrWhiteSpace(league) ? null : league.Trim(),
+            normalizedTeamGender,
             cancellationToken);
 
         return items.Select(MatchHistoryMapper.ToDto).ToArray();

@@ -2,144 +2,474 @@
 
 @{
     ViewData["Title"] = UiText.T(Context, "Predictions.Title");
+    var language = UiText.GetLanguage(Context);
+    string T(string key) => UiText.T(language, key);
     var leagueOptions = Model.LeagueOptions.OrderBy(league => league).ToArray();
     var formationOptions = Model.FormationOptions.OrderBy(formation => formation).ToArray();
+    var selectedLeague = Model.League ?? string.Empty;
+    var selectedSeason = string.IsNullOrWhiteSpace(Model.Season) ? "2025-2026" : Model.Season;
+    var selectedMatchDate = (Model.MatchDate ?? DateTime.Today).ToString("yyyy-MM-dd");
+    var selectedTeamGender = Model.TeamGender.Equals("F", StringComparison.OrdinalIgnoreCase) ? "F" : "M";
 }
 
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+<div class="prediction-hero mb-4">
     <div>
-        <h1 class="h3 mb-1">Predict corners</h1>
-        <p class="text-muted mb-0">Select a league and teams, review their recent home/away history, then generate model features.</p>
+        <div class="text-muted small text-uppercase fw-semibold">@T("Predictions.Eyebrow")</div>
+        <h1 class="h3 mb-1">@T("Predictions.Title")</h1>
+        <p class="text-muted mb-0">@T("Predictions.Description")</p>
     </div>
-    <span id="historyStatusBadge" class="badge text-bg-secondary">Waiting for teams</span>
+    <div class="prediction-status-panel">
+        <span class="badge text-bg-success">@T("Predictions.MainModelBadge")</span>
+        <span id="historyStatusBadge" class="badge text-bg-secondary">@T("Predictions.WaitingForTeams")</span>
+    </div>
 </div>
 
-<div class="row g-4">
-    <div class="col-12 col-xl-4">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
-                <h2 class="h5 mb-0">Match setup</h2>
-            </div>
-            <div class="card-body">
-                @if (leagueOptions.Length == 0)
-                {
-                    <div class="alert alert-warning">
-                        League options could not be loaded from the backend.
-                    </div>
-                }
-
-                <div class="row g-3">
-                    <div class="col-12">
-                        <label class="form-label" for="League">League</label>
-                        <input id="League" class="form-control" list="LeagueOptions" placeholder="Search or select league" autocomplete="off" />
-                        <datalist id="LeagueOptions">
-                            @foreach (var league in leagueOptions)
-                            {
-                                <option value="@league"></option>
-                            }
-                        </datalist>
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label" for="Season">Season</label>
-                        <input id="Season" class="form-control" value="2025-2026" />
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label" for="MatchDate">Match date</label>
-                        <input id="MatchDate" class="form-control" type="date" value="@DateTime.Today.ToString("yyyy-MM-dd")" />
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label" for="HomeTeam">Home team</label>
-                        <input id="HomeTeam" class="form-control" list="HomeTeamOptions" placeholder="Select league first" autocomplete="off" disabled />
-                        <datalist id="HomeTeamOptions"></datalist>
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label" for="AwayTeam">Away team</label>
-                        <input id="AwayTeam" class="form-control" list="AwayTeamOptions" placeholder="Select league first" autocomplete="off" disabled />
-                        <datalist id="AwayTeamOptions"></datalist>
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label" for="HomeFormation">Home formation</label>
-                        <input id="HomeFormation" class="form-control" list="FormationOptions" placeholder="4-3-3" autocomplete="off" />
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label" for="AwayFormation">Away formation</label>
-                        <input id="AwayFormation" class="form-control" list="FormationOptions" placeholder="4-2-3-1" autocomplete="off" />
-                    </div>
-                    <datalist id="FormationOptions">
-                        @foreach (var formation in formationOptions)
-                        {
-                            <option value="@formation"></option>
-                        }
-                    </datalist>
-                </div>
-
-                <div class="d-grid gap-2 mt-4">
-                    <button id="LoadHistoryButton" type="button" class="btn btn-outline-primary">Load history</button>
-                    <button id="PredictButton" type="button" class="btn btn-primary" disabled>Predict total corners</button>
-                </div>
-
-                <div id="PredictionResult" class="card border-success mt-4 d-none">
-                    <div class="card-body">
-                        <div class="text-muted small">Predicted total corners</div>
-                        <div id="PredictionValue" class="display-6 fw-semibold"></div>
-                        <div class="row g-2 mt-2">
-                            <div class="col-6">
-                                <div class="small text-muted">Probable range</div>
-                                <div id="ProbableRangeValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Wide range</div>
-                                <div id="WideRangeValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Avg error</div>
-                                <div id="MaeValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Large-error risk</div>
-                                <div id="RmseValue" class="fw-semibold"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="ModelComparison" class="card mt-3 d-none">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-                            <div class="fw-semibold">Model comparison</div>
-                            <span id="ConsensusBadge" class="badge"></span>
-                        </div>
-                        <div class="row g-2">
-                            <div class="col-6">
-                                <div class="small text-muted">AutoML Total</div>
-                                <div id="AutoMlTotalValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Home + Away</div>
-                                <div id="LegacyTotalValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Difference</div>
-                                <div id="ModelDifferenceValue" class="fw-semibold"></div>
-                            </div>
-                            <div class="col-6">
-                                <div class="small text-muted">Consensus</div>
-                                <div id="ConsensusValue" class="fw-semibold"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="PredictionError" class="alert alert-danger mt-4 d-none"></div>
+<section class="prediction-dashboard mb-4">
+    <div class="surface-panel prediction-setup-panel">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <h2 class="h5 mb-1">@T("Predictions.MatchSetup")</h2>
+                <div class="text-muted small">@T("Predictions.MatchSetupCopy")</div>
             </div>
         </div>
 
-        <div class="card shadow-sm mt-4">
-            <div class="card-header bg-white">
-                <h2 class="h5 mb-0">Generated features</h2>
+        @if (leagueOptions.Length == 0)
+        {
+            <div class="alert alert-warning">
+                @T("Predictions.LeagueOptionsError")
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 460px;">
+        }
+
+        <div class="match-setup-grid">
+            <div class="setup-field setup-league">
+                <label class="form-label" for="League">@T("Fields.League")</label>
+                <input id="League" class="form-control" list="LeagueOptions" placeholder="@T("Predictions.SearchLeague")" autocomplete="off" value="@selectedLeague" />
+                <datalist id="LeagueOptions">
+                    @foreach (var league in leagueOptions)
+                    {
+                        <option value="@league"></option>
+                    }
+                </datalist>
+            </div>
+            <div class="setup-field setup-season">
+                <label class="form-label" for="Season">@T("Fields.Season")</label>
+                <input id="Season" class="form-control" value="@selectedSeason" />
+            </div>
+            <div class="setup-field setup-gender">
+                <label class="form-label" for="TeamGender">@T("Predictions.TeamGender")</label>
+                <select id="TeamGender" class="form-select">
+                    <option value="M" selected="@(selectedTeamGender == "M")">@T("UpcomingMatches.Male")</option>
+                    <option value="F" selected="@(selectedTeamGender == "F")">@T("UpcomingMatches.Female")</option>
+                </select>
+            </div>
+            <div class="setup-field setup-date">
+                <label class="form-label" for="MatchDate">@T("Fields.MatchDate")</label>
+                <input id="MatchDate" class="form-control" type="date" value="@selectedMatchDate" />
+            </div>
+            <div class="setup-field setup-team">
+                <label class="form-label" for="HomeTeam">@T("Fields.HomeTeam")</label>
+                <input id="HomeTeam" class="form-control" list="HomeTeamOptions" placeholder="@T("Predictions.SelectLeagueFirst")" autocomplete="off" value="@Model.HomeTeam" data-initial-value="@Model.HomeTeam" disabled="@string.IsNullOrWhiteSpace(selectedLeague)" />
+                <datalist id="HomeTeamOptions"></datalist>
+            </div>
+            <div class="setup-field setup-team">
+                <label class="form-label" for="AwayTeam">@T("Fields.AwayTeam")</label>
+                <input id="AwayTeam" class="form-control" list="AwayTeamOptions" placeholder="@T("Predictions.SelectLeagueFirst")" autocomplete="off" value="@Model.AwayTeam" data-initial-value="@Model.AwayTeam" disabled="@string.IsNullOrWhiteSpace(selectedLeague)" />
+                <datalist id="AwayTeamOptions"></datalist>
+            </div>
+            <div class="setup-field setup-formation">
+                <label class="form-label" for="HomeFormation">@T("Predictions.HomeFormation")</label>
+                <input id="HomeFormation" class="form-control" list="FormationOptions" placeholder="4-3-3" autocomplete="off" />
+            </div>
+            <div class="setup-field setup-formation">
+                <label class="form-label" for="AwayFormation">@T("Predictions.AwayFormation")</label>
+                <input id="AwayFormation" class="form-control" list="FormationOptions" placeholder="4-2-3-1" autocomplete="off" />
+            </div>
+            <div class="setup-field setup-line">
+                <label class="form-label" for="BettingLine">@T("Predictions.CornersLine")</label>
+                <input id="BettingLine" class="form-control" type="number" min="0" step="0.5" value="9.5" />
+            </div>
+            <div class="setup-field setup-line">
+                <label class="form-label" for="ShotsLine">@T("Predictions.ShotsLine")</label>
+                <input id="ShotsLine" class="form-control" type="number" min="0" step="0.5" value="24.5" />
+            </div>
+            <div class="setup-field setup-line">
+                <label class="form-label" for="SogLine">@T("Predictions.SogLine")</label>
+                <input id="SogLine" class="form-control" type="number" min="0" step="0.5" value="8.5" />
+            </div>
+            <div class="setup-field setup-line">
+                <label class="form-label" for="GoalsLine">Goals line</label>
+                <input id="GoalsLine" class="form-control" type="number" min="0" step="0.5" value="2.5" />
+            </div>
+            <div class="setup-field setup-knockout">
+                <label class="form-label" for="IsKnockout">@T("Predictions.Knockout")</label>
+                <div class="form-check form-switch pt-2">
+                    <input id="IsKnockout" class="form-check-input" type="checkbox" checked="@Model.IsKnockout" />
+                    <label class="form-check-label small text-muted" for="IsKnockout">@T("Predictions.SingleElimination")</label>
+                </div>
+            </div>
+            <datalist id="FormationOptions">
+                @foreach (var formation in formationOptions)
+                {
+                    <option value="@formation"></option>
+                }
+            </datalist>
+        </div>
+
+        <div class="prediction-actions mt-4">
+            <button id="LoadHistoryButton" type="button" class="btn btn-outline-primary">@T("Predictions.LoadHistory")</button>
+            <button id="PredictButton" type="button" class="btn btn-primary" disabled>@T("Predictions.PredictMatch")</button>
+        </div>
+
+        <div id="PredictionError" class="alert alert-danger mt-4 d-none"></div>
+    </div>
+
+    <div class="surface-panel prediction-model-guide">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <h2 class="h5 mb-1">@T("Predictions.ModelGuide")</h2>
+                <div class="text-muted small">@T("Predictions.ModelGuideCopy")</div>
+            </div>
+            <span class="badge text-bg-primary">@T("Predictions.OldModelInactive")</span>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-6 col-xl-4">
+                <div class="border rounded p-3 h-100">
+                    <div class="fw-semibold">@T("Predictions.CornersEnsemble")</div>
+                    <div class="small text-muted mt-1">@T("Predictions.CornersGuideCopy")</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-4">
+                <div class="border rounded p-3 h-100">
+                    <div class="fw-semibold">@T("Predictions.ShotsGuideTitle")</div>
+                    <div class="small text-muted mt-1">@T("Predictions.ShotsGuideCopy")</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-4">
+                <div class="border rounded p-3 h-100">
+                    <div class="fw-semibold">@T("Predictions.ContextGuideTitle")</div>
+                    <div class="small text-muted mt-1">@T("Predictions.ContextGuideCopy")</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="prediction-output-grid">
+        <div id="PredictionResult" class="prediction-result-card d-none">
+            <div class="prediction-card-label">@T("Predictions.CornersEnsemble")</div>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="text-muted small">@T("Predictions.FinalCorners")</div>
+                    <div id="PredictionValue" class="prediction-main-value"></div>
+                </div>
+                <span class="badge text-bg-success">@T("Predictions.FilteredEnsemble")</span>
+            </div>
+            <p class="text-muted small mt-2 mb-0">@T("Predictions.CornersFormula")</p>
+            <div class="prediction-metric-grid mt-3">
+                <div>
+                    <div class="small text-muted">@T("Predictions.ProbableRange")</div>
+                    <div id="ProbableRangeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">@T("Predictions.WideRange")</div>
+                    <div id="WideRangeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">@T("Predictions.BettingLine")</div>
+                    <div id="CornersBettingLineValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Direct total ML</div>
+                    <div id="CornersDirectValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home corners ML</div>
+                    <div id="CornersHomeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away corners ML</div>
+                    <div id="CornersAwayValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home + Away</div>
+                    <div id="CornersCombinedValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">@T("Predictions.Recommendation")</div>
+                    <div id="CornersRecommendedSideValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">@T("Predictions.DistanceToLine")</div>
+                    <div id="CornersDistanceToLineValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">@T("Fields.Confidence")</div>
+                    <span id="CornersConfidenceBadge" class="badge"></span>
+                </div>
+            </div>
+            <div id="CornersRecommendationMessage" class="alert alert-light border mt-3 mb-0 d-none"></div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+                <a id="CreateBetFromTotalModelLink" class="btn btn-sm btn-outline-success d-none" href="/Betting/Create">
+                    @T("Predictions.CreateCornersBet")
+                </a>
+            </div>
+        </div>
+
+        <div id="EnrichedPredictionCard" class="prediction-result-card accent d-none">
+            <div class="prediction-card-label">Context calculation · reference only</div>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="text-muted small">Context corners estimate</div>
+                    <div id="EnrichedPredictionValue" class="prediction-main-value"></div>
+                </div>
+                <span id="PredictionRecommendationBadge" class="prediction-status-chip"></span>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Not a trained model. It uses recent general and home/away condition stats as a sanity check against the ML result.</p>
+            <div class="prediction-metric-grid mt-3">
+                <div>
+                    <div class="small text-muted">Context shots</div>
+                    <div id="EnrichedShotsValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Context SOG</div>
+                    <div id="EnrichedShotsOnGoalValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Corners ML final</div>
+                    <div id="BasePredictionValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Difference vs ML</div>
+                    <div id="PredictionDifferenceValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home ctx</div>
+                    <div id="HomeContextBreakdownValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away ctx</div>
+                    <div id="AwayContextBreakdownValue" class="fw-semibold"></div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+                <a id="CreateBetFromContextShotsLink" class="btn btn-sm btn-outline-primary d-none" href="/Betting/Create">
+                    Create shots bet
+                </a>
+            </div>
+        </div>
+
+        <div id="ShotsResult" class="prediction-result-card d-none">
+            <div class="prediction-card-label">Shots model · separate market</div>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="text-muted small">Predicted total shots</div>
+                    <div id="ShotsPredictionValue" class="prediction-main-value"></div>
+                </div>
+                <span class="badge text-bg-light border">Shots-only v3</span>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Separate shots-only v3 CatBoost model. The final value uses the direct TotalShots model; HomeShots/AwayShots stay visible as diagnostics.</p>
+            <div id="ShotsAdjustmentMessage" class="alert alert-warning mt-3 mb-0 d-none"></div>
+            <div class="prediction-metric-grid mt-3">
+                <div>
+                    <div class="small text-muted">Line</div>
+                    <div id="ShotsLineValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Recommendation</div>
+                    <div id="ShotsRecommendationValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Confidence</div>
+                    <span id="ShotsConfidenceBadge" class="badge"></span>
+                </div>
+                <div>
+                    <div class="small text-muted">Historical accuracy</div>
+                    <div id="ShotsAccuracyValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Distance</div>
+                    <div id="ShotsDistanceValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home + Away</div>
+                    <div id="ShotsCombinedValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home shots</div>
+                    <div id="ShotsHomeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away shots</div>
+                    <div id="ShotsAwayValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Direct total</div>
+                    <div id="ShotsDirectValue" class="fw-semibold"></div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+                <a id="CreateBetFromShotsLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Create shots bet
+                </a>
+            </div>
+        </div>
+
+        <div id="ShotsOnGoalResult" class="prediction-result-card d-none">
+            <div class="prediction-card-label">Shots-on-goal model · separate market</div>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="text-muted small">Predicted total shots on goal</div>
+                    <div id="ShotsOnGoalPredictionValue" class="prediction-main-value"></div>
+                </div>
+                <span class="badge text-bg-info">Filtered SOG v1</span>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Separate ensemble for total shots on goal. Final = 80% direct SOG + 20% HomeSOG/AwaySOG combined.</p>
+            <div class="prediction-metric-grid mt-3">
+                <div>
+                    <div class="small text-muted">Line</div>
+                    <div id="SogLineValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Recommendation</div>
+                    <div id="SogRecommendationValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Confidence</div>
+                    <span id="SogConfidenceBadge" class="badge"></span>
+                </div>
+                <div>
+                    <div class="small text-muted">Historical accuracy</div>
+                    <div id="SogAccuracyValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Distance</div>
+                    <div id="SogDistanceValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home + Away</div>
+                    <div id="SogCombinedValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home SOG</div>
+                    <div id="SogHomeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away SOG</div>
+                    <div id="SogAwayValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Direct total</div>
+                    <div id="SogDirectValue" class="fw-semibold"></div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+                <a id="CreateBetFromShotsOnGoalLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Create SOG bet
+                </a>
+            </div>
+        </div>
+
+        <div id="GoalsResult" class="prediction-result-card d-none">
+            <div class="prediction-card-label">Goals model · separate market</div>
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="text-muted small">Predicted total goals</div>
+                    <div id="GoalsPredictionValue" class="prediction-main-value"></div>
+                </div>
+                <span class="badge text-bg-warning">Goals v1</span>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Separate goals model. Final = direct TotalGoals model because this version uses directWeight 1.0.</p>
+            <div class="prediction-metric-grid mt-3">
+                <div>
+                    <div class="small text-muted">Line</div>
+                    <div id="GoalsLineValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Recommendation</div>
+                    <div id="GoalsRecommendationValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Confidence</div>
+                    <span id="GoalsConfidenceBadge" class="badge"></span>
+                </div>
+                <div>
+                    <div class="small text-muted">Historical accuracy</div>
+                    <div id="GoalsAccuracyValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Distance</div>
+                    <div id="GoalsDistanceValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home + Away</div>
+                    <div id="GoalsCombinedValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home goals</div>
+                    <div id="GoalsHomeValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away goals</div>
+                    <div id="GoalsAwayValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Direct total</div>
+                    <div id="GoalsDirectValue" class="fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="ShotsOnGoalWarning" class="alert alert-warning d-none">
+            Corners predicted, but shots/SOG/goals models could not be executed.
+        </div>
+
+        <div id="ModelComparison" class="surface-panel d-none">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+                <div>
+                    <h2 class="h6 mb-1">Corners ensemble breakdown</h2>
+                    <div class="text-muted small">New filtered models: direct total plus Home + Away combined</div>
+                </div>
+                <span id="ConsensusBadge" class="badge"></span>
+            </div>
+            <div class="prediction-metric-grid">
+                <div>
+                    <div class="small text-muted">Direct TotalCorners</div>
+                    <div id="AutoMlTotalValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home corners</div>
+                    <div id="PredHomeCornersValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Away corners</div>
+                    <div id="PredAwayCornersValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Home + Away total</div>
+                    <div id="LegacyTotalValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Direct vs combined diff</div>
+                    <div id="ModelDifferenceValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Alignment</div>
+                    <div id="ConsensusValue" class="fw-semibold"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="surface-panel generated-feature-card">
+            <div class="d-flex justify-content-between align-items-center gap-2">
+                <div>
+                    <h2 class="h6 mb-1">Generated features: total corners</h2>
+                    <div class="text-muted small">Feature payload sent to the new filtered corners ensemble</div>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#GeneratedFeaturesPanel" aria-expanded="false" aria-controls="GeneratedFeaturesPanel">
+                    View
+                </button>
+            </div>
+            <div class="collapse mt-3" id="GeneratedFeaturesPanel">
+                <div class="table-responsive prediction-features-wrap">
                     <table class="table table-sm mb-0">
                         <tbody id="FeaturesBody">
                             <tr>
@@ -150,62 +480,147 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="col-12 col-xl-8">
-        <div class="row g-4">
-            <div class="col-12">
-                <div class="card shadow-sm">
-                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <h2 class="h5 mb-0">Home team last 10 as home</h2>
-                        <span id="HomeHistoryCount" class="badge text-bg-light">0 records</span>
-                    </div>
-                    <div id="HomeHistoryEmpty" class="p-4 text-muted">Select teams to load home history.</div>
-                    <div id="HomeHistoryTableWrap" class="table-responsive d-none" style="max-height: 360px;">
-                        <table class="table table-sm align-middle mb-0 table-sticky-head">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Match</th>
-                                    <th>Score</th>
-                                    <th>Corners</th>
-                                    <th>Shots</th>
-                                    <th>Poss.</th>
-                                </tr>
-                            </thead>
-                            <tbody id="HomeHistoryBody"></tbody>
-                        </table>
-                    </div>
+        <div class="surface-panel generated-feature-card">
+            <div class="d-flex justify-content-between align-items-center gap-2">
+                <div>
+                    <h2 class="h6 mb-1">Generated features: shots on goal</h2>
+                    <div class="text-muted small">Feature payload sent to the shots-on-goal model</div>
                 </div>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#ShotsOnGoalFeaturesPanel" aria-expanded="false" aria-controls="ShotsOnGoalFeaturesPanel">
+                    View
+                </button>
             </div>
-
-            <div class="col-12">
-                <div class="card shadow-sm">
-                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <h2 class="h5 mb-0">Away team last 10 as away</h2>
-                        <span id="AwayHistoryCount" class="badge text-bg-light">0 records</span>
-                    </div>
-                    <div id="AwayHistoryEmpty" class="p-4 text-muted">Select teams to load away history.</div>
-                    <div id="AwayHistoryTableWrap" class="table-responsive d-none" style="max-height: 360px;">
-                        <table class="table table-sm align-middle mb-0 table-sticky-head">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Match</th>
-                                    <th>Score</th>
-                                    <th>Corners</th>
-                                    <th>Shots</th>
-                                    <th>Poss.</th>
-                                </tr>
-                            </thead>
-                            <tbody id="AwayHistoryBody"></tbody>
-                        </table>
-                    </div>
+            <div class="collapse mt-3" id="ShotsOnGoalFeaturesPanel">
+                <div class="table-responsive prediction-features-wrap">
+                    <table class="table table-sm mb-0">
+                        <tbody id="ShotsOnGoalFeaturesBody">
+                            <tr>
+                                <td class="p-3 text-muted">Run a prediction to calculate shots-on-goal features.</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
-</div>
+</section>
+
+<section class="surface-panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h5 mb-1">Decision context</h2>
+            <div class="text-muted small">General form plus home/away condition history</div>
+        </div>
+        <span class="badge text-bg-light">4 contexts</span>
+    </div>
+
+    <div class="history-context-grid">
+        <div class="history-context-card">
+            <div class="history-context-header">
+                <h3 class="h6 mb-0">HomeTeam: últimos 10 generales</h3>
+                <span id="HomeGeneralHistoryCount" class="badge text-bg-light">0 records</span>
+            </div>
+            <div id="HomeGeneralStats" class="history-stats d-none"></div>
+            <div id="HomeGeneralWarning" class="alert alert-warning rounded-0 mb-0 py-2 d-none"></div>
+            <div id="HomeGeneralHistoryEmpty" class="p-4 text-muted">Select teams to load general home-team history.</div>
+            <div id="HomeGeneralHistoryTableWrap" class="table-responsive d-none history-table-wrap">
+                <table class="table table-sm align-middle mb-0 table-sticky-head">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Match</th>
+                            <th>Score</th>
+                            <th>Corners</th>
+                            <th>Shots</th>
+                            <th>SOG</th>
+                            <th>Poss.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="HomeGeneralHistoryBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="history-context-card">
+            <div class="history-context-header">
+                <h3 class="h6 mb-0">HomeTeam: últimos 10 como local</h3>
+                <span id="HomeConditionHistoryCount" class="badge text-bg-light">0 records</span>
+            </div>
+            <div id="HomeConditionStats" class="history-stats d-none"></div>
+            <div id="HomeConditionWarning" class="alert alert-warning rounded-0 mb-0 py-2 d-none"></div>
+            <div id="HomeConditionHistoryEmpty" class="p-4 text-muted">Select teams to load home condition history.</div>
+            <div id="HomeConditionHistoryTableWrap" class="table-responsive d-none history-table-wrap">
+                <table class="table table-sm align-middle mb-0 table-sticky-head">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Match</th>
+                            <th>Score</th>
+                            <th>Corners</th>
+                            <th>Shots</th>
+                            <th>SOG</th>
+                            <th>Poss.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="HomeConditionHistoryBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="history-context-card">
+            <div class="history-context-header">
+                <h3 class="h6 mb-0">AwayTeam: últimos 10 generales</h3>
+                <span id="AwayGeneralHistoryCount" class="badge text-bg-light">0 records</span>
+            </div>
+            <div id="AwayGeneralStats" class="history-stats d-none"></div>
+            <div id="AwayGeneralWarning" class="alert alert-warning rounded-0 mb-0 py-2 d-none"></div>
+            <div id="AwayGeneralHistoryEmpty" class="p-4 text-muted">Select teams to load general away-team history.</div>
+            <div id="AwayGeneralHistoryTableWrap" class="table-responsive d-none history-table-wrap">
+                <table class="table table-sm align-middle mb-0 table-sticky-head">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Match</th>
+                            <th>Score</th>
+                            <th>Corners</th>
+                            <th>Shots</th>
+                            <th>SOG</th>
+                            <th>Poss.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="AwayGeneralHistoryBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="history-context-card">
+            <div class="history-context-header">
+                <h3 class="h6 mb-0">AwayTeam: últimos 10 como visitante</h3>
+                <span id="AwayConditionHistoryCount" class="badge text-bg-light">0 records</span>
+            </div>
+            <div id="AwayConditionStats" class="history-stats d-none"></div>
+            <div id="AwayConditionWarning" class="alert alert-warning rounded-0 mb-0 py-2 d-none"></div>
+            <div id="AwayConditionHistoryEmpty" class="p-4 text-muted">Select teams to load away condition history.</div>
+            <div id="AwayConditionHistoryTableWrap" class="table-responsive d-none history-table-wrap">
+                <table class="table table-sm align-middle mb-0 table-sticky-head">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Match</th>
+                            <th>Score</th>
+                            <th>Corners</th>
+                            <th>Shots</th>
+                            <th>SOG</th>
+                            <th>Poss.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="AwayConditionHistoryBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
 
 @section Scripts {
     <script>
@@ -213,12 +628,18 @@
             const leagueSelect = document.getElementById('League');
             const seasonInput = document.getElementById('Season');
             const matchDateInput = document.getElementById('MatchDate');
+            const teamGenderSelect = document.getElementById('TeamGender');
             const homeTeamSelect = document.getElementById('HomeTeam');
             const awayTeamSelect = document.getElementById('AwayTeam');
             const homeTeamOptions = document.getElementById('HomeTeamOptions');
             const awayTeamOptions = document.getElementById('AwayTeamOptions');
             const homeFormationInput = document.getElementById('HomeFormation');
             const awayFormationInput = document.getElementById('AwayFormation');
+            const isKnockoutInput = document.getElementById('IsKnockout');
+            const bettingLineInput = document.getElementById('BettingLine');
+            const shotsLineInput = document.getElementById('ShotsLine');
+            const sogLineInput = document.getElementById('SogLine');
+            const goalsLineInput = document.getElementById('GoalsLine');
             const loadHistoryButton = document.getElementById('LoadHistoryButton');
             const predictButton = document.getElementById('PredictButton');
             const historyStatusBadge = document.getElementById('historyStatusBadge');
@@ -226,48 +647,219 @@
             const predictionValue = document.getElementById('PredictionValue');
             const probableRangeValue = document.getElementById('ProbableRangeValue');
             const wideRangeValue = document.getElementById('WideRangeValue');
-            const maeValue = document.getElementById('MaeValue');
-            const rmseValue = document.getElementById('RmseValue');
+            const cornersBettingLineValue = document.getElementById('CornersBettingLineValue');
+            const cornersDirectValue = document.getElementById('CornersDirectValue');
+            const cornersHomeValue = document.getElementById('CornersHomeValue');
+            const cornersAwayValue = document.getElementById('CornersAwayValue');
+            const cornersCombinedValue = document.getElementById('CornersCombinedValue');
+            const cornersRecommendedSideValue = document.getElementById('CornersRecommendedSideValue');
+            const cornersDistanceToLineValue = document.getElementById('CornersDistanceToLineValue');
+            const cornersConfidenceBadge = document.getElementById('CornersConfidenceBadge');
+            const cornersRecommendationMessage = document.getElementById('CornersRecommendationMessage');
+            const createBetFromTotalModelLink = document.getElementById('CreateBetFromTotalModelLink');
+            const createBetFromContextShotsLink = document.getElementById('CreateBetFromContextShotsLink');
+            const createBetFromShotsLink = document.getElementById('CreateBetFromShotsLink');
+            const createBetFromShotsOnGoalLink = document.getElementById('CreateBetFromShotsOnGoalLink');
+            const enrichedPredictionCard = document.getElementById('EnrichedPredictionCard');
+            const enrichedPredictionValue = document.getElementById('EnrichedPredictionValue');
+            const enrichedShotsValue = document.getElementById('EnrichedShotsValue');
+            const enrichedShotsOnGoalValue = document.getElementById('EnrichedShotsOnGoalValue');
+            const basePredictionValue = document.getElementById('BasePredictionValue');
+            const predictionDifferenceValue = document.getElementById('PredictionDifferenceValue');
+            const homeContextBreakdownValue = document.getElementById('HomeContextBreakdownValue');
+            const awayContextBreakdownValue = document.getElementById('AwayContextBreakdownValue');
+            const predictionRecommendationBadge = document.getElementById('PredictionRecommendationBadge');
+            const shotsResult = document.getElementById('ShotsResult');
+            const shotsPredictionValue = document.getElementById('ShotsPredictionValue');
+            const shotsLineValue = document.getElementById('ShotsLineValue');
+            const shotsRecommendationValue = document.getElementById('ShotsRecommendationValue');
+            const shotsConfidenceBadge = document.getElementById('ShotsConfidenceBadge');
+            const shotsAccuracyValue = document.getElementById('ShotsAccuracyValue');
+            const shotsDistanceValue = document.getElementById('ShotsDistanceValue');
+            const shotsCombinedValue = document.getElementById('ShotsCombinedValue');
+            const shotsHomeValue = document.getElementById('ShotsHomeValue');
+            const shotsAwayValue = document.getElementById('ShotsAwayValue');
+            const shotsDirectValue = document.getElementById('ShotsDirectValue');
+            const shotsAdjustmentMessage = document.getElementById('ShotsAdjustmentMessage');
+            const shotsOnGoalResult = document.getElementById('ShotsOnGoalResult');
+            const shotsOnGoalPredictionValue = document.getElementById('ShotsOnGoalPredictionValue');
+            const sogLineValue = document.getElementById('SogLineValue');
+            const sogRecommendationValue = document.getElementById('SogRecommendationValue');
+            const sogConfidenceBadge = document.getElementById('SogConfidenceBadge');
+            const sogAccuracyValue = document.getElementById('SogAccuracyValue');
+            const sogDistanceValue = document.getElementById('SogDistanceValue');
+            const sogCombinedValue = document.getElementById('SogCombinedValue');
+            const sogHomeValue = document.getElementById('SogHomeValue');
+            const sogAwayValue = document.getElementById('SogAwayValue');
+            const sogDirectValue = document.getElementById('SogDirectValue');
+            const goalsResult = document.getElementById('GoalsResult');
+            const goalsPredictionValue = document.getElementById('GoalsPredictionValue');
+            const goalsLineValue = document.getElementById('GoalsLineValue');
+            const goalsRecommendationValue = document.getElementById('GoalsRecommendationValue');
+            const goalsConfidenceBadge = document.getElementById('GoalsConfidenceBadge');
+            const goalsAccuracyValue = document.getElementById('GoalsAccuracyValue');
+            const goalsDistanceValue = document.getElementById('GoalsDistanceValue');
+            const goalsCombinedValue = document.getElementById('GoalsCombinedValue');
+            const goalsHomeValue = document.getElementById('GoalsHomeValue');
+            const goalsAwayValue = document.getElementById('GoalsAwayValue');
+            const goalsDirectValue = document.getElementById('GoalsDirectValue');
+            const shotsOnGoalWarning = document.getElementById('ShotsOnGoalWarning');
             const modelComparison = document.getElementById('ModelComparison');
             const consensusBadge = document.getElementById('ConsensusBadge');
             const autoMlTotalValue = document.getElementById('AutoMlTotalValue');
+            const predHomeCornersValue = document.getElementById('PredHomeCornersValue');
+            const predAwayCornersValue = document.getElementById('PredAwayCornersValue');
             const legacyTotalValue = document.getElementById('LegacyTotalValue');
             const modelDifferenceValue = document.getElementById('ModelDifferenceValue');
             const consensusValue = document.getElementById('ConsensusValue');
             const predictionError = document.getElementById('PredictionError');
             const featuresBody = document.getElementById('FeaturesBody');
+            const shotsOnGoalFeaturesBody = document.getElementById('ShotsOnGoalFeaturesBody');
 
-            const homeHistoryBody = document.getElementById('HomeHistoryBody');
-            const awayHistoryBody = document.getElementById('AwayHistoryBody');
-            const homeHistoryEmpty = document.getElementById('HomeHistoryEmpty');
-            const awayHistoryEmpty = document.getElementById('AwayHistoryEmpty');
-            const homeHistoryTableWrap = document.getElementById('HomeHistoryTableWrap');
-            const awayHistoryTableWrap = document.getElementById('AwayHistoryTableWrap');
-            const homeHistoryCount = document.getElementById('HomeHistoryCount');
-            const awayHistoryCount = document.getElementById('AwayHistoryCount');
+            const historySections = {
+                homeGeneral: {
+                    body: document.getElementById('HomeGeneralHistoryBody'),
+                    empty: document.getElementById('HomeGeneralHistoryEmpty'),
+                    tableWrap: document.getElementById('HomeGeneralHistoryTableWrap'),
+                    count: document.getElementById('HomeGeneralHistoryCount'),
+                    stats: document.getElementById('HomeGeneralStats'),
+                    warning: document.getElementById('HomeGeneralWarning')
+                },
+                homeCondition: {
+                    body: document.getElementById('HomeConditionHistoryBody'),
+                    empty: document.getElementById('HomeConditionHistoryEmpty'),
+                    tableWrap: document.getElementById('HomeConditionHistoryTableWrap'),
+                    count: document.getElementById('HomeConditionHistoryCount'),
+                    stats: document.getElementById('HomeConditionStats'),
+                    warning: document.getElementById('HomeConditionWarning')
+                },
+                awayGeneral: {
+                    body: document.getElementById('AwayGeneralHistoryBody'),
+                    empty: document.getElementById('AwayGeneralHistoryEmpty'),
+                    tableWrap: document.getElementById('AwayGeneralHistoryTableWrap'),
+                    count: document.getElementById('AwayGeneralHistoryCount'),
+                    stats: document.getElementById('AwayGeneralStats'),
+                    warning: document.getElementById('AwayGeneralWarning')
+                },
+                awayCondition: {
+                    body: document.getElementById('AwayConditionHistoryBody'),
+                    empty: document.getElementById('AwayConditionHistoryEmpty'),
+                    tableWrap: document.getElementById('AwayConditionHistoryTableWrap'),
+                    count: document.getElementById('AwayConditionHistoryCount'),
+                    stats: document.getElementById('AwayConditionStats'),
+                    warning: document.getElementById('AwayConditionWarning')
+                }
+            };
 
             let teamRequestController;
             let historyRequestController;
+            let activeHistoryRequestKey = '';
+            let loadedHistoryRequestKey = '';
+            let homeFormationRequestController;
+            let awayFormationRequestController;
             let currentFeatures = null;
-            let currentHomeMatches = [];
-            let currentAwayMatches = [];
+            let currentHomeGeneralMatches = [];
+            let currentHomeConditionMatches = [];
+            let currentAwayGeneralMatches = [];
+            let currentAwayConditionMatches = [];
+            let currentPredictionContext = null;
             let currentTeams = [];
             let lastLoadedLeague = '';
+            let lastTotalPrediction = null;
+            let currentShotsOnGoalFeatures = null;
+            let lastShotsOnGoalPrediction = null;
 
             const MAE_TOTAL = 2.6727;
             const RMSE_TOTAL = 3.3707;
 
             const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+            const getAnyValue = (item, names) => {
+                for (const name of names) {
+                    const value = getValue(item, name);
+                    if (value !== null && value !== undefined && value !== '') {
+                        return value;
+                    }
+                }
+
+                return null;
+            };
+            const isHomeConditionRow = item => String(getAnyValue(item, ['TeamCondition', 'EquipoCondicion']) ?? '')
+                .toUpperCase() === 'HOME';
+            const getHomeSideValue = (item, homeNames, awayNames, teamNames, rivalNames) => {
+                const directValue = getAnyValue(item, homeNames);
+                if (directValue !== null) {
+                    return directValue;
+                }
+
+                const teamValue = getAnyValue(item, teamNames);
+                const rivalValue = getAnyValue(item, rivalNames);
+                if (teamValue === null && rivalValue === null) {
+                    return null;
+                }
+
+                return isHomeConditionRow(item) ? teamValue : rivalValue;
+            };
+            const getAwaySideValue = (item, homeNames, awayNames, teamNames, rivalNames) => {
+                const directValue = getAnyValue(item, awayNames);
+                if (directValue !== null) {
+                    return directValue;
+                }
+
+                const teamValue = getAnyValue(item, teamNames);
+                const rivalValue = getAnyValue(item, rivalNames);
+                if (teamValue === null && rivalValue === null) {
+                    return null;
+                }
+
+                return isHomeConditionRow(item) ? rivalValue : teamValue;
+            };
+            const getHomeGoals = item => getHomeSideValue(
+                item,
+                ['HomeGoals'],
+                ['AwayGoals'],
+                ['GolesEquipo'],
+                ['GolesRival']) ?? 0;
+            const getAwayGoals = item => getAwaySideValue(
+                item,
+                ['HomeGoals'],
+                ['AwayGoals'],
+                ['GolesEquipo'],
+                ['GolesRival']) ?? 0;
             const round = value => Math.round((Number(value) || 0) * 100) / 100;
             const formatDecimal = (value, decimals = 2) => Number(value || 0).toFixed(decimals);
             const formatRange = (low, high) => `${Math.round(Number(low || 0))} - ${Math.round(Number(high || 0))} corners`;
+            const formatShotsOnGoalRange = (low, high) => `${Math.round(Number(low || 0))} - ${Math.round(Number(high || 0))} SOG`;
+            const formatMarketLine = value => value === null || value === undefined ? 'N/A' : formatDecimal(value, 1);
+            const formatMarketDistance = value => value === null || value === undefined ? 'N/A' : formatDecimal(value);
+            const formatMarketAccuracy = value => value === null || value === undefined ? 'N/A' : `${Math.round(Number(value) * 100)}%`;
             const average = values => values.length === 0 ? 0 : round(values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length);
             const take = (items, count) => items.slice(0, Math.min(count, items.length));
+            const numericValues = values => values
+                .map(value => Number(value || 0))
+                .filter(value => Number.isFinite(value));
+            const standardDeviation = values => {
+                const numbers = numericValues(values);
+                if (numbers.length === 0) {
+                    return 0;
+                }
+
+                const mean = numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+                const variance = numbers.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / numbers.length;
+                return round(Math.sqrt(variance));
+            };
+            const range = values => {
+                const numbers = numericValues(values);
+                return numbers.length === 0 ? 0 : round(Math.max(...numbers) - Math.min(...numbers));
+            };
             const getTeamName = team => team.team ?? team.Team ?? '';
             const getLeagueName = team => team.league ?? team.League ?? '';
             const getSeason = team => team.season ?? team.Season ?? '';
             const getIsBig3 = team => team?.isBig3 ?? team?.IsBig3 ?? false;
             const normalizeText = value => String(value ?? '').trim().toLocaleLowerCase();
+            const isKnownFormation = value => {
+                const normalized = normalizeText(value);
+                return normalized && normalized !== 'unknown' && normalized !== 'null';
+            };
 
             const findTeamInfo = teamName => {
                 const selectedName = normalizeText(teamName);
@@ -286,7 +878,121 @@
                 predictionError.classList.toggle('d-none', !message);
             };
 
-            const getPredictionNumber = result => Number(result.predictedTotalCorners ?? result.predicted_total_corners ?? 0);
+            const canAutofillFormation = input => !input.value.trim() || input.dataset.autofilled === 'true';
+
+            const clearAutofilledFormation = input => {
+                if (input.dataset.autofilled === 'true') {
+                    input.value = '';
+                }
+
+                delete input.dataset.autofilled;
+                delete input.dataset.autofillValue;
+                input.removeAttribute('title');
+            };
+
+            const setAutofilledFormation = (input, formation, details = null) => {
+                if (!isKnownFormation(formation) || !canAutofillFormation(input)) {
+                    return false;
+                }
+
+                input.value = formation.trim();
+                input.dataset.autofilled = 'true';
+                input.dataset.autofillValue = input.value;
+
+                if (details?.matchDate) {
+                    const opponent = details.opponent ? ` vs ${details.opponent}` : '';
+                    input.title = `Auto-filled from last saved match: ${details.matchDate}${opponent}`;
+                } else {
+                    input.removeAttribute('title');
+                }
+
+                if (currentFeatures) {
+                    currentFeatures = buildFeatures();
+                    renderFeatures(currentFeatures);
+                }
+
+                return true;
+            };
+
+            const findLatestFormationFromMatches = (matches, teamName) => {
+                const selectedTeam = normalizeText(teamName);
+                const orderedMatches = [...matches].sort((left, right) => {
+                    const leftDate = String(getValue(left, 'MatchDate') ?? '');
+                    const rightDate = String(getValue(right, 'MatchDate') ?? '');
+                    if (leftDate !== rightDate) {
+                        return rightDate.localeCompare(leftDate);
+                    }
+
+                    return Number(getValue(right, 'Id') ?? 0) - Number(getValue(left, 'Id') ?? 0);
+                });
+
+                for (const match of orderedMatches) {
+                    const homeTeam = getValue(match, 'HomeTeam');
+                    const awayTeam = getValue(match, 'AwayTeam');
+                    const homeFormation = getValue(match, 'HomeFormation');
+                    const awayFormation = getValue(match, 'AwayFormation');
+
+                    if (normalizeText(homeTeam) === selectedTeam && isKnownFormation(homeFormation)) {
+                        return {
+                            formation: homeFormation,
+                            matchDate: getValue(match, 'MatchDate'),
+                            opponent: awayTeam
+                        };
+                    }
+
+                    if (normalizeText(awayTeam) === selectedTeam && isKnownFormation(awayFormation)) {
+                        return {
+                            formation: awayFormation,
+                            matchDate: getValue(match, 'MatchDate'),
+                            opponent: homeTeam
+                        };
+                    }
+                }
+
+                return null;
+            };
+
+            const loadLatestFormation = async (teamInput, formationInput, side) => {
+                const team = teamInput.value.trim();
+                const league = leagueSelect.value.trim();
+                clearAutofilledFormation(formationInput);
+
+                if (!team || !league) {
+                    return;
+                }
+
+                const controller = new AbortController();
+                if (side === 'home') {
+                    homeFormationRequestController?.abort();
+                    homeFormationRequestController = controller;
+                } else {
+                    awayFormationRequestController?.abort();
+                    awayFormationRequestController = controller;
+                }
+
+                try {
+                    const response = await fetch(`/Predictions/LatestFormation?league=${encodeURIComponent(league)}&team=${encodeURIComponent(team)}`, {
+                        signal: controller.signal
+                    });
+
+                    if (!response.ok) {
+                        return;
+                    }
+
+                    const result = await response.json();
+                    if (teamInput.value.trim() !== team) {
+                        return;
+                    }
+
+                    setAutofilledFormation(formationInput, result.formation, result);
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        formationInput.removeAttribute('title');
+                    }
+                }
+            };
+
+            const getPredictionNumber = result => Number(result.predFinal ?? result.predictedTotalCorners ?? result.predicted_total_corners ?? 0);
             const getOptionalNumber = (result, camelName, snakeName) => {
                 const value = result[camelName] ?? result[snakeName];
                 return value === null || value === undefined ? null : Number(value);
@@ -304,53 +1010,618 @@
                         return 'text-bg-secondary';
                 }
             };
+            const getConfidenceClass = confidence => {
+                switch (String(confidence ?? '').toLowerCase()) {
+                    case 'no_bet':
+                    case 'no bet':
+                        return 'prediction-confidence-badge confidence-no-bet';
+                    case 'very_high':
+                    case 'very high':
+                        return 'prediction-confidence-badge confidence-very-high';
+                    case 'high':
+                        return 'prediction-confidence-badge confidence-high';
+                    case 'medium':
+                        return 'prediction-confidence-badge confidence-medium';
+                    case 'low':
+                        return 'prediction-confidence-badge confidence-low';
+                    default:
+                        return 'prediction-confidence-badge confidence-empty';
+                }
+            };
+            const formatSignedDecimal = value => {
+                const number = Number(value || 0);
+                return `${number >= 0 ? '+' : ''}${formatDecimal(number)}`;
+            };
+            const toBetSelection = prediction => {
+                switch (String(prediction ?? '').toUpperCase()) {
+                    case 'OVER':
+                        return 'Over';
+                    case 'UNDER':
+                        return 'Under';
+                    default:
+                        return 'Over';
+                }
+            };
+            const toConfidenceLevel = confidence => {
+                switch (String(confidence ?? '').toUpperCase()) {
+                    case 'VERY_HIGH':
+                    case 'HIGH':
+                        return 'High';
+                    case 'MEDIUM':
+                        return 'Medium';
+                    case 'LOW':
+                        return 'Low';
+                    default:
+                        return '';
+                }
+            };
+            const getContextValue = (container, name) => container?.[name.charAt(0).toLowerCase() + name.slice(1)] ?? container?.[name];
+
+            const getEnrichedComparisonDetails = basePrediction => {
+                const comparison = getContextValue(currentPredictionContext, 'Comparison');
+                if (!comparison) {
+                    return null;
+                }
+
+                const enriched = Number(getContextValue(comparison, 'EnrichedPrediction') ?? 0);
+                const hasBasePrediction = basePrediction !== null && basePrediction !== undefined;
+                const difference = hasBasePrediction ? Math.abs(enriched - Number(basePrediction || 0)) : null;
+
+                return {
+                    enriched,
+                    enrichedShots: Number(getContextValue(comparison, 'EnrichedShotsPrediction') ?? 0),
+                    enrichedShotsOnGoal: Number(getContextValue(comparison, 'EnrichedShotsOnGoalPrediction') ?? 0),
+                    homeExpectedCorners: Number(getContextValue(comparison, 'HomeExpectedCorners') ?? 0),
+                    awayExpectedCorners: Number(getContextValue(comparison, 'AwayExpectedCorners') ?? 0),
+                    homeExpectedShots: Number(getContextValue(comparison, 'HomeExpectedShots') ?? 0),
+                    awayExpectedShots: Number(getContextValue(comparison, 'AwayExpectedShots') ?? 0),
+                    homeExpectedShotsOnGoal: Number(getContextValue(comparison, 'HomeExpectedShotsOnGoal') ?? 0),
+                    awayExpectedShotsOnGoal: Number(getContextValue(comparison, 'AwayExpectedShotsOnGoal') ?? 0),
+                    difference,
+                    recommendation: hasBasePrediction && difference <= 1.0
+                        ? 'ML and context aligned'
+                        : hasBasePrediction
+                            ? 'Review manually: context differs'
+                            : 'ML prediction pending'
+                };
+            };
+
+            const renderEnrichedPrediction = (basePrediction = null) => {
+                const details = getEnrichedComparisonDetails(basePrediction);
+                if (!details) {
+                    enrichedPredictionCard.classList.add('d-none');
+                    configureContextShotsBetLink(null);
+                    return;
+                }
+
+                const hasBasePrediction = basePrediction !== null && basePrediction !== undefined;
+                const isConsistent = hasBasePrediction && details.difference <= 1.0;
+
+                enrichedPredictionValue.textContent = formatDecimal(details.enriched);
+                enrichedShotsValue.textContent = `${formatDecimal(details.enrichedShots)} shots`;
+                enrichedShotsOnGoalValue.textContent = `${formatDecimal(details.enrichedShotsOnGoal)} SOG`;
+                basePredictionValue.textContent = hasBasePrediction ? `${formatDecimal(basePrediction)} corners` : 'Pending model result';
+                predictionDifferenceValue.textContent = hasBasePrediction ? `${formatDecimal(details.difference)} corners` : 'Pending';
+                homeContextBreakdownValue.textContent = `${formatDecimal(details.homeExpectedCorners)} C / ${formatDecimal(details.homeExpectedShots)} Sh / ${formatDecimal(details.homeExpectedShotsOnGoal)} SOG`;
+                awayContextBreakdownValue.textContent = `${formatDecimal(details.awayExpectedCorners)} C / ${formatDecimal(details.awayExpectedShots)} Sh / ${formatDecimal(details.awayExpectedShotsOnGoal)} SOG`;
+                predictionRecommendationBadge.textContent = details.recommendation;
+                predictionRecommendationBadge.className = `prediction-status-chip ${hasBasePrediction ? (isConsistent ? 'status-success' : 'status-warning') : 'status-muted'}`;
+                enrichedPredictionCard.classList.remove('d-none');
+                configureContextShotsBetLink(details);
+            };
+
+            const buildBettingNotes = prediction => {
+                const predictedTotalCorners = prediction.predictedTotalCorners;
+                const enrichedDetails = getEnrichedComparisonDetails(predictedTotalCorners);
+                const lines = [
+                    'Datos generados desde Predictions',
+                    `${leagueSelect.value.trim()} | ${seasonInput.value.trim()} | ${matchDateInput.value}`,
+                    `${homeTeamSelect.value.trim()} vs ${awayTeamSelect.value.trim()}`,
+                    `Corners ensemble final: ${formatDecimal(predictedTotalCorners)}`,
+                    `Direct TotalCorners model: ${prediction.predTotalDirect === null || prediction.predTotalDirect === undefined ? '-' : formatDecimal(prediction.predTotalDirect)}`,
+                    `HomeCorners model: ${prediction.predHomeCorners === null || prediction.predHomeCorners === undefined ? '-' : formatDecimal(prediction.predHomeCorners)}`,
+                    `AwayCorners model: ${prediction.predAwayCorners === null || prediction.predAwayCorners === undefined ? '-' : formatDecimal(prediction.predAwayCorners)}`,
+                    `Home + Away combined: ${prediction.predTotalCombined === null || prediction.predTotalCombined === undefined ? '-' : formatDecimal(prediction.predTotalCombined)}`,
+                    `Probable range: ${formatRange(prediction.probableRangeLow, prediction.probableRangeHigh)}`,
+                    `Historical average error: ±${formatDecimal(prediction.mae)}`,
+                    `Betting line: ${prediction.bettingLine === null || prediction.bettingLine === undefined ? 'N/A' : formatDecimal(prediction.bettingLine, 1)}`,
+                    `Recommendation: ${prediction.recommendedSide ?? 'N/A'}`,
+                    `Confidence: ${prediction.confidence ?? 'N/A'}`,
+                    `Distance to line: ${prediction.distanceToLine === null || prediction.distanceToLine === undefined ? 'N/A' : formatDecimal(prediction.distanceToLine)}`
+                ];
+
+                if (enrichedDetails) {
+                    lines.push(`Predicción enriquecida: ${formatDecimal(enrichedDetails.enriched)}`);
+                    lines.push(`Context shots: ${formatDecimal(enrichedDetails.enrichedShots)}`);
+                    lines.push(`Context shots on goal: ${formatDecimal(enrichedDetails.enrichedShotsOnGoal)}`);
+                    if (enrichedDetails.difference !== null) {
+                        lines.push(`ML vs context difference: ${formatDecimal(enrichedDetails.difference)} corners`);
+                    }
+                    lines.push(`Context status: ${enrichedDetails.recommendation}`);
+                }
+
+                if (prediction.legacyTotalCorners !== null) {
+                    lines.push(`Home + Away combined: ${formatDecimal(prediction.legacyTotalCorners)}`);
+                    lines.push(`Model difference: ${formatDecimal(prediction.modelDifference)} corners`);
+                    lines.push(`Model alignment: ${prediction.consensus}`);
+                }
+
+                return lines.join('\n');
+            };
+
+            const buildMarketBettingNotes = (market, label) => {
+                const lines = [
+                    'Datos generados desde Predictions',
+                    `${leagueSelect.value.trim()} | ${seasonInput.value.trim()} | ${matchDateInput.value}`,
+                    `${homeTeamSelect.value.trim()} vs ${awayTeamSelect.value.trim()}`,
+                    `${label} prediction: ${formatDecimal(market.prediction)}`,
+                    `${label} line: ${formatMarketLine(market.line)}`,
+                    `${label} recommendation: ${market.recommendation ?? 'N/A'}`,
+                    `${label} confidence: ${market.confidence ?? 'N/A'}`,
+                    `${label} distance: ${formatMarketDistance(market.distance)}`,
+                    `${label} historical accuracy: ${formatMarketAccuracy(market.historicalAccuracy)}`,
+                    `${label} direct model: ${formatDecimal(market.totalDirectPrediction)}`,
+                    `${label} Home + Away: ${formatDecimal(market.combinedHomeAwayPrediction)}`
+                ];
+
+                if (lastTotalPrediction) {
+                    lines.push(`AutoML TotalCorners: ${formatDecimal(lastTotalPrediction.predictedTotalCorners)}`);
+                }
+
+                return lines.join('\n');
+            };
+
+            const buildContextShotsBettingNotes = details => {
+                const lines = [
+                    'Datos generados desde Predictions',
+                    `${leagueSelect.value.trim()} | ${seasonInput.value.trim()} | ${matchDateInput.value}`,
+                    `${homeTeamSelect.value.trim()} vs ${awayTeamSelect.value.trim()}`,
+                    `Context shots prediction: ${formatDecimal(details.enrichedShots)}`,
+                    `Home expected shots: ${formatDecimal(details.homeExpectedShots)}`,
+                    `Away expected shots: ${formatDecimal(details.awayExpectedShots)}`,
+                    `Context SOG prediction: ${formatDecimal(details.enrichedShotsOnGoal)}`,
+                    `Context corners prediction: ${formatDecimal(details.enriched)}`
+                ];
+
+                if (lastTotalPrediction) {
+                    lines.push(`AutoML TotalCorners: ${formatDecimal(lastTotalPrediction.predictedTotalCorners)}`);
+                }
+
+                return lines.join('\n');
+            };
+
+            const getCurrentBettingLine = () => Number(bettingLineInput.value || 0);
+
+            const getRecommendedTotalBetSelection = prediction => {
+                if (prediction.recommendedSide) {
+                    return toBetSelection(prediction.recommendedSide);
+                }
+
+                const line = getCurrentBettingLine();
+                if (!line) {
+                    return 'Over';
+                }
+
+                return Number(prediction.predictedTotalCorners) >= line ? 'Over' : 'Under';
+            };
+
+            const getSuggestedHalfLineBelow = value => {
+                const number = Number(value || 0);
+                return Math.max(0, Math.floor(number * 2) / 2);
+            };
+
+            const buildBettingQueryBase = (prediction, predictionModel, marketType = 'TotalCorners', notes = null) => new URLSearchParams({
+                league: leagueSelect.value.trim(),
+                season: seasonInput.value.trim(),
+                matchDate: matchDateInput.value,
+                homeTeam: homeTeamSelect.value.trim(),
+                awayTeam: awayTeamSelect.value.trim(),
+                marketType,
+                predictionModel,
+                notes: notes ?? buildBettingNotes(prediction)
+            });
+
+            const configureTotalModelBetLink = prediction => {
+                const parameters = buildBettingQueryBase(prediction, 'TotalCornersModel');
+                parameters.set('betSelection', getRecommendedTotalBetSelection(prediction));
+                parameters.set('line', formatDecimal(prediction.bettingLine ?? getCurrentBettingLine(), 1));
+                parameters.set('confidenceLevel', toConfidenceLevel(prediction.confidence));
+
+                createBetFromTotalModelLink.href = `/Betting/Create?${parameters.toString()}`;
+                createBetFromTotalModelLink.classList.remove('d-none');
+            };
+
+            const configureContextShotsBetLink = details => {
+                if (!details) {
+                    createBetFromContextShotsLink.href = '/Betting/Create';
+                    createBetFromContextShotsLink.classList.add('d-none');
+                    return;
+                }
+
+                const parameters = new URLSearchParams({
+                    league: leagueSelect.value.trim(),
+                    season: seasonInput.value.trim(),
+                    matchDate: matchDateInput.value,
+                    homeTeam: homeTeamSelect.value.trim(),
+                    awayTeam: awayTeamSelect.value.trim(),
+                    marketType: 'TotalShots',
+                    betSelection: 'Over',
+                    line: formatDecimal(getSuggestedHalfLineBelow(details.enrichedShots), 1),
+                    predictionModel: 'Manual',
+                    notes: buildContextShotsBettingNotes(details)
+                });
+
+                createBetFromContextShotsLink.href = `/Betting/Create?${parameters.toString()}`;
+                createBetFromContextShotsLink.classList.remove('d-none');
+            };
+
+            const configureMarketBetLink = (link, market, marketType, predictionModel, label) => {
+                if (!market) {
+                    link.href = '/Betting/Create';
+                    link.classList.add('d-none');
+                    return;
+                }
+
+                const parameters = new URLSearchParams({
+                    league: leagueSelect.value.trim(),
+                    season: seasonInput.value.trim(),
+                    matchDate: matchDateInput.value,
+                    homeTeam: homeTeamSelect.value.trim(),
+                    awayTeam: awayTeamSelect.value.trim(),
+                    marketType,
+                    betSelection: toBetSelection(market.recommendation),
+                    line: formatMarketLine(market.line ?? getSuggestedHalfLineBelow(market.prediction)),
+                    predictionModel,
+                    confidenceLevel: toConfidenceLevel(market.confidence),
+                    notes: buildMarketBettingNotes(market, label)
+                });
+
+                link.href = `/Betting/Create?${parameters.toString()}`;
+                link.classList.remove('d-none');
+            };
+
+            const configureShotsBetLink = market => {
+                configureMarketBetLink(createBetFromShotsLink, market, 'TotalShots', 'ShotsOnGoalModel', 'Shots');
+            };
+
+            const configureShotsOnGoalBetLink = market => {
+                if (!market) {
+                    createBetFromShotsOnGoalLink.href = '/Betting/Create';
+                    createBetFromShotsOnGoalLink.classList.add('d-none');
+                    return;
+                }
+
+                configureMarketBetLink(createBetFromShotsOnGoalLink, market, 'TotalShotsOnGoal', 'ShotsOnGoalModel', 'SOG');
+            };
 
             const setPrediction = result => {
                 const predictedTotalCorners = getPredictionNumber(result);
                 const mae = getOptionalNumber(result, 'mae') ?? MAE_TOTAL;
                 const rmse = getOptionalNumber(result, 'rmse') ?? RMSE_TOTAL;
-                const probableRangeLow = getOptionalNumber(result, 'probableRangeLow') ?? Math.max(0, predictedTotalCorners - mae);
-                const probableRangeHigh = getOptionalNumber(result, 'probableRangeHigh') ?? predictedTotalCorners + mae;
-                const wideRangeLow = getOptionalNumber(result, 'wideRangeLow') ?? Math.max(0, predictedTotalCorners - rmse);
-                const wideRangeHigh = getOptionalNumber(result, 'wideRangeHigh') ?? predictedTotalCorners + rmse;
+                const probableRangeLow = getOptionalNumber(result, 'probableRangeLow') ?? getOptionalNumber(result, 'rangeLow') ?? Math.max(0, predictedTotalCorners - mae);
+                const probableRangeHigh = getOptionalNumber(result, 'probableRangeHigh') ?? getOptionalNumber(result, 'rangeHigh') ?? predictedTotalCorners + mae;
+                const wideRangeLow = getOptionalNumber(result, 'wideRangeLow') ?? probableRangeLow;
+                const wideRangeHigh = getOptionalNumber(result, 'wideRangeHigh') ?? probableRangeHigh;
+                const predTotalDirect = getOptionalNumber(result, 'predTotalDirect') ?? getOptionalNumber(result, 'rawTotalCornersPrediction');
+                const predHomeCorners = getOptionalNumber(result, 'predHomeCorners') ?? getOptionalNumber(result, 'homeCornersPrediction');
+                const predAwayCorners = getOptionalNumber(result, 'predAwayCorners') ?? getOptionalNumber(result, 'awayCornersPrediction');
+                const predTotalCombined = getOptionalNumber(result, 'predTotalCombined');
+                const bettingLine = getOptionalNumber(result, 'bettingLine');
+                const distanceToLine = getOptionalNumber(result, 'distanceToLine');
+                const recommendedSide = result.recommendedSide ?? 'N/A';
+                const confidence = result.confidence ?? 'N/A';
+                const recommendationMessage = result.message ?? '';
+                const legacyTotalCorners = getOptionalNumber(result, 'legacyTotalCorners');
+                const modelDifference = legacyTotalCorners === null
+                    ? null
+                    : getOptionalNumber(result, 'modelDifference') ?? Math.abs(predictedTotalCorners - legacyTotalCorners);
+                const consensus = legacyTotalCorners === null
+                    ? null
+                    : result.modelConsensus ?? (
+                        modelDifference <= 1.0 ? 'High' :
+                        modelDifference <= 2.0 ? 'Medium' : 'Low'
+                    );
 
                 predictionValue.textContent = formatDecimal(predictedTotalCorners);
                 probableRangeValue.textContent = formatRange(probableRangeLow, probableRangeHigh);
                 wideRangeValue.textContent = formatRange(wideRangeLow, wideRangeHigh);
-                maeValue.textContent = `±${formatDecimal(mae)}`;
-                rmseValue.textContent = `±${formatDecimal(rmse)}`;
+                cornersBettingLineValue.textContent = bettingLine === null ? 'N/A' : formatDecimal(bettingLine, 1);
+                cornersDirectValue.textContent = predTotalDirect === null ? 'N/A' : formatDecimal(predTotalDirect);
+                cornersHomeValue.textContent = predHomeCorners === null ? 'N/A' : formatDecimal(predHomeCorners);
+                cornersAwayValue.textContent = predAwayCorners === null ? 'N/A' : formatDecimal(predAwayCorners);
+                cornersCombinedValue.textContent = predTotalCombined === null
+                    ? predHomeCorners === null || predAwayCorners === null
+                        ? 'N/A'
+                        : formatDecimal(predHomeCorners + predAwayCorners)
+                    : formatDecimal(predTotalCombined);
+                cornersRecommendedSideValue.textContent = recommendedSide;
+                cornersDistanceToLineValue.textContent = distanceToLine === null ? 'N/A' : formatDecimal(distanceToLine);
+                cornersConfidenceBadge.textContent = confidence;
+                cornersConfidenceBadge.className = `badge ${getConfidenceClass(confidence)}`;
+                cornersRecommendationMessage.textContent = recommendationMessage;
+                cornersRecommendationMessage.className = `alert mt-3 mb-0 ${confidence === 'LOW' ? 'alert-warning' : confidence === 'HIGH' || confidence === 'VERY_HIGH' ? 'alert-success' : 'alert-light border'}`;
+                cornersRecommendationMessage.classList.toggle('d-none', !recommendationMessage);
                 predictionResult.classList.remove('d-none');
+                renderEnrichedPrediction(predictedTotalCorners);
+                lastTotalPrediction = {
+                    predictedTotalCorners,
+                    predTotalDirect,
+                    predHomeCorners,
+                    predAwayCorners,
+                    predTotalCombined,
+                    probableRangeLow,
+                    probableRangeHigh,
+                    wideRangeLow,
+                    wideRangeHigh,
+                    mae,
+                    rmse,
+                    bettingLine,
+                    recommendedSide,
+                    distanceToLine,
+                    confidence,
+                    message: recommendationMessage,
+                    legacyTotalCorners,
+                    modelDifference,
+                    consensus
+                };
+                configureTotalModelBetLink(lastTotalPrediction);
 
-                const legacyTotalCorners = getOptionalNumber(result, 'legacyTotalCorners');
                 if (legacyTotalCorners === null) {
                     modelComparison.classList.add('d-none');
-                    return;
+                    return lastTotalPrediction;
                 }
 
-                const modelDifference = getOptionalNumber(result, 'modelDifference') ?? Math.abs(predictedTotalCorners - legacyTotalCorners);
-                const consensus = result.modelConsensus ?? (
-                    modelDifference <= 1.0 ? 'High' :
-                    modelDifference <= 2.0 ? 'Medium' : 'Low'
-                );
-
-                autoMlTotalValue.textContent = formatDecimal(predictedTotalCorners);
-                legacyTotalValue.textContent = formatDecimal(legacyTotalCorners);
+                autoMlTotalValue.textContent = predTotalDirect === null ? formatDecimal(predictedTotalCorners) : formatDecimal(predTotalDirect);
+                predHomeCornersValue.textContent = predHomeCorners === null ? '-' : formatDecimal(predHomeCorners);
+                predAwayCornersValue.textContent = predAwayCorners === null ? '-' : formatDecimal(predAwayCorners);
+                legacyTotalValue.textContent = predTotalCombined === null ? formatDecimal(legacyTotalCorners) : formatDecimal(predTotalCombined);
                 modelDifferenceValue.textContent = `${formatDecimal(modelDifference)} corners`;
                 consensusValue.textContent = consensus;
                 consensusBadge.textContent = consensus;
                 consensusBadge.className = `badge ${getConsensusClass(consensus)}`;
                 modelComparison.classList.remove('d-none');
+                return lastTotalPrediction;
+            };
+
+            const setMarketCard = (market, elements) => {
+                if (!market) {
+                    elements.adjustment?.classList.add('d-none');
+                    elements.card.classList.add('d-none');
+                    return;
+                }
+
+                elements.prediction.textContent = formatDecimal(market.prediction);
+                elements.line.textContent = formatMarketLine(market.line);
+                elements.recommendation.textContent = market.recommendation ?? 'N/A';
+                elements.confidence.textContent = market.confidence ?? 'N/A';
+                elements.confidence.className = `badge ${getConfidenceClass(market.confidence)}`;
+                elements.accuracy.textContent = formatMarketAccuracy(market.historicalAccuracy);
+                elements.distance.textContent = formatMarketDistance(market.distance);
+                elements.combined.textContent = formatDecimal(market.combinedHomeAwayPrediction);
+                elements.home.textContent = formatDecimal(market.homePrediction);
+                elements.away.textContent = formatDecimal(market.awayPrediction);
+                elements.direct.textContent = formatDecimal(market.totalDirectPrediction);
+                if (elements.adjustment) {
+                    if (market.sanityAdjusted) {
+                        const directText = market.totalDirectPrediction === null || market.totalDirectPrediction === undefined
+                            ? ''
+                            : ` Direct total model: ${formatDecimal(market.totalDirectPrediction)}.`;
+                        const combinedText = market.combinedHomeAwayPrediction === null || market.combinedHomeAwayPrediction === undefined
+                            ? ''
+                            : ` Home + Away: ${formatDecimal(market.combinedHomeAwayPrediction)}.`;
+                        const priorText = market.featurePrior === null || market.featurePrior === undefined
+                            ? ''
+                            : ` Recent shots context: ${formatDecimal(market.featurePrior)}.`;
+                        elements.adjustment.textContent = `Shots guardrail applied because the direct total model was inconsistent with context.${directText}${combinedText}${priorText}`;
+                        elements.adjustment.classList.remove('d-none');
+                    } else {
+                        elements.adjustment.classList.add('d-none');
+                        elements.adjustment.textContent = '';
+                    }
+                }
+                elements.card.classList.remove('d-none');
+            };
+
+            const setShotsOnGoalPrediction = result => {
+                lastShotsOnGoalPrediction = result;
+                const shotsMarket = result.shots ?? result.markets?.shots ?? (
+                    result.finalShotsPrediction === null || result.finalShotsPrediction === undefined
+                        ? null
+                        : {
+                            prediction: result.finalShotsPrediction ?? result.predictedShots,
+                            finalPrediction: result.finalShotsPrediction ?? result.predictedShots,
+                            line: Number(shotsLineInput.value || 0),
+                            recommendation: null,
+                            confidence: null,
+                            distance: null,
+                            historicalAccuracy: null,
+                            homePrediction: result.homeShotsPrediction ?? null,
+                            awayPrediction: result.awayShotsPrediction ?? null,
+                            totalDirectPrediction: result.rawTotalShotsPrediction ?? null,
+                            combinedHomeAwayPrediction:
+                                result.homeShotsPrediction === null || result.homeShotsPrediction === undefined ||
+                                result.awayShotsPrediction === null || result.awayShotsPrediction === undefined
+                                    ? null
+                                    : result.homeShotsPrediction + result.awayShotsPrediction
+                        }
+                );
+
+                setMarketCard(shotsMarket, {
+                    card: shotsResult,
+                    prediction: shotsPredictionValue,
+                    line: shotsLineValue,
+                    recommendation: shotsRecommendationValue,
+                    confidence: shotsConfidenceBadge,
+                    accuracy: shotsAccuracyValue,
+                    distance: shotsDistanceValue,
+                    combined: shotsCombinedValue,
+                    home: shotsHomeValue,
+                    away: shotsAwayValue,
+                    direct: shotsDirectValue,
+                    adjustment: shotsAdjustmentMessage
+                });
+
+                const sogMarket = result.sog ?? result.markets?.sog ?? {
+                    prediction: result.finalSogPrediction ?? result.predictedShotsOnGoal,
+                    finalPrediction: result.finalSogPrediction ?? result.predictedShotsOnGoal,
+                    line: Number(sogLineInput.value || 0),
+                    recommendation: null,
+                    confidence: null,
+                    distance: null,
+                    historicalAccuracy: null,
+                    homePrediction: result.homeSogPrediction ?? null,
+                    awayPrediction: result.awaySogPrediction ?? null,
+                    totalDirectPrediction: result.rawTotalSogPrediction ?? null,
+                    combinedHomeAwayPrediction:
+                        result.homeSogPrediction === null || result.homeSogPrediction === undefined ||
+                        result.awaySogPrediction === null || result.awaySogPrediction === undefined
+                            ? null
+                            : result.homeSogPrediction + result.awaySogPrediction
+                };
+
+                setMarketCard(sogMarket, {
+                    card: shotsOnGoalResult,
+                    prediction: shotsOnGoalPredictionValue,
+                    line: sogLineValue,
+                    recommendation: sogRecommendationValue,
+                    confidence: sogConfidenceBadge,
+                    accuracy: sogAccuracyValue,
+                    distance: sogDistanceValue,
+                    combined: sogCombinedValue,
+                    home: sogHomeValue,
+                    away: sogAwayValue,
+                    direct: sogDirectValue
+                });
+
+                const goalsMarket = result.goals ?? result.markets?.goals ?? (
+                    result.finalGoalsPrediction === null || result.finalGoalsPrediction === undefined
+                        ? null
+                        : {
+                            prediction: result.finalGoalsPrediction ?? result.predictedGoals,
+                            finalPrediction: result.finalGoalsPrediction ?? result.predictedGoals,
+                            line: Number(goalsLineInput.value || 0),
+                            recommendation: null,
+                            confidence: null,
+                            distance: null,
+                            historicalAccuracy: null,
+                            homePrediction: result.homeGoalsPrediction ?? null,
+                            awayPrediction: result.awayGoalsPrediction ?? null,
+                            totalDirectPrediction: result.rawTotalGoalsPrediction ?? null,
+                            combinedHomeAwayPrediction:
+                                result.homeGoalsPrediction === null || result.homeGoalsPrediction === undefined ||
+                                result.awayGoalsPrediction === null || result.awayGoalsPrediction === undefined
+                                    ? null
+                                    : result.homeGoalsPrediction + result.awayGoalsPrediction
+                        }
+                );
+
+                setMarketCard(goalsMarket, {
+                    card: goalsResult,
+                    prediction: goalsPredictionValue,
+                    line: goalsLineValue,
+                    recommendation: goalsRecommendationValue,
+                    confidence: goalsConfidenceBadge,
+                    accuracy: goalsAccuracyValue,
+                    distance: goalsDistanceValue,
+                    combined: goalsCombinedValue,
+                    home: goalsHomeValue,
+                    away: goalsAwayValue,
+                    direct: goalsDirectValue
+                });
+
+                shotsOnGoalWarning.classList.add('d-none');
+                configureShotsBetLink(shotsMarket);
+                configureShotsOnGoalBetLink(sogMarket);
+            };
+
+            const showShotsOnGoalWarning = () => {
+                shotsResult.classList.add('d-none');
+                shotsOnGoalResult.classList.add('d-none');
+                goalsResult.classList.add('d-none');
+                configureShotsBetLink(null);
+                configureShotsOnGoalBetLink(null);
+                shotsOnGoalWarning.classList.remove('d-none');
             };
 
             const resetPrediction = () => {
                 predictionResult.classList.add('d-none');
+                enrichedPredictionCard.classList.add('d-none');
+                shotsResult.classList.add('d-none');
+                shotsOnGoalResult.classList.add('d-none');
+                goalsResult.classList.add('d-none');
+                shotsOnGoalWarning.classList.add('d-none');
                 modelComparison.classList.add('d-none');
+                lastTotalPrediction = null;
+                lastShotsOnGoalPrediction = null;
+                currentShotsOnGoalFeatures = null;
                 predictionValue.textContent = '';
                 probableRangeValue.textContent = '';
                 wideRangeValue.textContent = '';
-                maeValue.textContent = '';
-                rmseValue.textContent = '';
+                cornersBettingLineValue.textContent = '';
+                cornersDirectValue.textContent = '';
+                cornersHomeValue.textContent = '';
+                cornersAwayValue.textContent = '';
+                cornersCombinedValue.textContent = '';
+                cornersRecommendedSideValue.textContent = '';
+                cornersDistanceToLineValue.textContent = '';
+                cornersConfidenceBadge.textContent = '';
+                cornersConfidenceBadge.className = 'badge';
+                cornersRecommendationMessage.textContent = '';
+                cornersRecommendationMessage.className = 'alert alert-light border mt-3 mb-0 d-none';
+                createBetFromTotalModelLink.href = '/Betting/Create';
+                createBetFromContextShotsLink.href = '/Betting/Create';
+                createBetFromShotsLink.href = '/Betting/Create';
+                createBetFromShotsOnGoalLink.href = '/Betting/Create';
+                createBetFromTotalModelLink.classList.add('d-none');
+                createBetFromContextShotsLink.classList.add('d-none');
+                createBetFromShotsLink.classList.add('d-none');
+                createBetFromShotsOnGoalLink.classList.add('d-none');
+                enrichedPredictionValue.textContent = '';
+                enrichedShotsValue.textContent = '';
+                enrichedShotsOnGoalValue.textContent = '';
+                basePredictionValue.textContent = '';
+                predictionDifferenceValue.textContent = '';
+                homeContextBreakdownValue.textContent = '';
+                awayContextBreakdownValue.textContent = '';
+                predictionRecommendationBadge.textContent = '';
+                predictionRecommendationBadge.className = 'prediction-status-chip';
+                shotsPredictionValue.textContent = '';
+                shotsLineValue.textContent = '';
+                shotsRecommendationValue.textContent = '';
+                shotsConfidenceBadge.textContent = '';
+                shotsConfidenceBadge.className = 'badge';
+                shotsAccuracyValue.textContent = '';
+                shotsDistanceValue.textContent = '';
+                shotsCombinedValue.textContent = '';
+                shotsHomeValue.textContent = '';
+                shotsAwayValue.textContent = '';
+                shotsDirectValue.textContent = '';
+                shotsOnGoalPredictionValue.textContent = '';
+                sogLineValue.textContent = '';
+                sogRecommendationValue.textContent = '';
+                sogConfidenceBadge.textContent = '';
+                sogConfidenceBadge.className = 'badge';
+                sogAccuracyValue.textContent = '';
+                sogDistanceValue.textContent = '';
+                sogCombinedValue.textContent = '';
+                sogHomeValue.textContent = '';
+                sogAwayValue.textContent = '';
+                sogDirectValue.textContent = '';
+                goalsPredictionValue.textContent = '';
+                goalsLineValue.textContent = '';
+                goalsRecommendationValue.textContent = '';
+                goalsConfidenceBadge.textContent = '';
+                goalsConfidenceBadge.className = 'badge';
+                goalsAccuracyValue.textContent = '';
+                goalsDistanceValue.textContent = '';
+                goalsCombinedValue.textContent = '';
+                goalsHomeValue.textContent = '';
+                goalsAwayValue.textContent = '';
+                goalsDirectValue.textContent = '';
+                renderShotsOnGoalFeatures(null);
                 autoMlTotalValue.textContent = '';
+                predHomeCornersValue.textContent = '';
+                predAwayCornersValue.textContent = '';
                 legacyTotalValue.textContent = '';
                 modelDifferenceValue.textContent = '';
                 consensusValue.textContent = '';
@@ -363,8 +1634,8 @@
 
                 input.addEventListener('focus', () => {
                     previousValue = input.value;
-                    if (previousValue) {
-                        input.value = '';
+                    if (previousValue && typeof input.select === 'function') {
+                        input.select();
                     }
                 });
 
@@ -402,9 +1673,62 @@
                 }
             };
 
-            const renderMatchRows = (matches, body, empty, tableWrap, countBadge, emptyMessage) => {
+            const renderStats = (section, stats) => {
+                if (!stats) {
+                    section.stats.classList.add('d-none');
+                    section.warning.classList.add('d-none');
+                    return;
+                }
+
+                const matchCount = Number(getContextValue(stats, 'MatchCount') ?? 0);
+                section.stats.innerHTML = `
+                    <div class="d-flex flex-wrap gap-3">
+                        <span><strong>${matchCount}</strong> matches</span>
+                        <span>For: <strong>${formatDecimal(getContextValue(stats, 'AvgCornersFor'))}</strong></span>
+                        <span>Against: <strong>${formatDecimal(getContextValue(stats, 'AvgCornersAgainst'))}</strong></span>
+                        <span>Shots: <strong>${formatDecimal(getContextValue(stats, 'AvgShots'))}</strong></span>
+                        <span>Shots Ag: <strong>${formatDecimal(getContextValue(stats, 'AvgShotsAgainst'))}</strong></span>
+                        <span>SOG: <strong>${formatDecimal(getContextValue(stats, 'AvgShotsOnGoal'))}</strong></span>
+                        <span>SOG Ag: <strong>${formatDecimal(getContextValue(stats, 'AvgShotsOnGoalAgainst'))}</strong></span>
+                        <span>Poss: <strong>${formatDecimal(getContextValue(stats, 'AvgPossession'), 1)}%</strong></span>
+                        <span>GF: <strong>${formatDecimal(getContextValue(stats, 'AvgGoalsFor'))}</strong></span>
+                        <span>GA: <strong>${formatDecimal(getContextValue(stats, 'AvgGoalsAgainst'))}</strong></span>
+                    </div>`;
+                section.stats.classList.remove('d-none');
+
+                if (matchCount > 0 && matchCount < 10) {
+                    section.warning.textContent = `Solo hay ${matchCount} partidos disponibles. El promedio se calculó con esos datos.`;
+                    section.warning.classList.remove('d-none');
+                } else if (matchCount === 0) {
+                    section.warning.textContent = 'No hay datos suficientes para este contexto.';
+                    section.warning.classList.remove('d-none');
+                } else {
+                    section.warning.classList.add('d-none');
+                }
+            };
+
+            const resetHistorySection = (section, message = 'Select teams to load history.') => {
+                section.body.replaceChildren();
+                section.count.textContent = '0 records';
+                section.empty.textContent = message;
+                section.empty.classList.remove('d-none');
+                section.tableWrap.classList.add('d-none');
+                section.stats.classList.add('d-none');
+                section.warning.classList.add('d-none');
+            };
+
+            const resetHistoryDisplay = () => {
+                resetHistorySection(historySections.homeGeneral, 'Select teams to load general home-team history.');
+                resetHistorySection(historySections.homeCondition, 'Select teams to load home condition history.');
+                resetHistorySection(historySections.awayGeneral, 'Select teams to load general away-team history.');
+                resetHistorySection(historySections.awayCondition, 'Select teams to load away condition history.');
+            };
+
+            const renderMatchRows = (matches, section, emptyMessage, stats) => {
+                const { body, empty, tableWrap, count: countBadge } = section;
                 body.replaceChildren();
                 countBadge.textContent = `${matches.length} records`;
+                renderStats(section, stats);
 
                 if (matches.length === 0) {
                     empty.textContent = emptyMessage;
@@ -420,12 +1744,14 @@
                     const season = getValue(match, 'Season') ?? '';
                     const homeTeam = getValue(match, 'HomeTeam') ?? '';
                     const awayTeam = getValue(match, 'AwayTeam') ?? '';
-                    const homeGoals = getValue(match, 'HomeGoals') ?? 0;
-                    const awayGoals = getValue(match, 'AwayGoals') ?? 0;
+                    const homeGoals = getHomeGoals(match);
+                    const awayGoals = getAwayGoals(match);
                     const homeCorners = getValue(match, 'HomeCorners') ?? 0;
                     const awayCorners = getValue(match, 'AwayCorners') ?? 0;
                     const homeShots = getValue(match, 'HomeShots') ?? 0;
                     const awayShots = getValue(match, 'AwayShots') ?? 0;
+                    const homeShotsOnGoal = getValue(match, 'HomeShotsOnGoal') ?? 0;
+                    const awayShotsOnGoal = getValue(match, 'AwayShotsOnGoal') ?? 0;
                     const homePossession = getValue(match, 'HomePossession') ?? 0;
                     const awayPossession = getValue(match, 'AwayPossession') ?? 0;
 
@@ -435,22 +1761,24 @@
                             <div class="fw-semibold"></div>
                             <div class="text-muted small"></div>
                         </td>
-                        <td><span class="badge text-bg-light stat-pill"></span></td>
+                        <td class="text-nowrap fw-semibold"></td>
                         <td>
-                            <span class="badge text-bg-primary stat-pill"></span>
+                            <div class="fw-semibold text-nowrap"></div>
                             <div class="small text-muted"></div>
                         </td>
+                        <td class="text-nowrap"></td>
                         <td class="text-nowrap"></td>
                         <td class="text-nowrap"></td>`;
 
                     row.children[0].textContent = matchDate;
                     row.children[1].children[0].textContent = `${homeTeam} vs ${awayTeam}`;
                     row.children[1].children[1].textContent = `${league} · ${season}`;
-                    row.children[2].children[0].textContent = `${homeGoals} - ${awayGoals}`;
+                    row.children[2].textContent = `${homeGoals} - ${awayGoals}`;
                     row.children[3].children[0].textContent = `${homeCorners} - ${awayCorners}`;
                     row.children[3].children[1].textContent = `Total ${Number(homeCorners) + Number(awayCorners)}`;
                     row.children[4].textContent = `${homeShots} - ${awayShots}`;
-                    row.children[5].textContent = `${round(homePossession)}% - ${round(awayPossession)}%`;
+                    row.children[5].textContent = `${homeShotsOnGoal} - ${awayShotsOnGoal}`;
+                    row.children[6].textContent = `${round(homePossession)}% - ${round(awayPossession)}%`;
 
                     body.appendChild(row);
                 }
@@ -475,14 +1803,40 @@
                 }
             };
 
+            const renderShotsOnGoalFeatures = features => {
+                shotsOnGoalFeaturesBody.replaceChildren();
+
+                if (!features) {
+                    const row = document.createElement('tr');
+                    const cell = document.createElement('td');
+                    cell.className = 'p-3 text-muted';
+                    cell.textContent = 'Run a prediction to calculate shots-on-goal features.';
+                    row.appendChild(cell);
+                    shotsOnGoalFeaturesBody.appendChild(row);
+                    return;
+                }
+
+                for (const [key, value] of Object.entries(features)) {
+                    const row = document.createElement('tr');
+                    const nameCell = document.createElement('td');
+                    const valueCell = document.createElement('td');
+                    nameCell.className = 'small text-muted';
+                    valueCell.className = 'text-end fw-semibold';
+                    nameCell.textContent = key;
+                    valueCell.textContent = typeof value === 'number' ? round(value).toString() : String(value ?? '');
+                    row.append(nameCell, valueCell);
+                    shotsOnGoalFeaturesBody.appendChild(row);
+                }
+            };
+
             const addHomeWindowFeatures = (features, matches, count) => {
                 const window = take(matches, count);
                 features[`Home_AvgCornersForLast${count}`] = average(window.map(match => getValue(match, 'HomeCorners')));
                 features[`Home_AvgCornersAgainstLast${count}`] = average(window.map(match => getValue(match, 'AwayCorners')));
                 features[`Home_AvgCornersForLast${count}_HomeOnly`] = features[`Home_AvgCornersForLast${count}`];
                 features[`Home_AvgCornersAgainstLast${count}_HomeOnly`] = features[`Home_AvgCornersAgainstLast${count}`];
-                features[`Home_AvgGoalsForLast${count}`] = average(window.map(match => getValue(match, 'HomeGoals')));
-                features[`Home_AvgGoalsAgainstLast${count}`] = average(window.map(match => getValue(match, 'AwayGoals')));
+                features[`Home_AvgGoalsForLast${count}`] = average(window.map(match => getHomeGoals(match)));
+                features[`Home_AvgGoalsAgainstLast${count}`] = average(window.map(match => getAwayGoals(match)));
                 features[`Home_AvgGoalsForLast${count}_HomeOnly`] = features[`Home_AvgGoalsForLast${count}`];
                 features[`Home_AvgGoalsAgainstLast${count}_HomeOnly`] = features[`Home_AvgGoalsAgainstLast${count}`];
                 features[`Home_AvgShotsLast${count}`] = average(window.map(match => getValue(match, 'HomeShots')));
@@ -496,8 +1850,8 @@
                 features[`Away_AvgCornersAgainstLast${count}`] = average(window.map(match => getValue(match, 'HomeCorners')));
                 features[`Away_AvgCornersForLast${count}_AwayOnly`] = features[`Away_AvgCornersForLast${count}`];
                 features[`Away_AvgCornersAgainstLast${count}_AwayOnly`] = features[`Away_AvgCornersAgainstLast${count}`];
-                features[`Away_AvgGoalsForLast${count}`] = average(window.map(match => getValue(match, 'AwayGoals')));
-                features[`Away_AvgGoalsAgainstLast${count}`] = average(window.map(match => getValue(match, 'HomeGoals')));
+                features[`Away_AvgGoalsForLast${count}`] = average(window.map(match => getAwayGoals(match)));
+                features[`Away_AvgGoalsAgainstLast${count}`] = average(window.map(match => getHomeGoals(match)));
                 features[`Away_AvgGoalsForLast${count}_AwayOnly`] = features[`Away_AvgGoalsForLast${count}`];
                 features[`Away_AvgGoalsAgainstLast${count}_AwayOnly`] = features[`Away_AvgGoalsAgainstLast${count}`];
                 features[`Away_AvgShotsLast${count}`] = average(window.map(match => getValue(match, 'AwayShots')));
@@ -505,37 +1859,266 @@
                 features[`Away_AvgPossessionLast${count}`] = average(window.map(match => getValue(match, 'AwayPossession')));
             };
 
-            const buildFeatures = () => {
+            const isTeamHomeInMatch = (match, teamName) =>
+                normalizeText(getValue(match, 'HomeTeam')) === normalizeText(teamName);
+
+            const isTeamAwayInMatch = (match, teamName) =>
+                normalizeText(getValue(match, 'AwayTeam')) === normalizeText(teamName);
+
+            const getTeamMetric = (match, teamName, metric) => {
+                if (isTeamHomeInMatch(match, teamName)) {
+                    return Number(getValue(match, `Home${metric}`) ?? 0);
+                }
+
+                if (isTeamAwayInMatch(match, teamName)) {
+                    return Number(getValue(match, `Away${metric}`) ?? 0);
+                }
+
+                return Number(getValue(match, `Home${metric}`) ?? 0);
+            };
+
+            const getOpponentMetric = (match, teamName, metric) => {
+                if (isTeamHomeInMatch(match, teamName)) {
+                    return Number(getValue(match, `Away${metric}`) ?? 0);
+                }
+
+                if (isTeamAwayInMatch(match, teamName)) {
+                    return Number(getValue(match, `Home${metric}`) ?? 0);
+                }
+
+                return Number(getValue(match, `Away${metric}`) ?? 0);
+            };
+
+            const getTeamGoals = (match, teamName) => {
+                if (isTeamHomeInMatch(match, teamName)) {
+                    return Number(getHomeGoals(match) ?? 0);
+                }
+
+                if (isTeamAwayInMatch(match, teamName)) {
+                    return Number(getAwayGoals(match) ?? 0);
+                }
+
+                return Number(getHomeGoals(match) ?? 0);
+            };
+
+            const getOpponentGoals = (match, teamName) => {
+                if (isTeamHomeInMatch(match, teamName)) {
+                    return Number(getAwayGoals(match) ?? 0);
+                }
+
+                if (isTeamAwayInMatch(match, teamName)) {
+                    return Number(getHomeGoals(match) ?? 0);
+                }
+
+                return Number(getAwayGoals(match) ?? 0);
+            };
+
+            const addShotsOnGoalWindowFeatures = (features, prefix, matches, teamName, count) => {
+                const window = take(matches, count);
+                const cornersFor = window.map(match => getTeamMetric(match, teamName, 'Corners'));
+                const cornersAgainst = window.map(match => getOpponentMetric(match, teamName, 'Corners'));
+                const shotsFor = window.map(match => getTeamMetric(match, teamName, 'Shots'));
+                const shotsAgainst = window.map(match => getOpponentMetric(match, teamName, 'Shots'));
+                const shotsOnGoalFor = window.map(match => getTeamMetric(match, teamName, 'ShotsOnGoal'));
+                const shotsOnGoalAgainst = window.map(match => getOpponentMetric(match, teamName, 'ShotsOnGoal'));
+
+                features[`${prefix}_AvgCornersForLast${count}`] = average(cornersFor);
+                features[`${prefix}_AvgCornersAgainstLast${count}`] = average(cornersAgainst);
+                features[`${prefix}_AvgTotalCornersLast${count}`] = round(features[`${prefix}_AvgCornersForLast${count}`] + features[`${prefix}_AvgCornersAgainstLast${count}`]);
+                features[`${prefix}_AvgShotsForLast${count}`] = average(shotsFor);
+                features[`${prefix}_AvgShotsAgainstLast${count}`] = average(shotsAgainst);
+                features[`${prefix}_AvgTotalShotsLast${count}`] = round(features[`${prefix}_AvgShotsForLast${count}`] + features[`${prefix}_AvgShotsAgainstLast${count}`]);
+                features[`${prefix}_AvgShotsOnGoalForLast${count}`] = average(shotsOnGoalFor);
+                features[`${prefix}_AvgShotsOnGoalAgainstLast${count}`] = average(shotsOnGoalAgainst);
+                features[`${prefix}_AvgTotalShotsOnGoalLast${count}`] = round(features[`${prefix}_AvgShotsOnGoalForLast${count}`] + features[`${prefix}_AvgShotsOnGoalAgainstLast${count}`]);
+                features[`${prefix}_AvgPossessionLast${count}`] = average(window.map(match => getTeamMetric(match, teamName, 'Possession')));
+                features[`${prefix}_AvgGoalsForLast${count}`] = average(window.map(match => getTeamGoals(match, teamName)));
+                features[`${prefix}_AvgGoalsAgainstLast${count}`] = average(window.map(match => getOpponentGoals(match, teamName)));
+
+                if (count === 5) {
+                    features[`${prefix}_StdCornersForLast5`] = standardDeviation(cornersFor);
+                    features[`${prefix}_RangeCornersForLast5`] = range(cornersFor);
+                    features[`${prefix}_StdShotsForLast5`] = standardDeviation(shotsFor);
+                    features[`${prefix}_RangeShotsForLast5`] = range(shotsFor);
+                    features[`${prefix}_StdShotsOnGoalForLast5`] = standardDeviation(shotsOnGoalFor);
+                    features[`${prefix}_RangeShotsOnGoalForLast5`] = range(shotsOnGoalFor);
+                }
+            };
+
+            const addShotsOnGoalConditionFeatures = (features, prefix, contextName, matches, teamName) => {
+                const window = take(matches, 10);
+                features[`${prefix}_${contextName}AvgCornersForLast10`] = average(window.map(match => getTeamMetric(match, teamName, 'Corners')));
+                features[`${prefix}_${contextName}AvgCornersAgainstLast10`] = average(window.map(match => getOpponentMetric(match, teamName, 'Corners')));
+                features[`${prefix}_${contextName}AvgTotalCornersLast10`] = round(features[`${prefix}_${contextName}AvgCornersForLast10`] + features[`${prefix}_${contextName}AvgCornersAgainstLast10`]);
+                features[`${prefix}_${contextName}AvgShotsForLast10`] = average(window.map(match => getTeamMetric(match, teamName, 'Shots')));
+                features[`${prefix}_${contextName}AvgShotsAgainstLast10`] = average(window.map(match => getOpponentMetric(match, teamName, 'Shots')));
+                features[`${prefix}_${contextName}AvgTotalShotsLast10`] = round(features[`${prefix}_${contextName}AvgShotsForLast10`] + features[`${prefix}_${contextName}AvgShotsAgainstLast10`]);
+                features[`${prefix}_${contextName}AvgShotsOnGoalForLast10`] = average(window.map(match => getTeamMetric(match, teamName, 'ShotsOnGoal')));
+                features[`${prefix}_${contextName}AvgShotsOnGoalAgainstLast10`] = average(window.map(match => getOpponentMetric(match, teamName, 'ShotsOnGoal')));
+                features[`${prefix}_${contextName}AvgTotalShotsOnGoalLast10`] = round(features[`${prefix}_${contextName}AvgShotsOnGoalForLast10`] + features[`${prefix}_${contextName}AvgShotsOnGoalAgainstLast10`]);
+                features[`${prefix}_${contextName}AvgPossessionLast10`] = average(window.map(match => getTeamMetric(match, teamName, 'Possession')));
+            };
+
+            const buildShotsOnGoalFeatures = () => {
+                const homeTeam = homeTeamSelect.value.trim();
+                const awayTeam = awayTeamSelect.value.trim();
+                const homeBig3 = getBig3Flag(homeTeam);
+                const awayBig3 = getBig3Flag(awayTeam);
+
                 const features = {
-                    League: leagueSelect.value,
-                    Season: seasonInput.value.trim(),
-                    MatchDate: matchDateInput.value,
-                    big3home: getBig3Flag(homeTeamSelect.value),
-                    big3away: getBig3Flag(awayTeamSelect.value),
-                    HomeFormation: homeFormationInput.value.trim() || 'UNKNOWN',
-                    AwayFormation: awayFormationInput.value.trim() || 'UNKNOWN',
-                    HomeHasFormation: homeFormationInput.value.trim() ? 1 : 0,
-                    AwayHasFormation: awayFormationInput.value.trim() ? 1 : 0
+                    league: leagueSelect.value.trim(),
+                    season: seasonInput.value.trim(),
+                    homeTeam,
+                    awayTeam,
+                    homeFormation: homeFormationInput.value.trim() || 'UNKNOWN',
+                    awayFormation: awayFormationInput.value.trim() || 'UNKNOWN',
+                    homeHasFormation: homeFormationInput.value.trim() ? 1 : 0,
+                    awayHasFormation: awayFormationInput.value.trim() ? 1 : 0,
+                    big3home: homeBig3,
+                    big3away: awayBig3,
+                    big3Diff: homeBig3 - awayBig3,
+                    isKnockout: isKnockoutInput.checked ? 1 : 0,
+                    shotsLine: Number(shotsLineInput.value || 0),
+                    sogLine: Number(sogLineInput.value || 0),
+                    goalsLine: Number(goalsLineInput.value || 0),
+                    homeIsCountry: 0,
+                    awayIsCountry: 0,
+                    countryDiff: 0
                 };
 
-                for (const count of [3, 5, 10]) {
-                    addHomeWindowFeatures(features, currentHomeMatches, count);
-                    addAwayWindowFeatures(features, currentAwayMatches, count);
-                }
+                features.home_MatchesLast3 = take(currentHomeGeneralMatches, 3).length;
+                features.away_MatchesLast3 = take(currentAwayGeneralMatches, 3).length;
+                features.home_MatchesLast5 = take(currentHomeGeneralMatches, 5).length;
+                features.away_MatchesLast5 = take(currentAwayGeneralMatches, 5).length;
+                features.home_HomeMatchesLast10 = take(currentHomeConditionMatches, 10).length;
+                features.away_AwayMatchesLast10 = take(currentAwayConditionMatches, 10).length;
+
+                addShotsOnGoalWindowFeatures(features, 'home', currentHomeGeneralMatches, homeTeam, 3);
+                addShotsOnGoalWindowFeatures(features, 'away', currentAwayGeneralMatches, awayTeam, 3);
+                addShotsOnGoalWindowFeatures(features, 'home', currentHomeGeneralMatches, homeTeam, 5);
+                addShotsOnGoalWindowFeatures(features, 'away', currentAwayGeneralMatches, awayTeam, 5);
+                addShotsOnGoalConditionFeatures(features, 'home', 'Home', currentHomeConditionMatches, homeTeam);
+                addShotsOnGoalConditionFeatures(features, 'away', 'Away', currentAwayConditionMatches, awayTeam);
+
+                features.homeCornersPowerLast5 = round((features.home_AvgCornersForLast5 + features.away_AvgCornersAgainstLast5) / 2);
+                features.awayCornersPowerLast5 = round((features.away_AvgCornersForLast5 + features.home_AvgCornersAgainstLast5) / 2);
+                features.expectedTotalCornersPowerLast5 = round(features.homeCornersPowerLast5 + features.awayCornersPowerLast5);
+                features.cornersDiffLast5 = round(features.home_AvgCornersForLast5 - features.away_AvgCornersForLast5);
+                features.totalStdCornersLast5 = round(features.home_StdCornersForLast5 + features.away_StdCornersForLast5);
+                features.totalRangeCornersLast5 = round(features.home_RangeCornersForLast5 + features.away_RangeCornersForLast5);
+                features.homeShotsPowerLast5 = round((features.home_AvgShotsForLast5 + features.away_AvgShotsAgainstLast5) / 2);
+                features.awayShotsPowerLast5 = round((features.away_AvgShotsForLast5 + features.home_AvgShotsAgainstLast5) / 2);
+                features.expectedTotalShotsPowerLast5 = round(features.homeShotsPowerLast5 + features.awayShotsPowerLast5);
+                features.shotsDiffLast5 = round(features.home_AvgShotsForLast5 - features.away_AvgShotsForLast5);
+                features.totalStdShotsLast5 = round(features.home_StdShotsForLast5 + features.away_StdShotsForLast5);
+                features.totalRangeShotsLast5 = round(features.home_RangeShotsForLast5 + features.away_RangeShotsForLast5);
+                features.homeShotsOnGoalPowerLast5 = round((features.home_AvgShotsOnGoalForLast5 + features.away_AvgShotsOnGoalAgainstLast5) / 2);
+                features.awayShotsOnGoalPowerLast5 = round((features.away_AvgShotsOnGoalForLast5 + features.home_AvgShotsOnGoalAgainstLast5) / 2);
+                features.expectedTotalShotsOnGoalPowerLast5 = round(features.homeShotsOnGoalPowerLast5 + features.awayShotsOnGoalPowerLast5);
+                features.shotsOnGoalDiffLast5 = round(features.home_AvgShotsOnGoalForLast5 - features.away_AvgShotsOnGoalForLast5);
+                features.totalStdShotsOnGoalLast5 = round(features.home_StdShotsOnGoalForLast5 + features.away_StdShotsOnGoalForLast5);
+                features.totalRangeShotsOnGoalLast5 = round(features.home_RangeShotsOnGoalForLast5 + features.away_RangeShotsOnGoalForLast5);
+                features.homeGoalsPowerLast5 = round((features.home_AvgGoalsForLast5 + features.away_AvgGoalsAgainstLast5) / 2);
+                features.awayGoalsPowerLast5 = round((features.away_AvgGoalsForLast5 + features.home_AvgGoalsAgainstLast5) / 2);
+                features.expectedTotalGoalsPowerLast5 = round(features.homeGoalsPowerLast5 + features.awayGoalsPowerLast5);
+                features.possessionDiffLast5 = round(features.home_AvgPossessionLast5 - features.away_AvgPossessionLast5);
+                features.goalsForDiffLast5 = round(features.home_AvgGoalsForLast5 - features.away_AvgGoalsForLast5);
+                features.goalsAgainstDiffLast5 = round(features.home_AvgGoalsAgainstLast5 - features.away_AvgGoalsAgainstLast5);
+
+                return features;
+            };
+
+            const buildFeatures = () => {
+                const homeTeam = homeTeamSelect.value.trim();
+                const awayTeam = awayTeamSelect.value.trim();
+                const homeBig3 = getBig3Flag(homeTeam);
+                const awayBig3 = getBig3Flag(awayTeam);
+                const features = {
+                    League: leagueSelect.value.trim(),
+                    Season: seasonInput.value.trim(),
+                    HomeTeam: homeTeam,
+                    AwayTeam: awayTeam,
+                    HomeFormation: homeFormationInput.value.trim() || 'Unknown',
+                    AwayFormation: awayFormationInput.value.trim() || 'Unknown',
+                    HomeHasFormation: homeFormationInput.value.trim() ? 1 : 0,
+                    AwayHasFormation: awayFormationInput.value.trim() ? 1 : 0,
+                    big3home: homeBig3,
+                    big3away: awayBig3,
+                    Big3Diff: homeBig3 - awayBig3,
+                    IsKnockout: isKnockoutInput.checked ? 1 : 0,
+                    BettingLine: Number(bettingLineInput.value || 0),
+                    GoalsLine: Number(goalsLineInput.value || 0),
+                    HomeIsCountry: 0,
+                    AwayIsCountry: 0,
+                    CountryDiff: 0
+                };
+
+                features.Home_MatchesLast3 = take(currentHomeGeneralMatches, 3).length;
+                features.Away_MatchesLast3 = take(currentAwayGeneralMatches, 3).length;
+                features.Home_MatchesLast5 = take(currentHomeGeneralMatches, 5).length;
+                features.Away_MatchesLast5 = take(currentAwayGeneralMatches, 5).length;
+                features.Home_HomeMatchesLast10 = take(currentHomeConditionMatches, 10).length;
+                features.Away_AwayMatchesLast10 = take(currentAwayConditionMatches, 10).length;
+
+                addShotsOnGoalWindowFeatures(features, 'Home', currentHomeGeneralMatches, homeTeam, 3);
+                addShotsOnGoalWindowFeatures(features, 'Away', currentAwayGeneralMatches, awayTeam, 3);
+                addShotsOnGoalWindowFeatures(features, 'Home', currentHomeGeneralMatches, homeTeam, 5);
+                addShotsOnGoalWindowFeatures(features, 'Away', currentAwayGeneralMatches, awayTeam, 5);
+                addShotsOnGoalConditionFeatures(features, 'Home', 'Home', currentHomeConditionMatches, homeTeam);
+                addShotsOnGoalConditionFeatures(features, 'Away', 'Away', currentAwayConditionMatches, awayTeam);
+
+                features.HomeCornersPowerLast5 = round((features.Home_AvgCornersForLast5 + features.Away_AvgCornersAgainstLast5) / 2);
+                features.AwayCornersPowerLast5 = round((features.Away_AvgCornersForLast5 + features.Home_AvgCornersAgainstLast5) / 2);
+                features.ExpectedTotalCornersPowerLast5 = round(features.HomeCornersPowerLast5 + features.AwayCornersPowerLast5);
+                features.CornersDiffLast5 = round(features.Home_AvgCornersForLast5 - features.Away_AvgCornersForLast5);
+                features.TotalStdCornersLast5 = round(features.Home_StdCornersForLast5 + features.Away_StdCornersForLast5);
+                features.TotalRangeCornersLast5 = round(features.Home_RangeCornersForLast5 + features.Away_RangeCornersForLast5);
+                features.HomeShotsPowerLast5 = round((features.Home_AvgShotsForLast5 + features.Away_AvgShotsAgainstLast5) / 2);
+                features.AwayShotsPowerLast5 = round((features.Away_AvgShotsForLast5 + features.Home_AvgShotsAgainstLast5) / 2);
+                features.ExpectedTotalShotsPowerLast5 = round(features.HomeShotsPowerLast5 + features.AwayShotsPowerLast5);
+                features.ShotsDiffLast5 = round(features.Home_AvgShotsForLast5 - features.Away_AvgShotsForLast5);
+                features.TotalStdShotsLast5 = round(features.Home_StdShotsForLast5 + features.Away_StdShotsForLast5);
+                features.TotalRangeShotsLast5 = round(features.Home_RangeShotsForLast5 + features.Away_RangeShotsForLast5);
+                features.HomeShotsOnGoalPowerLast5 = round((features.Home_AvgShotsOnGoalForLast5 + features.Away_AvgShotsOnGoalAgainstLast5) / 2);
+                features.AwayShotsOnGoalPowerLast5 = round((features.Away_AvgShotsOnGoalForLast5 + features.Home_AvgShotsOnGoalAgainstLast5) / 2);
+                features.ExpectedTotalShotsOnGoalPowerLast5 = round(features.HomeShotsOnGoalPowerLast5 + features.AwayShotsOnGoalPowerLast5);
+                features.ShotsOnGoalDiffLast5 = round(features.Home_AvgShotsOnGoalForLast5 - features.Away_AvgShotsOnGoalForLast5);
+                features.TotalStdShotsOnGoalLast5 = round(features.Home_StdShotsOnGoalForLast5 + features.Away_StdShotsOnGoalForLast5);
+                features.TotalRangeShotsOnGoalLast5 = round(features.Home_RangeShotsOnGoalForLast5 + features.Away_RangeShotsOnGoalForLast5);
+                features.HomeGoalsPowerLast5 = round((features.Home_AvgGoalsForLast5 + features.Away_AvgGoalsAgainstLast5) / 2);
+                features.AwayGoalsPowerLast5 = round((features.Away_AvgGoalsForLast5 + features.Home_AvgGoalsAgainstLast5) / 2);
+                features.ExpectedTotalGoalsPowerLast5 = round(features.HomeGoalsPowerLast5 + features.AwayGoalsPowerLast5);
+                features.PossessionDiffLast5 = round(features.Home_AvgPossessionLast5 - features.Away_AvgPossessionLast5);
+                features.GoalsForDiffLast5 = round(features.Home_AvgGoalsForLast5 - features.Away_AvgGoalsForLast5);
+                features.GoalsAgainstDiffLast5 = round(features.Home_AvgGoalsAgainstLast5 - features.Away_AvgGoalsAgainstLast5);
 
                 return features;
             };
 
             const loadTeams = async () => {
                 const league = leagueSelect.value.trim();
+                const teamGender = teamGenderSelect.value || 'M';
+                const teamRequestKey = `${league}|${teamGender}`;
+
+                if (league && teamRequestKey === lastLoadedLeague && currentTeams.length > 0) {
+                    return;
+                }
+
                 resetPrediction();
                 predictButton.disabled = true;
                 currentFeatures = null;
-                currentHomeMatches = [];
-                currentAwayMatches = [];
+                currentHomeGeneralMatches = [];
+                currentHomeConditionMatches = [];
+                currentAwayGeneralMatches = [];
+                currentAwayConditionMatches = [];
+                currentPredictionContext = null;
                 currentTeams = [];
                 homeTeamSelect.value = '';
                 awayTeamSelect.value = '';
+                currentShotsOnGoalFeatures = null;
+                clearAutofilledFormation(homeFormationInput);
+                clearAutofilledFormation(awayFormationInput);
+                resetHistoryDisplay();
 
                 if (!league) {
                     setTeamOptions(homeTeamOptions, []);
@@ -549,10 +2132,6 @@
                     return;
                 }
 
-                if (league === lastLoadedLeague && currentTeams.length > 0) {
-                    return;
-                }
-
                 teamRequestController?.abort();
                 teamRequestController = new AbortController();
                 setTeamOptions(homeTeamOptions, []);
@@ -563,7 +2142,7 @@
                 awayTeamSelect.disabled = true;
 
                 try {
-                    const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league)}`, {
+                    const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league)}&teamGender=${encodeURIComponent(teamGender)}`, {
                         signal: teamRequestController.signal
                     });
 
@@ -579,7 +2158,7 @@
                     awayTeamSelect.placeholder = 'Search or select away team';
                     homeTeamSelect.disabled = false;
                     awayTeamSelect.disabled = false;
-                    lastLoadedLeague = league;
+                    lastLoadedLeague = teamRequestKey;
                 } catch (error) {
                     if (error.name === 'AbortError') {
                         return;
@@ -592,10 +2171,13 @@
                 }
             };
 
-            const loadHistory = async () => {
+            const loadHistory = async (force = false) => {
                 resetPrediction();
                 const homeTeam = homeTeamSelect.value.trim();
                 const awayTeam = awayTeamSelect.value.trim();
+                const league = leagueSelect.value.trim();
+                const teamGender = teamGenderSelect.value || 'M';
+                const requestKey = `${league}|${teamGender}|${homeTeam}|${awayTeam}`;
 
                 if (!homeTeam || !awayTeam) {
                     setError('Select both teams before loading history.');
@@ -607,13 +2189,24 @@
                     return;
                 }
 
+                if (!force && requestKey === activeHistoryRequestKey) {
+                    historyStatusBadge.textContent = 'History already loading';
+                    return;
+                }
+
+                if (!force && requestKey === loadedHistoryRequestKey && currentPredictionContext) {
+                    return;
+                }
+
                 historyRequestController?.abort();
                 historyRequestController = new AbortController();
+                activeHistoryRequestKey = requestKey;
                 historyStatusBadge.textContent = 'Loading history';
                 predictButton.disabled = true;
+                resetHistoryDisplay();
 
                 try {
-                    const response = await fetch(`/MatchHistory/RecentMatches?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}`, {
+                    const response = await fetch(`/MatchHistory/PredictionContext?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}&teamGender=${encodeURIComponent(teamGender)}`, {
                         signal: historyRequestController.signal
                     });
 
@@ -621,17 +2214,49 @@
                         throw new Error(`History request failed with ${response.status}`);
                     }
 
-                    const matches = await response.json();
-                    currentHomeMatches = matches.filter(match => String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'HOME');
-                    currentAwayMatches = matches.filter(match => String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'AWAY');
+                    currentPredictionContext = await response.json();
+                    if (!currentPredictionContext) {
+                        throw new Error('Prediction context response was empty.');
+                    }
 
-                    renderMatchRows(currentHomeMatches, homeHistoryBody, homeHistoryEmpty, homeHistoryTableWrap, homeHistoryCount, 'No home history found.');
-                    renderMatchRows(currentAwayMatches, awayHistoryBody, awayHistoryEmpty, awayHistoryTableWrap, awayHistoryCount, 'No away history found.');
+                    const summary = getContextValue(currentPredictionContext, 'Summary');
+                    currentHomeGeneralMatches = getContextValue(currentPredictionContext, 'HomeGeneralMatches') ?? [];
+                    currentHomeConditionMatches = getContextValue(currentPredictionContext, 'HomeAsHomeMatches') ?? [];
+                    currentAwayGeneralMatches = getContextValue(currentPredictionContext, 'AwayGeneralMatches') ?? [];
+                    currentAwayConditionMatches = getContextValue(currentPredictionContext, 'AwayAsAwayMatches') ?? [];
+
+                    const latestHomeFormation = findLatestFormationFromMatches(currentHomeGeneralMatches, homeTeam);
+                    const latestAwayFormation = findLatestFormationFromMatches(currentAwayGeneralMatches, awayTeam);
+                    setAutofilledFormation(homeFormationInput, latestHomeFormation?.formation, latestHomeFormation);
+                    setAutofilledFormation(awayFormationInput, latestAwayFormation?.formation, latestAwayFormation);
+
+                    renderMatchRows(
+                        currentHomeGeneralMatches,
+                        historySections.homeGeneral,
+                        'No general history found for the home team.',
+                        getContextValue(summary, 'HomeGeneral'));
+                    renderMatchRows(
+                        currentHomeConditionMatches,
+                        historySections.homeCondition,
+                        'No home-only history found for the home team.',
+                        getContextValue(summary, 'HomeAsHome'));
+                    renderMatchRows(
+                        currentAwayGeneralMatches,
+                        historySections.awayGeneral,
+                        'No general history found for the away team.',
+                        getContextValue(summary, 'AwayGeneral'));
+                    renderMatchRows(
+                        currentAwayConditionMatches,
+                        historySections.awayCondition,
+                        'No away-only history found for the away team.',
+                        getContextValue(summary, 'AwayAsAway'));
 
                     currentFeatures = buildFeatures();
                     renderFeatures(currentFeatures);
-                    predictButton.disabled = currentHomeMatches.length === 0 || currentAwayMatches.length === 0;
-                    historyStatusBadge.textContent = `${matches.length} records loaded`;
+                    renderEnrichedPrediction();
+                    predictButton.disabled = currentHomeConditionMatches.length === 0 || currentAwayConditionMatches.length === 0;
+                    historyStatusBadge.textContent = `${currentHomeGeneralMatches.length + currentHomeConditionMatches.length + currentAwayGeneralMatches.length + currentAwayConditionMatches.length} records loaded`;
+                    loadedHistoryRequestKey = requestKey;
                 } catch (error) {
                     if (error.name === 'AbortError') {
                         return;
@@ -639,6 +2264,35 @@
 
                     setError('Historical matches could not be loaded.');
                     historyStatusBadge.textContent = 'History unavailable';
+                    currentPredictionContext = null;
+                } finally {
+                    if (activeHistoryRequestKey === requestKey) {
+                        activeHistoryRequestKey = '';
+                    }
+                }
+            };
+
+            const predictShotsOnGoal = async () => {
+                const features = buildShotsOnGoalFeatures();
+                currentShotsOnGoalFeatures = features;
+                renderShotsOnGoalFeatures(currentShotsOnGoalFeatures);
+
+                try {
+                    const response = await fetch('/Predictions/PredictShots', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(features)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Shots-on-goal model could not be executed.');
+                    }
+
+                    const result = await response.json();
+                    setShotsOnGoalPrediction(result);
+                } catch (error) {
+                    console.warn('Shots-on-goal prediction failed:', error);
+                    showShotsOnGoalWarning();
                 }
             };
 
@@ -667,27 +2321,72 @@
                     }
 
                     const result = await response.json();
-                    setPrediction(result);
+                    const totalPrediction = setPrediction(result);
+                    await predictShotsOnGoal();
                 } catch (error) {
                     setError(error.message);
                 } finally {
                     predictButton.disabled = false;
-                    predictButton.textContent = 'Predict total corners';
+                    predictButton.textContent = 'Predict match';
+                }
+            };
+
+            const initializePreloadedMatch = async () => {
+                const preloadedHomeTeam = homeTeamSelect.dataset.initialValue?.trim() ?? '';
+                const preloadedAwayTeam = awayTeamSelect.dataset.initialValue?.trim() ?? '';
+
+                if (!leagueSelect.value.trim()) {
+                    return;
+                }
+
+                await loadTeams();
+
+                if (preloadedHomeTeam) {
+                    homeTeamSelect.value = preloadedHomeTeam;
+                }
+
+                if (preloadedAwayTeam) {
+                    awayTeamSelect.value = preloadedAwayTeam;
+                }
+
+                if (preloadedHomeTeam) {
+                    homeTeamSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                if (preloadedAwayTeam) {
+                    awayTeamSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                if (preloadedHomeTeam || preloadedAwayTeam) {
+                    historyStatusBadge.textContent = 'Ready to load history';
+                    predictButton.disabled = true;
                 }
             };
 
             leagueSelect.addEventListener('change', loadTeams);
-            leagueSelect.addEventListener('blur', loadTeams);
-            homeTeamSelect.addEventListener('change', loadHistory);
-            homeTeamSelect.addEventListener('blur', loadHistory);
-            awayTeamSelect.addEventListener('change', loadHistory);
-            awayTeamSelect.addEventListener('blur', loadHistory);
+            teamGenderSelect.addEventListener('change', () => {
+                lastLoadedLeague = '';
+                loadTeams();
+            });
+            homeTeamSelect.addEventListener('change', () => {
+                loadLatestFormation(homeTeamSelect, homeFormationInput, 'home');
+                loadHistory();
+            });
+            awayTeamSelect.addEventListener('change', () => {
+                loadLatestFormation(awayTeamSelect, awayFormationInput, 'away');
+                loadHistory();
+            });
             wireRefreshableDatalist(leagueSelect);
             wireRefreshableDatalist(homeTeamSelect);
             wireRefreshableDatalist(awayTeamSelect);
             wireRefreshableDatalist(homeFormationInput);
             wireRefreshableDatalist(awayFormationInput);
             homeFormationInput.addEventListener('input', () => {
+                if (homeFormationInput.value !== homeFormationInput.dataset.autofillValue) {
+                    delete homeFormationInput.dataset.autofilled;
+                    delete homeFormationInput.dataset.autofillValue;
+                }
+
                 if (!currentFeatures) {
                     return;
                 }
@@ -696,6 +2395,11 @@
                 renderFeatures(currentFeatures);
             });
             awayFormationInput.addEventListener('input', () => {
+                if (awayFormationInput.value !== awayFormationInput.dataset.autofillValue) {
+                    delete awayFormationInput.dataset.autofilled;
+                    delete awayFormationInput.dataset.autofillValue;
+                }
+
                 if (!currentFeatures) {
                     return;
                 }
@@ -715,8 +2419,15 @@
                     renderFeatures(currentFeatures);
                 }
             });
-            loadHistoryButton.addEventListener('click', loadHistory);
+            isKnockoutInput.addEventListener('change', () => {
+                if (currentFeatures) {
+                    currentFeatures = buildFeatures();
+                    renderFeatures(currentFeatures);
+                }
+            });
+            loadHistoryButton.addEventListener('click', () => loadHistory(true));
             predictButton.addEventListener('click', predict);
+            initializePreloadedMatch();
         })();
     </script>
 }

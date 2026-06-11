@@ -6,6 +6,11 @@ public sealed class MatchHistoryIndexViewModel
 {
     public CreateMatchHistoryViewModel Form { get; init; } = new();
 
+    public MatchHistoryFiltersViewModel Filters { get; init; } = new();
+
+    public IReadOnlyList<MatchHistoryItemViewModel> Records { get; init; } =
+        Array.Empty<MatchHistoryItemViewModel>();
+
     public IReadOnlyList<MatchHistoryItemViewModel> RecentMatches { get; init; } =
         Array.Empty<MatchHistoryItemViewModel>();
 

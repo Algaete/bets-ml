@@ -1,0 +1,130 @@
+@model CornersPrediction.Web.Models.Admin.UserAdminIndexViewModel
+
+@{
+    var language = UiText.GetLanguage(Context);
+    string T(string key) => UiText.T(language, key);
+    ViewData["Title"] = T("UserAdmin.Title");
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <div class="text-muted small text-uppercase fw-semibold">@T("UserAdmin.Eyebrow")</div>
+        <h1 class="h3 mb-1">@T("UserAdmin.Title")</h1>
+        <p class="text-muted mb-0">@T("UserAdmin.Description")</p>
+    </div>
+    <a class="btn btn-primary" asp-controller="UserAdmin" asp-action="Create">@T("UserAdmin.Create")</a>
+</div>
+
+@if (TempData["SuccessMessage"] is string successMessage)
+{
+    <div class="alert alert-success">@successMessage</div>
+}
+
+@if (TempData["ErrorMessage"] is string errorMessage)
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+
+<div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+
+<section class="surface-panel mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-5">
+            <label class="form-label" asp-for="Filters.Search">@T("Common.Search")</label>
+            <input class="form-control" asp-for="Filters.Search" name="Search" placeholder="@T("UserAdmin.SearchPlaceholder")" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label" asp-for="Filters.Role">@T("Common.Roles")</label>
+            <select class="form-select" asp-for="Filters.Role" name="Role">
+                <option value="">@T("Common.AllRoles")</option>
+                @foreach (var role in Model.Roles)
+                {
+                    <option value="@role.Name">@role.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" asp-for="Filters.IsActive">@T("Fields.Status")</label>
+            <select class="form-select" asp-for="Filters.IsActive" name="IsActive">
+                <option value="">@T("Common.AllStatuses")</option>
+                <option value="true">@T("Common.Active")</option>
+                <option value="false">@T("Common.Inactive")</option>
+            </select>
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-outline-primary w-100" type="submit">@T("Common.Filter")</button>
+            <a class="btn btn-outline-secondary" asp-controller="UserAdmin" asp-action="Index">@T("Common.Clear")</a>
+        </div>
+    </form>
+</section>
+
+<section class="surface-panel">
+    <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h5 mb-1">@T("UserAdmin.Users")</h2>
+            <div class="text-muted small">@Model.Users.Count @T("Common.RecordCount")</div>
+        </div>
+        <span class="badge text-bg-light">@T("Common.AdminOnly")</span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>@T("Common.Name")</th>
+                    <th>@T("Common.Email")</th>
+                    <th>@T("UserAdmin.ExternalId")</th>
+                    <th>@T("Common.Roles")</th>
+                    <th>@T("Fields.Status")</th>
+                    <th>@T("Common.Updated")</th>
+                    <th class="text-end">@T("Common.Actions")</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Model.Users.Count == 0)
+                {
+                    <tr>
+                        <td colspan="7" class="p-4 text-muted">@T("UserAdmin.NoUsers")</td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (var user in Model.Users)
+                    {
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">@user.DisplayName</div>
+                                <div class="text-muted small">#@user.Id</div>
+                            </td>
+                            <td>@user.Email</td>
+                            <td class="text-muted small">@(user.ExternalUserId ?? "-")</td>
+                            <td>
+                                @foreach (var role in user.Roles)
+                                {
+                                    <span class="badge text-bg-light me-1">@role</span>
+                                }
+                            </td>
+                            <td>
+                                <span class="badge @(user.IsActive ? "text-bg-success" : "text-bg-secondary")">
+                                    @(user.IsActive ? T("Common.Active") : T("Common.Inactive"))
+                                </span>
+                            </td>
+                            <td class="text-muted small">
+                                @((user.UpdatedAt ?? user.CreatedAt).ToString("yyyy-MM-dd HH:mm"))
+                            </td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm">
+                                    <a class="btn btn-outline-primary" asp-controller="UserAdmin" asp-action="Edit" asp-route-id="@user.Id">@T("Common.Edit")</a>
+                                    <form method="post" asp-controller="UserAdmin" asp-action="Delete" asp-route-id="@user.Id" onsubmit="return confirm('@T("Common.DeleteUserConfirm")');">
+                                        @Html.AntiForgeryToken()
+                                        <button class="btn btn-outline-danger" type="submit">@T("Common.Delete")</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</section>

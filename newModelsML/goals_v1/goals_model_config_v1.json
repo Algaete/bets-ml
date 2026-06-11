@@ -1,0 +1,242 @@
+{
+  "version": "goals_v1",
+  "models": {
+    "total": "model_total_goals_v1.pkl",
+    "home": "model_home_goals_v1.pkl",
+    "away": "model_away_goals_v1.pkl",
+    "columns": "model_columns_goals_v1.pkl"
+  },
+  "best_models": {
+    "total": "catboost",
+    "home": "catboost",
+    "away": "catboost"
+  },
+  "metrics": {
+    "total": {
+      "target": "TotalGoals",
+      "model": "catboost",
+      "mae": 1.3130993241175235,
+      "rmse": 1.6760966264371002,
+      "r2": 0.0032961725143355602,
+      "spearman": 0.1399914365690468
+    },
+    "home": {
+      "target": "HomeGoals",
+      "model": "catboost",
+      "mae": 0.9505828254763634,
+      "rmse": 1.2843128867398914,
+      "r2": -0.0007516305789412314,
+      "spearman": 0.20762647510854845
+    },
+    "away": {
+      "target": "AwayGoals",
+      "model": "catboost",
+      "mae": 0.8302120813824123,
+      "rmse": 1.1318820811964594,
+      "r2": 0.020616626463159315,
+      "spearman": 0.161990085453
+    },
+    "direct_total": {
+      "mae": 1.3130993241175235,
+      "rmse": 1.6760966264371002,
+      "r2": 0.0032961725143355602,
+      "spearman": 0.1399914365690468
+    },
+    "combined_home_away": {
+      "mae": 1.330562159759887,
+      "rmse": 1.7303934226531452,
+      "r2": -0.06232581071798893,
+      "spearman": 0.11206557088389278
+    }
+  },
+  "best_ensemble": {
+    "weight_direct": 1.0,
+    "weight_home_away": 0.0,
+    "mae": 1.3130993241175235,
+    "rmse": 1.6760966264371002,
+    "r2": 0.0032961725143355602,
+    "spearman": 0.1399914365690468
+  },
+  "line_summary": [
+    {
+      "Line": 0.5,
+      "MinDistance": 0.0,
+      "Bets": 10314,
+      "Accuracy": 0.9298041496994377
+    },
+    {
+      "Line": 0.5,
+      "MinDistance": 0.25,
+      "Bets": 10314,
+      "Accuracy": 0.9298041496994377
+    },
+    {
+      "Line": 0.5,
+      "MinDistance": 0.5,
+      "Bets": 10314,
+      "Accuracy": 0.9298041496994377
+    },
+    {
+      "Line": 0.5,
+      "MinDistance": 0.75,
+      "Bets": 10314,
+      "Accuracy": 0.9298041496994377
+    },
+    {
+      "Line": 0.5,
+      "MinDistance": 1.0,
+      "Bets": 10312,
+      "Accuracy": 0.9297905352986812
+    },
+    {
+      "Line": 0.5,
+      "MinDistance": 1.25,
+      "Bets": 10304,
+      "Accuracy": 0.9297360248447205
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 0.0,
+      "Bets": 10314,
+      "Accuracy": 0.7493697886368044
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 0.25,
+      "Bets": 10304,
+      "Accuracy": 0.749514751552795
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 0.5,
+      "Bets": 9631,
+      "Accuracy": 0.7546464541584467
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 0.75,
+      "Bets": 7381,
+      "Accuracy": 0.7704918032786885
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 1.0,
+      "Bets": 5586,
+      "Accuracy": 0.7796276405298962
+    },
+    {
+      "Line": 1.5,
+      "MinDistance": 1.25,
+      "Bets": 3804,
+      "Accuracy": 0.7936382754994742
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 0.0,
+      "Bets": 10314,
+      "Accuracy": 0.5504169090556525
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 0.25,
+      "Bets": 6737,
+      "Accuracy": 0.5731037553807332
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 0.5,
+      "Bets": 1594,
+      "Accuracy": 0.6286072772898369
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 0.75,
+      "Bets": 137,
+      "Accuracy": 0.6496350364963503
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 1.0,
+      "Bets": 25,
+      "Accuracy": 0.6
+    },
+    {
+      "Line": 2.5,
+      "MinDistance": 1.25,
+      "Bets": 7,
+      "Accuracy": 0.7142857142857143
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 0.0,
+      "Bets": 10314,
+      "Accuracy": 0.7083575722319178
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 0.25,
+      "Bets": 10194,
+      "Accuracy": 0.7108102805571905
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 0.5,
+      "Bets": 9405,
+      "Accuracy": 0.7197235513024987
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 0.75,
+      "Bets": 6511,
+      "Accuracy": 0.742896636461373
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 1.0,
+      "Bets": 4728,
+      "Accuracy": 0.7533840947546532
+    },
+    {
+      "Line": 3.5,
+      "MinDistance": 1.25,
+      "Bets": 2933,
+      "Accuracy": 0.766109785202864
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 0.0,
+      "Bets": 10314,
+      "Accuracy": 0.855051386464999
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 0.25,
+      "Bets": 10313,
+      "Accuracy": 0.8551342965189567
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 0.5,
+      "Bets": 10312,
+      "Accuracy": 0.8551202482544609
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 0.75,
+      "Bets": 10307,
+      "Accuracy": 0.8552440089259726
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 1.0,
+      "Bets": 10291,
+      "Accuracy": 0.8552132931687882
+    },
+    {
+      "Line": 4.5,
+      "MinDistance": 1.25,
+      "Bets": 10187,
+      "Accuracy": 0.8556984391871993
+    }
+  ]
+}

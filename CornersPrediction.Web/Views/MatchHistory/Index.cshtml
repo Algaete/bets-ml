@@ -12,22 +12,24 @@
     var formationOptions = Model.FormationOptions
         .OrderBy(formation => formation)
         .ToArray();
-    var homeHistory = Model.RecentMatches
-        .Where(match => string.Equals(match.TeamCondition, "HOME", StringComparison.OrdinalIgnoreCase))
+    var records = Model.Records.ToArray();
+    var filterTeamOptions = records
+        .SelectMany(match => new[] { match.HomeTeam, match.AwayTeam })
+        .Where(team => !string.IsNullOrWhiteSpace(team))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(team => team)
         .ToArray();
-    var awayHistory = Model.RecentMatches
-        .Where(match => string.Equals(match.TeamCondition, "AWAY", StringComparison.OrdinalIgnoreCase))
-        .ToArray();
-    var initialHistoryJson = System.Text.Json.JsonSerializer.Serialize(Model.RecentMatches);
+    var initialHistoryJson = System.Text.Json.JsonSerializer.Serialize(records);
     var hasSelectedLeague = !string.IsNullOrWhiteSpace(Model.Form.League);
+    var language = UiText.GetLanguage(Context);
 }
 
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-        <h1 class="h3 mb-1">Match history</h1>
-        <p class="text-muted mb-0">Store completed match stats that will later feed last 3/5/10 average calculations.</p>
+        <h1 class="h3 mb-1">@UiText.T(language, "MatchHistory.Title")</h1>
+        <p class="text-muted mb-0">@UiText.T(language, "MatchHistory.Description")</p>
     </div>
-    <span id="recentMatchesCount" class="badge text-bg-secondary">@Model.RecentMatches.Count history records</span>
+    <span id="recentMatchesCount" class="badge text-bg-secondary">@records.Length @UiText.T(language, "MatchHistory.RecordCount")</span>
 </div>
 
 @if (TempData["SuccessMessage"] is string successMessage)
@@ -42,7 +44,7 @@
     <div class="col-12 col-xl-5">
         <div class="card shadow-sm">
             <div class="card-header bg-white">
-                <h2 class="h5 mb-0">Add match</h2>
+                <h2 class="h5 mb-0">@UiText.T(language, "MatchHistory.AddMatch")</h2>
             </div>
             <div class="card-body">
                 <form asp-action="Create" method="post">
@@ -51,7 +53,7 @@
                     @if (leagueOptions.Length == 0)
                     {
                         <div class="alert alert-warning">
-                            League dropdown data could not be loaded from the backend. Check that the API is running and that sp_GetTeamBig3Leagues exists in SQL Server.
+                            League dropdown data could not be loaded from the backend. Check that the API is running and that sp_GetMatchHistoryLeagues exists in SQL Server.
                         </div>
                     }
 
@@ -192,7 +194,7 @@
                     </div>
 
                     <div class="d-grid mt-4">
-                        <button type="submit" class="btn btn-primary">Save match</button>
+                        <button type="submit" class="btn btn-primary">@UiText.T(language, "MatchHistory.SaveMatch")</button>
                     </div>
                 </form>
             </div>
@@ -201,118 +203,90 @@
 
     <div class="col-12 col-xl-7">
         <div class="card shadow-sm">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <h2 class="h5 mb-0">Recent matches</h2>
-                <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Refresh</a>
+            <div class="card-header bg-white">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div>
+                        <h2 class="h5 mb-1">@UiText.T(language, "MatchHistory.SavedRecords")</h2>
+                        <div class="text-muted small">Last records entered manually in the system.</div>
+                    </div>
+                    <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Clear</a>
+                </div>
+            </div>
+            <div class="card-body border-bottom">
+                <form method="get" class="row g-3 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label" for="FilterLeague">League</label>
+                        <input id="FilterLeague" name="League" class="form-control" list="LeagueOptions" value="@Model.Filters.League" placeholder="All leagues" autocomplete="off" />
+                        <datalist id="LeagueOptions">
+                            @foreach (var league in leagueOptions)
+                            {
+                                <option value="@league"></option>
+                            }
+                        </datalist>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label" for="FilterTeam">Team</label>
+                        <input id="FilterTeam" name="Team" class="form-control" list="FilterTeamOptions" value="@Model.Filters.Team" placeholder="Home or away team" autocomplete="off" />
+                        <datalist id="FilterTeamOptions">
+                            @foreach (var team in filterTeamOptions)
+                            {
+                                <option value="@team"></option>
+                            }
+                        </datalist>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" for="FilterTake">Take</label>
+                        <input id="FilterTake" name="Take" class="form-control" type="number" min="1" max="100" value="@Model.Filters.Take" />
+                    </div>
+                    <div class="col-12 d-flex justify-content-end gap-2">
+                        <a class="btn btn-outline-secondary" asp-action="Index">Reset</a>
+                        <button class="btn btn-outline-primary" type="submit">Search</button>
+                    </div>
+                </form>
             </div>
             <div class="card-body p-0">
-                <div id="recentMatchesEmpty" class="p-4 text-muted @(Model.RecentMatches.Count == 0 ? "" : "d-none")">
-                    Select a home team and an away team to load their last 10 matching historical records.
+                <div id="recordsEmpty" class="p-4 text-muted @(records.Length == 0 ? "" : "d-none")">
+                    No match records found for the selected filters.
                 </div>
-                <div id="recentMatchesTableWrap" class="@(Model.RecentMatches.Count == 0 ? "d-none" : "")">
-                    <div class="border-bottom">
-                        <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center">
-                            <h3 class="h6 mb-0">Home team last 10 as home</h3>
-                            <span id="homeHistoryCount" class="badge text-bg-light">@homeHistory.Length records</span>
-                        </div>
-                        <div id="homeHistoryEmpty" class="p-3 text-muted @(homeHistory.Length == 0 ? "" : "d-none")">
-                            No home history found.
-                        </div>
-                        <div id="homeHistoryTableWrap" class="table-responsive @(homeHistory.Length == 0 ? "d-none" : "")" style="max-height: 330px;">
-                            <table class="table table-sm align-middle mb-0 table-sticky-head">
-                                <thead>
-                                    <tr>
-                                        <th>Date</th>
-                                        <th>Match</th>
-                                        <th>Score</th>
-                                        <th>Corners</th>
-                                        <th>Shots</th>
-                                        <th>Poss.</th>
-                                        <th class="text-end">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="homeHistoryBody">
-                                    @foreach (var match in homeHistory)
-                                    {
-                                        <tr>
-                                            <td class="text-nowrap">@match.MatchDate.ToString("yyyy-MM-dd")</td>
-                                            <td>
-                                                <div class="fw-semibold">@match.HomeTeam vs @match.AwayTeam</div>
-                                                <div class="text-muted small">
-                                                    @match.League · @match.Season@(match.IsKnockout ? " · Knockout" : "")
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <span class="badge text-bg-light stat-pill">@match.HomeGoals - @match.AwayGoals</span>
-                                            </td>
-                                            <td>
-                                                <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
-                                                <div class="small text-muted">Total @match.TotalCorners</div>
-                                            </td>
-                                            <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
-                                            <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
-                                            <td class="text-end text-nowrap">
-                                                <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
-                                                <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div>
-                        <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center">
-                            <h3 class="h6 mb-0">Away team last 10 as away</h3>
-                            <span id="awayHistoryCount" class="badge text-bg-light">@awayHistory.Length records</span>
-                        </div>
-                        <div id="awayHistoryEmpty" class="p-3 text-muted @(awayHistory.Length == 0 ? "" : "d-none")">
-                            No away history found.
-                        </div>
-                        <div id="awayHistoryTableWrap" class="table-responsive @(awayHistory.Length == 0 ? "d-none" : "")" style="max-height: 330px;">
-                            <table class="table table-sm align-middle mb-0 table-sticky-head">
-                                <thead>
-                                    <tr>
-                                        <th>Date</th>
-                                        <th>Match</th>
-                                        <th>Score</th>
-                                        <th>Corners</th>
-                                        <th>Shots</th>
-                                        <th>Poss.</th>
-                                        <th class="text-end">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="awayHistoryBody">
-                                    @foreach (var match in awayHistory)
-                                    {
-                                        <tr>
-                                            <td class="text-nowrap">@match.MatchDate.ToString("yyyy-MM-dd")</td>
-                                            <td>
-                                                <div class="fw-semibold">@match.HomeTeam vs @match.AwayTeam</div>
-                                                <div class="text-muted small">
-                                                    @match.League · @match.Season@(match.IsKnockout ? " · Knockout" : "")
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <span class="badge text-bg-light stat-pill">@match.HomeGoals - @match.AwayGoals</span>
-                                            </td>
-                                            <td>
-                                                <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
-                                                <div class="small text-muted">Total @match.TotalCorners</div>
-                                            </td>
-                                            <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
-                                            <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
-                                            <td class="text-end text-nowrap">
-                                                <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
-                                                <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                <div id="recordsTableWrap" class="table-responsive @(records.Length == 0 ? "d-none" : "")" style="max-height: 640px;">
+                    <table class="table table-sm align-middle mb-0 table-sticky-head">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Match</th>
+                                <th>Score</th>
+                                <th>Corners</th>
+                                <th>Shots</th>
+                                <th>Poss.</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recordsBody">
+                            @foreach (var match in records)
+                            {
+                                <tr>
+                                    <td class="text-nowrap">@match.MatchDate.ToString("yyyy-MM-dd")</td>
+                                    <td>
+                                        <div class="fw-semibold">@match.HomeTeam vs @match.AwayTeam</div>
+                                        <div class="text-muted small">
+                                            @match.League · @match.Season@(match.IsKnockout ? " · Knockout" : "")
+                                        </div>
+                                    </td>
+                                    <td><span class="badge text-bg-light stat-pill">@match.HomeGoals - @match.AwayGoals</span></td>
+                                    <td>
+                                        <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
+                                        <div class="small text-muted">Total @match.TotalCorners</div>
+                                    </td>
+                                    <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
+                                    <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
+                                    <td class="text-end text-nowrap">
+                                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -433,17 +407,7 @@
             const awayTeamSelect = document.getElementById('Form_AwayTeam');
             const formHomePossession = document.getElementById('Form_HomePossession');
             const formAwayPossession = document.getElementById('Form_AwayPossession');
-            const recentMatchesEmpty = document.getElementById('recentMatchesEmpty');
-            const recentMatchesTableWrap = document.getElementById('recentMatchesTableWrap');
-            const recentMatchesCount = document.getElementById('recentMatchesCount');
-            const homeHistoryBody = document.getElementById('homeHistoryBody');
-            const awayHistoryBody = document.getElementById('awayHistoryBody');
-            const homeHistoryEmpty = document.getElementById('homeHistoryEmpty');
-            const awayHistoryEmpty = document.getElementById('awayHistoryEmpty');
-            const homeHistoryTableWrap = document.getElementById('homeHistoryTableWrap');
-            const awayHistoryTableWrap = document.getElementById('awayHistoryTableWrap');
-            const homeHistoryCount = document.getElementById('homeHistoryCount');
-            const awayHistoryCount = document.getElementById('awayHistoryCount');
+            const recordsBody = document.getElementById('recordsBody');
             const editMatchForm = document.getElementById('editMatchForm');
             const editMatchError = document.getElementById('editMatchError');
             const editMatchModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('editMatchModal'));
@@ -472,7 +436,6 @@
             };
             let debounceHandle;
             let requestController;
-            let historyRequestController;
 
             const getTeamName = team => team.team ?? team.Team ?? '';
             const getLeagueName = team => team.league ?? team.League ?? '';
@@ -559,153 +522,6 @@
 
             wirePossessionPair(formHomePossession, formAwayPossession);
             wirePossessionPair(editFields.HomePossession, editFields.AwayPossession);
-
-            const setHistoryMessage = message => {
-                historyItemsById.clear();
-                homeHistoryBody.replaceChildren();
-                awayHistoryBody.replaceChildren();
-                recentMatchesEmpty.textContent = message;
-                recentMatchesEmpty.classList.remove('d-none');
-                recentMatchesTableWrap.classList.add('d-none');
-                recentMatchesCount.textContent = '0 history records';
-                homeHistoryCount.textContent = '0 records';
-                awayHistoryCount.textContent = '0 records';
-            };
-
-            const createHistoryRow = match => {
-                const row = document.createElement('tr');
-                const matchDate = escapeHtml(getValue(match, 'MatchDate') ?? '');
-                const league = escapeHtml(getValue(match, 'League') ?? '');
-                const season = escapeHtml(getValue(match, 'Season') ?? '');
-                const isKnockout = Boolean(getValue(match, 'IsKnockout'));
-                const homeTeam = escapeHtml(getValue(match, 'HomeTeam') ?? '');
-                const awayTeam = escapeHtml(getValue(match, 'AwayTeam') ?? '');
-                const homeGoals = getValue(match, 'HomeGoals') ?? 0;
-                const awayGoals = getValue(match, 'AwayGoals') ?? 0;
-                const homeCorners = getValue(match, 'HomeCorners') ?? 0;
-                const awayCorners = getValue(match, 'AwayCorners') ?? 0;
-                const totalCorners = getValue(match, 'TotalCorners') ?? Number(homeCorners) + Number(awayCorners);
-                const homeShots = getValue(match, 'HomeShots') ?? 0;
-                const awayShots = getValue(match, 'AwayShots') ?? 0;
-                const homePossession = getValue(match, 'HomePossession') ?? 0;
-                const awayPossession = getValue(match, 'AwayPossession') ?? 0;
-                const id = Number(getValue(match, 'Id'));
-
-                row.innerHTML = `
-                    <td class="text-nowrap">${matchDate}</td>
-                    <td>
-                        <div class="fw-semibold">${homeTeam} vs ${awayTeam}</div>
-                        <div class="text-muted small">
-                            ${league} · ${season}${isKnockout ? ' · Knockout' : ''}
-                        </div>
-                    </td>
-                    <td><span class="badge text-bg-light stat-pill">${homeGoals} - ${awayGoals}</span></td>
-                    <td>
-                        <span class="badge text-bg-primary stat-pill">${homeCorners} - ${awayCorners}</span>
-                        <div class="small text-muted">Total ${totalCorners}</div>
-                    </td>
-                    <td class="text-nowrap">${homeShots} - ${awayShots}</td>
-                    <td class="text-nowrap">${formatNumber(homePossession)}% - ${formatNumber(awayPossession)}%</td>
-                    <td class="text-end text-nowrap">
-                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="${id}">Edit</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="${id}">Delete</button>
-                    </td>`;
-
-                return row;
-            };
-
-            const renderHistoryGroup = (matches, body, empty, tableWrap, countBadge, emptyMessage) => {
-                body.replaceChildren();
-                countBadge.textContent = `${matches.length} records`;
-
-                if (matches.length === 0) {
-                    empty.textContent = emptyMessage;
-                    empty.classList.remove('d-none');
-                    tableWrap.classList.add('d-none');
-                    return;
-                }
-
-                for (const match of matches) {
-                    body.appendChild(createHistoryRow(match));
-                }
-
-                empty.classList.add('d-none');
-                tableWrap.classList.remove('d-none');
-            };
-
-            const renderHistory = matches => {
-                historyItemsById.clear();
-                for (const match of matches) {
-                    historyItemsById.set(String(getValue(match, 'Id')), match);
-                }
-
-                const homeMatches = matches.filter(match =>
-                    String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'HOME');
-                const awayMatches = matches.filter(match =>
-                    String(getValue(match, 'TeamCondition') ?? '').toUpperCase() === 'AWAY');
-
-                recentMatchesCount.textContent = `${matches.length} history records`;
-
-                if (matches.length === 0) {
-                    setHistoryMessage('No historical matches were found for the selected teams.');
-                    return;
-                }
-
-                renderHistoryGroup(
-                    homeMatches,
-                    homeHistoryBody,
-                    homeHistoryEmpty,
-                    homeHistoryTableWrap,
-                    homeHistoryCount,
-                    'No home history found.');
-                renderHistoryGroup(
-                    awayMatches,
-                    awayHistoryBody,
-                    awayHistoryEmpty,
-                    awayHistoryTableWrap,
-                    awayHistoryCount,
-                    'No away history found.');
-
-                recentMatchesEmpty.classList.add('d-none');
-                recentMatchesTableWrap.classList.remove('d-none');
-            };
-
-            const loadHistory = async () => {
-                const homeTeam = homeTeamSelect.value.trim();
-                const awayTeam = awayTeamSelect.value.trim();
-
-                if (!homeTeam || !awayTeam) {
-                    setHistoryMessage('Select a home team and an away team to load their last 10 matching historical records.');
-                    return;
-                }
-
-                if (homeTeam === awayTeam) {
-                    setHistoryMessage('Home team and away team must be different.');
-                    return;
-                }
-
-                historyRequestController?.abort();
-                historyRequestController = new AbortController();
-                setHistoryMessage('Loading historical matches...');
-
-                try {
-                    const response = await fetch(`/MatchHistory/RecentMatches?homeTeam=${encodeURIComponent(homeTeam)}&awayTeam=${encodeURIComponent(awayTeam)}`, {
-                        signal: historyRequestController.signal
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`Recent matches request failed with ${response.status}`);
-                    }
-
-                    renderHistory(await response.json());
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        return;
-                    }
-
-                    setHistoryMessage('Historical matches could not be loaded from the backend.');
-                }
-            };
 
             const openEditModal = id => {
                 const match = historyItemsById.get(String(id));
@@ -796,7 +612,7 @@
                 button.disabled = true;
                 try {
                     await deleteMatch(id);
-                    await loadHistory();
+                    window.location.reload();
                 } catch (error) {
                     window.alert(error.message);
                     button.disabled = false;
@@ -845,7 +661,6 @@
                     setOptions(awayTeamSelect, 'Select league first', []);
                     homeTeamSelect.disabled = true;
                     awayTeamSelect.disabled = true;
-                    setHistoryMessage('Select a home team and an away team to load their last 10 matching historical records.');
                     return;
                 }
 
@@ -886,10 +701,7 @@
 
             leagueInput.addEventListener('input', scheduleLoadTeams);
             leagueInput.addEventListener('change', loadTeams);
-            homeTeamSelect.addEventListener('change', loadHistory);
-            awayTeamSelect.addEventListener('change', loadHistory);
-            homeHistoryBody.addEventListener('click', handleHistoryAction);
-            awayHistoryBody.addEventListener('click', handleHistoryAction);
+            recordsBody?.addEventListener('click', handleHistoryAction);
             editMatchForm.addEventListener('submit', async event => {
                 event.preventDefault();
 
@@ -902,14 +714,16 @@
                 try {
                     await updateMatch();
                     editMatchModal.hide();
-                    await loadHistory();
+                    window.location.reload();
                 } catch (error) {
                     setEditError(error.message);
                 }
             });
 
             if (initialMatches.length > 0) {
-                renderHistory(initialMatches);
+                for (const match of initialMatches) {
+                    historyItemsById.set(String(getValue(match, 'Id')), match);
+                }
             }
         })();
     </script>

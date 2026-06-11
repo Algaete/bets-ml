@@ -1,0 +1,45 @@
+@model CornersPrediction.Web.Models.Betting.BettingRecordFormViewModel
+@using CornersPrediction.Web.Models.Betting
+
+@{
+    Func<string, string> T = key => UiText.T(Context, key);
+}
+
+<div class="col-12">
+    <div class="border rounded-3 p-3 bg-light-subtle">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <div class="fw-semibold">@T("Betting.KellyTitle")</div>
+                <div class="text-muted small">@T("Betting.KellyDescription")</div>
+            </div>
+            <span class="badge text-bg-secondary">@T("Common.Optional")</span>
+        </div>
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label asp-for="KellyStrategy" class="form-label">@T("Fields.KellyStrategy")</label>
+                <select asp-for="KellyStrategy" class="form-select" id="KellyStrategy">
+                    @foreach (var item in BettingOptions.KellyStrategies)
+                    {
+                        <option value="@item">@T($"Kelly.{item}")</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label asp-for="EstimatedProbabilityPercent" class="form-label">@T("Fields.EstimatedProbability")</label>
+                <div class="input-group">
+                    <input asp-for="EstimatedProbabilityPercent" class="form-control" type="number" min="0" max="100" step="0.1" id="EstimatedProbabilityPercent" />
+                    <span class="input-group-text">%</span>
+                </div>
+                <span asp-validation-for="EstimatedProbabilityPercent" class="text-danger"></span>
+            </div>
+            <div class="col-md-3">
+                <div class="small text-muted">@T("Fields.KellySuggestedStake")</div>
+                <div class="fs-5 fw-semibold" id="KellySuggestedStake">-</div>
+                <div class="small text-muted" id="KellyEdgeText">@T("Betting.KellyWaiting")</div>
+            </div>
+            <div class="col-md-3">
+                <button type="button" class="btn btn-outline-primary w-100" id="ApplyKellyStake" disabled>@T("Common.ApplyStake")</button>
+            </div>
+        </div>
+    </div>
+</div>

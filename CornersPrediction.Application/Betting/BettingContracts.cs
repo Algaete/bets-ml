@@ -4,6 +4,7 @@ namespace CornersPrediction.Application.Betting;
 
 public sealed record BettingRecordDto(
     long Id,
+    string UserId,
     string CurrencyCode,
     string League,
     string Season,
@@ -20,6 +21,12 @@ public sealed record BettingRecordDto(
     int? ActualHomeCorners,
     int? ActualAwayCorners,
     int? ActualTotalCorners,
+    int? ActualHomeShots,
+    int? ActualAwayShots,
+    int? ActualTotalShots,
+    int? ActualHomeShotsOnGoal,
+    int? ActualAwayShotsOnGoal,
+    int? ActualTotalShotsOnGoal,
     decimal? CashoutAmount,
     decimal PotentialReturn,
     decimal NetReturn,
@@ -29,11 +36,13 @@ public sealed record BettingRecordDto(
     decimal? BankrollAfter,
     decimal? ClosingOdds,
     string? ConfidenceLevel,
+    string PredictionModel,
     string? Notes,
     DateTime CreatedAt,
     DateTime? UpdatedAt);
 
 public sealed record CreateBettingRecordRequest(
+    string? UserId,
     string? CurrencyCode,
     string League,
     string Season,
@@ -50,9 +59,11 @@ public sealed record CreateBettingRecordRequest(
     decimal? BankrollBefore,
     decimal? ClosingOdds,
     string? ConfidenceLevel,
+    string? PredictionModel,
     string? Notes);
 
 public sealed record UpdateBettingRecordRequest(
+    string? UserId,
     string? CurrencyCode,
     string League,
     string Season,
@@ -69,14 +80,22 @@ public sealed record UpdateBettingRecordRequest(
     int? ActualHomeCorners,
     int? ActualAwayCorners,
     int? ActualTotalCorners,
+    int? ActualHomeShots,
+    int? ActualAwayShots,
+    int? ActualTotalShots,
+    int? ActualHomeShotsOnGoal,
+    int? ActualAwayShotsOnGoal,
+    int? ActualTotalShotsOnGoal,
     decimal? CashoutAmount,
     decimal? BankrollBefore,
     decimal? ClosingOdds,
     string? ConfidenceLevel,
+    string? PredictionModel,
     string? Notes,
     bool AutoResolveStatus = false);
 
 public sealed record BettingFiltersRequest(
+    string? UserId,
     string? CurrencyCode,
     string? League,
     string? Season,
@@ -108,6 +127,7 @@ public sealed record BettingSummaryDto(
 
 public sealed record BankrollTransactionDto(
     long Id,
+    string UserId,
     string CurrencyCode,
     DateTime TransactionDate,
     string Type,
@@ -118,6 +138,7 @@ public sealed record BankrollTransactionDto(
     DateTime CreatedAt);
 
 public sealed record CreateBankrollTransactionRequest(
+    string? UserId,
     string? CurrencyCode,
     DateTime TransactionDate,
     string Type,
@@ -129,14 +150,14 @@ public interface IBettingRepository
 {
     Task<BettingRecord> AddAsync(BettingRecord record, CancellationToken cancellationToken);
     Task<int> UpdateAsync(long id, BettingRecord record, CancellationToken cancellationToken);
-    Task<int> DeleteAsync(long id, CancellationToken cancellationToken);
-    Task<BettingRecord?> GetByIdAsync(long id, CancellationToken cancellationToken);
+    Task<int> DeleteAsync(long id, string userId, CancellationToken cancellationToken);
+    Task<BettingRecord?> GetByIdAsync(long id, string userId, CancellationToken cancellationToken);
     Task<IReadOnlyList<BettingRecord>> GetAsync(BettingFiltersRequest filters, CancellationToken cancellationToken);
     Task<BettingSummaryDto> GetSummaryAsync(BettingFiltersRequest filters, CancellationToken cancellationToken);
     Task<BankrollTransaction> AddBankrollTransactionAsync(BankrollTransaction transaction, CancellationToken cancellationToken);
     Task<BankrollTransaction?> ReconcileBetSettlementAsync(BettingRecord record, CancellationToken cancellationToken);
-    Task<IReadOnlyList<BankrollTransaction>> GetBankrollTransactionsAsync(string currencyCode, CancellationToken cancellationToken);
-    Task<decimal> GetCurrentBankrollAsync(string currencyCode, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BankrollTransaction>> GetBankrollTransactionsAsync(string userId, string currencyCode, CancellationToken cancellationToken);
+    Task<decimal> GetCurrentBankrollAsync(string userId, string currencyCode, CancellationToken cancellationToken);
 }
 
 public interface ICreateBettingRecordUseCase
@@ -151,12 +172,12 @@ public interface IUpdateBettingRecordUseCase
 
 public interface IDeleteBettingRecordUseCase
 {
-    Task<int> DeleteAsync(long id, CancellationToken cancellationToken);
+    Task<int> DeleteAsync(long id, string? userId, CancellationToken cancellationToken);
 }
 
 public interface IGetBettingRecordByIdUseCase
 {
-    Task<BettingRecordDto?> GetAsync(long id, CancellationToken cancellationToken);
+    Task<BettingRecordDto?> GetAsync(long id, string? userId, CancellationToken cancellationToken);
 }
 
 public interface IGetBettingRecordsUseCase
@@ -176,12 +197,12 @@ public interface ICreateBankrollTransactionUseCase
 
 public interface IGetBankrollTransactionsUseCase
 {
-    Task<IReadOnlyList<BankrollTransactionDto>> GetAsync(string? currencyCode, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BankrollTransactionDto>> GetAsync(string? userId, string? currencyCode, CancellationToken cancellationToken);
 }
 
 public interface IGetCurrentBankrollUseCase
 {
-    Task<decimal> GetAsync(string? currencyCode, CancellationToken cancellationToken);
+    Task<decimal> GetAsync(string? userId, string? currencyCode, CancellationToken cancellationToken);
 }
 
 public sealed class CreateBettingRecordUseCase : ICreateBettingRecordUseCase
@@ -196,10 +217,12 @@ public sealed class CreateBettingRecordUseCase : ICreateBettingRecordUseCase
     public async Task<BettingRecordDto> CreateAsync(CreateBettingRecordRequest request, CancellationToken cancellationToken)
     {
         BettingValidation.ValidateCreate(request);
+        var userId = BettingValidation.NormalizeUserId(request.UserId);
         var currencyCode = BettingValidation.NormalizeCurrency(request.CurrencyCode);
 
         var record = new BettingRecord
         {
+            UserId = userId,
             CurrencyCode = currencyCode,
             League = request.League.Trim(),
             Season = request.Season.Trim(),
@@ -213,9 +236,10 @@ public sealed class CreateBettingRecordUseCase : ICreateBettingRecordUseCase
             Odds = request.Odds,
             Stake = request.Stake,
             Status = BettingValidation.NormalizeRequiredOption(request.Status, BetStatuses.All, nameof(request.Status)),
-            BankrollBefore = request.BankrollBefore ?? await _repository.GetCurrentBankrollAsync(currencyCode, cancellationToken),
+            BankrollBefore = request.BankrollBefore ?? await _repository.GetCurrentBankrollAsync(userId, currencyCode, cancellationToken),
             ClosingOdds = request.ClosingOdds,
             ConfidenceLevel = BettingValidation.NormalizeOptionalOption(request.ConfidenceLevel, BetConfidenceLevels.All, nameof(request.ConfidenceLevel)),
+            PredictionModel = BettingValidation.NormalizeOptionalOption(request.PredictionModel, BetPredictionModels.All, nameof(request.PredictionModel)) ?? BetPredictionModels.Manual,
             Notes = BettingValidation.NormalizeOptional(request.Notes),
             CreatedAt = DateTime.UtcNow
         };
@@ -244,11 +268,13 @@ public sealed class UpdateBettingRecordUseCase : IUpdateBettingRecordUseCase
         }
 
         BettingValidation.ValidateUpdate(request);
+        var userId = BettingValidation.NormalizeUserId(request.UserId);
         var currencyCode = BettingValidation.NormalizeCurrency(request.CurrencyCode);
 
         var record = new BettingRecord
         {
             Id = id,
+            UserId = userId,
             CurrencyCode = currencyCode,
             League = request.League.Trim(),
             Season = request.Season.Trim(),
@@ -265,10 +291,17 @@ public sealed class UpdateBettingRecordUseCase : IUpdateBettingRecordUseCase
             ActualHomeCorners = request.ActualHomeCorners,
             ActualAwayCorners = request.ActualAwayCorners,
             ActualTotalCorners = request.ActualTotalCorners,
+            ActualHomeShots = request.ActualHomeShots,
+            ActualAwayShots = request.ActualAwayShots,
+            ActualTotalShots = request.ActualTotalShots,
+            ActualHomeShotsOnGoal = request.ActualHomeShotsOnGoal,
+            ActualAwayShotsOnGoal = request.ActualAwayShotsOnGoal,
+            ActualTotalShotsOnGoal = request.ActualTotalShotsOnGoal,
             CashoutAmount = request.CashoutAmount,
             BankrollBefore = request.BankrollBefore,
             ClosingOdds = request.ClosingOdds,
             ConfidenceLevel = BettingValidation.NormalizeOptionalOption(request.ConfidenceLevel, BetConfidenceLevels.All, nameof(request.ConfidenceLevel)),
+            PredictionModel = BettingValidation.NormalizeOptionalOption(request.PredictionModel, BetPredictionModels.All, nameof(request.PredictionModel)) ?? BetPredictionModels.Manual,
             Notes = BettingValidation.NormalizeOptional(request.Notes),
             UpdatedAt = DateTime.UtcNow
         };
@@ -293,19 +326,19 @@ public sealed class DeleteBettingRecordUseCase : IDeleteBettingRecordUseCase
         _repository = repository;
     }
 
-    public Task<int> DeleteAsync(long id, CancellationToken cancellationToken)
+    public Task<int> DeleteAsync(long id, string? userId, CancellationToken cancellationToken)
     {
         if (id <= 0)
         {
             throw new ArgumentException("Betting record id must be greater than zero.");
         }
 
-        return DeleteAndReverseSettlementAsync(id, cancellationToken);
+        return DeleteAndReverseSettlementAsync(id, BettingValidation.NormalizeUserId(userId), cancellationToken);
     }
 
-    private async Task<int> DeleteAndReverseSettlementAsync(long id, CancellationToken cancellationToken)
+    private async Task<int> DeleteAndReverseSettlementAsync(long id, string userId, CancellationToken cancellationToken)
     {
-        var existing = await _repository.GetByIdAsync(id, cancellationToken);
+        var existing = await _repository.GetByIdAsync(id, userId, cancellationToken);
         if (existing is not null)
         {
             existing.Status = BetStatuses.Pending;
@@ -315,7 +348,7 @@ public sealed class DeleteBettingRecordUseCase : IDeleteBettingRecordUseCase
             await _repository.ReconcileBetSettlementAsync(existing, cancellationToken);
         }
 
-        return await _repository.DeleteAsync(id, cancellationToken);
+        return await _repository.DeleteAsync(id, userId, cancellationToken);
     }
 }
 
@@ -328,14 +361,14 @@ public sealed class GetBettingRecordByIdUseCase : IGetBettingRecordByIdUseCase
         _repository = repository;
     }
 
-    public async Task<BettingRecordDto?> GetAsync(long id, CancellationToken cancellationToken)
+    public async Task<BettingRecordDto?> GetAsync(long id, string? userId, CancellationToken cancellationToken)
     {
         if (id <= 0)
         {
             throw new ArgumentException("Betting record id must be greater than zero.");
         }
 
-        var record = await _repository.GetByIdAsync(id, cancellationToken);
+        var record = await _repository.GetByIdAsync(id, BettingValidation.NormalizeUserId(userId), cancellationToken);
         return record is null ? null : BettingMapper.ToDto(record);
     }
 }
@@ -383,6 +416,7 @@ public sealed class CreateBankrollTransactionUseCase : ICreateBankrollTransactio
     public async Task<BankrollTransactionDto> CreateAsync(CreateBankrollTransactionRequest request, CancellationToken cancellationToken)
     {
         var currencyCode = BettingValidation.NormalizeCurrency(request.CurrencyCode);
+        var userId = BettingValidation.NormalizeUserId(request.UserId);
         var type = BettingValidation.NormalizeRequiredOption(request.Type, BankrollTransactionTypes.All, nameof(request.Type));
         var amount = NormalizeBankrollAmount(type, request.Amount);
 
@@ -403,6 +437,7 @@ public sealed class CreateBankrollTransactionUseCase : ICreateBankrollTransactio
 
         var transaction = new BankrollTransaction
         {
+            UserId = userId,
             CurrencyCode = currencyCode,
             TransactionDate = request.TransactionDate.Date,
             Type = type,
@@ -436,9 +471,10 @@ public sealed class GetBankrollTransactionsUseCase : IGetBankrollTransactionsUse
         _repository = repository;
     }
 
-    public async Task<IReadOnlyList<BankrollTransactionDto>> GetAsync(string? currencyCode, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<BankrollTransactionDto>> GetAsync(string? userId, string? currencyCode, CancellationToken cancellationToken)
     {
         var transactions = await _repository.GetBankrollTransactionsAsync(
+            BettingValidation.NormalizeUserId(userId),
             BettingValidation.NormalizeCurrency(currencyCode),
             cancellationToken);
         return transactions.Select(BettingMapper.ToDto).ToArray();
@@ -454,9 +490,12 @@ public sealed class GetCurrentBankrollUseCase : IGetCurrentBankrollUseCase
         _repository = repository;
     }
 
-    public Task<decimal> GetAsync(string? currencyCode, CancellationToken cancellationToken)
+    public Task<decimal> GetAsync(string? userId, string? currencyCode, CancellationToken cancellationToken)
     {
-        return _repository.GetCurrentBankrollAsync(BettingValidation.NormalizeCurrency(currencyCode), cancellationToken);
+        return _repository.GetCurrentBankrollAsync(
+            BettingValidation.NormalizeUserId(userId),
+            BettingValidation.NormalizeCurrency(currencyCode),
+            cancellationToken);
     }
 }
 
@@ -466,6 +505,7 @@ internal static class BettingMapper
     {
         return new BettingRecordDto(
             record.Id,
+            record.UserId,
             record.CurrencyCode,
             record.League,
             record.Season,
@@ -482,6 +522,12 @@ internal static class BettingMapper
             record.ActualHomeCorners,
             record.ActualAwayCorners,
             record.ActualTotalCorners,
+            record.ActualHomeShots,
+            record.ActualAwayShots,
+            record.ActualTotalShots,
+            record.ActualHomeShotsOnGoal,
+            record.ActualAwayShotsOnGoal,
+            record.ActualTotalShotsOnGoal,
             record.CashoutAmount,
             record.PotentialReturn,
             record.NetReturn,
@@ -491,6 +537,7 @@ internal static class BettingMapper
             record.BankrollAfter,
             record.ClosingOdds,
             record.ConfidenceLevel,
+            record.PredictionModel,
             record.Notes,
             record.CreatedAt,
             record.UpdatedAt);
@@ -500,6 +547,7 @@ internal static class BettingMapper
     {
         return new BankrollTransactionDto(
             transaction.Id,
+            transaction.UserId,
             transaction.CurrencyCode,
             transaction.TransactionDate,
             transaction.Type,
@@ -529,7 +577,8 @@ internal static class BettingValidation
             request.Status,
             cashoutAmount: null,
             request.ClosingOdds,
-            request.ConfidenceLevel);
+            request.ConfidenceLevel,
+            request.PredictionModel);
     }
 
     public static void ValidateUpdate(UpdateBettingRecordRequest request)
@@ -548,11 +597,20 @@ internal static class BettingValidation
             request.Status,
             request.CashoutAmount,
             request.ClosingOdds,
-            request.ConfidenceLevel);
+            request.ConfidenceLevel,
+            request.PredictionModel);
 
-        if (request.ActualHomeCorners is < 0 || request.ActualAwayCorners is < 0 || request.ActualTotalCorners is < 0)
+        if (request.ActualHomeCorners is < 0 ||
+            request.ActualAwayCorners is < 0 ||
+            request.ActualTotalCorners is < 0 ||
+            request.ActualHomeShots is < 0 ||
+            request.ActualAwayShots is < 0 ||
+            request.ActualTotalShots is < 0 ||
+            request.ActualHomeShotsOnGoal is < 0 ||
+            request.ActualAwayShotsOnGoal is < 0 ||
+            request.ActualTotalShotsOnGoal is < 0)
         {
-            throw new ArgumentException("Actual corner values cannot be negative.");
+            throw new ArgumentException("Actual match stat values cannot be negative.");
         }
     }
 
@@ -561,6 +619,7 @@ internal static class BettingValidation
         return filters with
         {
             CurrencyCode = NormalizeOptionalCurrency(filters.CurrencyCode),
+            UserId = NormalizeUserId(filters.UserId),
             League = NormalizeOptional(filters.League),
             Season = NormalizeOptional(filters.Season),
             HomeTeam = NormalizeOptional(filters.HomeTeam),
@@ -576,6 +635,11 @@ internal static class BettingValidation
     public static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    public static string NormalizeUserId(string? value)
+    {
+        return NormalizeOptional(value) ?? BettingUsers.DefaultUserId;
     }
 
     public static string NormalizeCurrency(string? value)
@@ -635,7 +699,8 @@ internal static class BettingValidation
         string status,
         decimal? cashoutAmount,
         decimal? closingOdds,
-        string? confidenceLevel)
+        string? confidenceLevel,
+        string? predictionModel)
     {
         if (string.IsNullOrWhiteSpace(league))
         {
@@ -671,6 +736,7 @@ internal static class BettingValidation
         NormalizeRequiredOption(betSelection, BetSelections.All, nameof(betSelection));
         var normalizedStatus = NormalizeRequiredOption(status, BetStatuses.All, nameof(status));
         NormalizeOptionalOption(confidenceLevel, BetConfidenceLevels.All, nameof(confidenceLevel));
+        NormalizeOptionalOption(predictionModel, BetPredictionModels.All, nameof(predictionModel));
 
         if (line < 0)
         {

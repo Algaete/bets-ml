@@ -3,6 +3,7 @@ namespace CornersPrediction.Domain.Betting;
 public sealed class BettingRecord
 {
     public long Id { get; set; }
+    public required string UserId { get; set; } = BettingUsers.DefaultUserId;
     public required string CurrencyCode { get; set; } = BettingCurrencies.Clp;
     public required string League { get; set; }
     public required string Season { get; set; }
@@ -19,6 +20,12 @@ public sealed class BettingRecord
     public int? ActualHomeCorners { get; set; }
     public int? ActualAwayCorners { get; set; }
     public int? ActualTotalCorners { get; set; }
+    public int? ActualHomeShots { get; set; }
+    public int? ActualAwayShots { get; set; }
+    public int? ActualTotalShots { get; set; }
+    public int? ActualHomeShotsOnGoal { get; set; }
+    public int? ActualAwayShotsOnGoal { get; set; }
+    public int? ActualTotalShotsOnGoal { get; set; }
     public decimal? CashoutAmount { get; set; }
     public decimal PotentialReturn { get; set; }
     public decimal NetReturn { get; set; }
@@ -28,6 +35,7 @@ public sealed class BettingRecord
     public decimal? BankrollAfter { get; set; }
     public decimal? ClosingOdds { get; set; }
     public string? ConfidenceLevel { get; set; }
+    public string PredictionModel { get; set; } = BetPredictionModels.Manual;
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
@@ -40,9 +48,19 @@ public sealed class BettingRecord
             ActualTotalCorners = ActualHomeCorners.Value + ActualAwayCorners.Value;
         }
 
+        if (ActualHomeShots.HasValue && ActualAwayShots.HasValue)
+        {
+            ActualTotalShots = ActualHomeShots.Value + ActualAwayShots.Value;
+        }
+
+        if (ActualHomeShotsOnGoal.HasValue && ActualAwayShotsOnGoal.HasValue)
+        {
+            ActualTotalShotsOnGoal = ActualHomeShotsOnGoal.Value + ActualAwayShotsOnGoal.Value;
+        }
+
         if (autoResolveStatus)
         {
-            ResolveStatusFromCorners();
+            ResolveStatusFromMarketResult();
         }
 
         PotentialReturn = Stake * Odds;
@@ -75,23 +93,32 @@ public sealed class BettingRecord
         BankrollAfter = BankrollBefore.HasValue ? BankrollBefore.Value + ProfitLoss : null;
     }
 
-    private void ResolveStatusFromCorners()
+    private void ResolveStatusFromMarketResult()
     {
-        if (MarketType != BetMarketTypes.TotalCorners ||
-            ActualTotalCorners is null ||
-            BetSelection is not (BetSelections.Over or BetSelections.Under))
+        if (BetSelection is not (BetSelections.Over or BetSelections.Under))
         {
             return;
         }
 
-        var actual = ActualTotalCorners.Value;
+        var actual = MarketType switch
+        {
+            BetMarketTypes.TotalCorners => ActualTotalCorners,
+            BetMarketTypes.TotalShots => ActualTotalShots,
+            BetMarketTypes.TotalShotsOnGoal => ActualTotalShotsOnGoal,
+            _ => null
+        };
+
+        if (actual is null)
+        {
+            return;
+        }
 
         Status = BetSelection switch
         {
-            BetSelections.Over when actual > Line => BetStatuses.Won,
-            BetSelections.Over when actual < Line => BetStatuses.Lost,
-            BetSelections.Under when actual < Line => BetStatuses.Won,
-            BetSelections.Under when actual > Line => BetStatuses.Lost,
+            BetSelections.Over when actual.Value > Line => BetStatuses.Won,
+            BetSelections.Over when actual.Value < Line => BetStatuses.Lost,
+            BetSelections.Under when actual.Value < Line => BetStatuses.Won,
+            BetSelections.Under when actual.Value > Line => BetStatuses.Lost,
             _ => BetStatuses.Void
         };
     }
@@ -114,9 +141,11 @@ public static class BetMarketTypes
     public const string HomeCorners = "HomeCorners";
     public const string AwayCorners = "AwayCorners";
     public const string FirstHalfCorners = "FirstHalfCorners";
+    public const string TotalShots = "TotalShots";
+    public const string TotalShotsOnGoal = "TotalShotsOnGoal";
     public const string Other = "Other";
 
-    public static readonly string[] All = [TotalCorners, HomeCorners, AwayCorners, FirstHalfCorners, Other];
+    public static readonly string[] All = [TotalCorners, HomeCorners, AwayCorners, FirstHalfCorners, TotalShots, TotalShotsOnGoal, Other];
 }
 
 public static class BetSelections
@@ -139,6 +168,16 @@ public static class BetConfidenceLevels
     public static readonly string[] All = [Low, Medium, High];
 }
 
+public static class BetPredictionModels
+{
+    public const string Manual = "Manual";
+    public const string TotalCornersModel = "TotalCornersModel";
+    public const string OverUnderLineModel = "OverUnderLineModel";
+    public const string ShotsOnGoalModel = "ShotsOnGoalModel";
+
+    public static readonly string[] All = [Manual, TotalCornersModel, OverUnderLineModel, ShotsOnGoalModel];
+}
+
 public static class BettingCurrencies
 {
     public const string Clp = "CLP";
@@ -148,9 +187,15 @@ public static class BettingCurrencies
     public static readonly string[] All = [Clp, Usd, Aud];
 }
 
+public static class BettingUsers
+{
+    public const string DefaultUserId = "local-user";
+}
+
 public sealed class BankrollTransaction
 {
     public long Id { get; set; }
+    public required string UserId { get; set; } = BettingUsers.DefaultUserId;
     public required string CurrencyCode { get; set; } = BettingCurrencies.Clp;
     public DateTime TransactionDate { get; set; }
     public required string Type { get; set; }

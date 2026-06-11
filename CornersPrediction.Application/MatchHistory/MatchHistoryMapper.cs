@@ -28,6 +28,9 @@ internal static class MatchHistoryMapper
             item.HomePossession,
             item.AwayPossession,
             item.TotalCorners,
+            item.QueryTeamCondition,
+            item.HistoryType,
+            item.HistoryRank,
             item.CreatedAtUtc);
     }
 }

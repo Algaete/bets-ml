@@ -7,9 +7,9 @@ namespace CornersPrediction.Application.Abstractions.Persistence;
 /// </summary>
 public interface ITeamInfoRepository
 {
-    Task<IReadOnlyList<string>> GetBig3LeaguesAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<string>> GetBig3LeaguesAsync(string teamGender, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<TeamBi3Info>> GetBi3InfoAsync(string league, CancellationToken cancellationToken);
+    Task<IReadOnlyList<TeamBi3Info>> GetBi3InfoAsync(string league, string teamGender, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<string>> GetFormationsAsync(CancellationToken cancellationToken);
 }

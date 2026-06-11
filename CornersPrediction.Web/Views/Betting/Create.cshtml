@@ -64,7 +64,7 @@
                 <select asp-for="MarketType" class="form-select">
                     @foreach (var item in BettingOptions.MarketTypes)
                     {
-                        <option value="@item">@item</option>
+                        <option value="@item">@BettingOptions.MarketTypeLabel(item)</option>
                     }
                 </select>
             </div>
@@ -119,6 +119,16 @@
                     }
                 </select>
             </div>
+            <div class="col-md-3">
+                <label asp-for="PredictionModel" class="form-label">Prediction model</label>
+                <select asp-for="PredictionModel" class="form-select">
+                    @foreach (var item in BettingOptions.PredictionModels)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
+            <partial name="_KellyCalculator" model="Model" />
             <div class="col-12">
                 <label asp-for="Notes" class="form-label">@T("Fields.Notes")</label>
                 <textarea asp-for="Notes" class="form-control" rows="3"></textarea>
@@ -147,4 +157,5 @@
             updateMoneyStep();
         })();
     </script>
+    <partial name="_KellyCalculatorScripts" />
 }

@@ -7,8 +7,8 @@ namespace CornersPrediction.Domain.Predictions;
 /// </summary>
 public sealed class PredictionResult
 {
-    private const double TotalCornersMae = 2.6727;
-    private const double TotalCornersRmse = 3.3707;
+    private const double TotalCornersMae = 2.633;
+    private const double TotalCornersRmse = 2.633;
 
     public PredictionResult(double predictedTotalCorners)
     {
@@ -23,6 +23,36 @@ public sealed class PredictionResult
 
     [JsonPropertyName("predictedTotalCorners")]
     public double PredictedTotalCorners { get; init; }
+
+    [JsonPropertyName("predTotalDirect")]
+    public double? PredTotalDirect { get; init; }
+
+    [JsonPropertyName("rawTotalCornersPrediction")]
+    public double? RawTotalCornersPrediction => PredTotalDirect;
+
+    [JsonPropertyName("predHomeCorners")]
+    public double? PredHomeCorners { get; init; }
+
+    [JsonPropertyName("homeCornersPrediction")]
+    public double? HomeCornersPrediction => PredHomeCorners;
+
+    [JsonPropertyName("predAwayCorners")]
+    public double? PredAwayCorners { get; init; }
+
+    [JsonPropertyName("awayCornersPrediction")]
+    public double? AwayCornersPrediction => PredAwayCorners;
+
+    [JsonPropertyName("predTotalCombined")]
+    public double? PredTotalCombined { get; init; }
+
+    [JsonPropertyName("predFinal")]
+    public double? PredFinal { get; init; }
+
+    [JsonPropertyName("finalCornersPrediction")]
+    public double? FinalCornersPrediction => PredFinal ?? PredictedTotalCorners;
+
+    [JsonPropertyName("predFinalRounded")]
+    public double? PredFinalRounded { get; init; }
 
     [JsonPropertyName("mae")]
     public double Mae { get; init; } = TotalCornersMae;
@@ -41,6 +71,27 @@ public sealed class PredictionResult
 
     [JsonPropertyName("wideRangeHigh")]
     public double WideRangeHigh { get; init; }
+
+    [JsonPropertyName("rangeLow")]
+    public double RangeLow => ProbableRangeLow;
+
+    [JsonPropertyName("rangeHigh")]
+    public double RangeHigh => ProbableRangeHigh;
+
+    [JsonPropertyName("bettingLine")]
+    public double? BettingLine { get; init; }
+
+    [JsonPropertyName("recommendedSide")]
+    public string RecommendedSide { get; init; } = "N/A";
+
+    [JsonPropertyName("distanceToLine")]
+    public double? DistanceToLine { get; init; }
+
+    [JsonPropertyName("confidence")]
+    public string Confidence { get; init; } = "N/A";
+
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = string.Empty;
 
     [JsonPropertyName("legacyHomeCorners")]
     public double? LegacyHomeCorners { get; init; }
@@ -87,6 +138,50 @@ public sealed class PredictionResult
                 : difference <= 2.0
                     ? "Medium"
                     : "Low"
+        };
+    }
+
+    public static PredictionResult CreateEnsemble(
+        double predTotalDirect,
+        double predHomeCorners,
+        double predAwayCorners,
+        double predTotalCombined,
+        double predFinal,
+        double predFinalRounded,
+        double rangeLow,
+        double rangeHigh,
+        double? bettingLine,
+        string recommendedSide,
+        double? distanceToLine,
+        string confidence,
+        string message)
+    {
+        return new PredictionResult(predFinal)
+        {
+            PredTotalDirect = predTotalDirect,
+            PredHomeCorners = predHomeCorners,
+            PredAwayCorners = predAwayCorners,
+            PredTotalCombined = predTotalCombined,
+            PredFinal = predFinal,
+            PredFinalRounded = predFinalRounded,
+            ProbableRangeLow = rangeLow,
+            ProbableRangeHigh = rangeHigh,
+            WideRangeLow = rangeLow,
+            WideRangeHigh = rangeHigh,
+            LegacyHomeCorners = predHomeCorners,
+            LegacyAwayCorners = predAwayCorners,
+            LegacyTotalCorners = predTotalCombined,
+            ModelDifference = Math.Abs(predTotalDirect - predTotalCombined),
+            ModelConsensus = Math.Abs(predTotalDirect - predTotalCombined) <= 1.0
+                ? "High"
+                : Math.Abs(predTotalDirect - predTotalCombined) <= 2.0
+                    ? "Medium"
+                    : "Low",
+            BettingLine = bettingLine,
+            RecommendedSide = recommendedSide,
+            DistanceToLine = distanceToLine,
+            Confidence = confidence,
+            Message = message
         };
     }
 }

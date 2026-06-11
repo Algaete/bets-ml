@@ -9,6 +9,8 @@ namespace CornersPrediction.Infrastructure.SqlServer;
 
 public sealed class SqlServerBettingRepository : IBettingRepository
 {
+    private static readonly SemaphoreSlim SchemaUpgradeLock = new(1, 1);
+    private static bool _bettingSchemaUpgraded;
     private readonly string _connectionString;
 
     public SqlServerBettingRepository(IConfiguration configuration)
@@ -20,8 +22,10 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     public async Task<BettingRecord> AddAsync(BettingRecord record, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
-        var parameters = BuildRecordParameters(record);
-        parameters.Add("InsertedId", dbType: DbType.Int64, direction: ParameterDirection.Output);
+        await EnsureBettingSchemaCompatibilityAsync(connection, cancellationToken);
+        var supportedParameters = await GetStoredProcedureParametersAsync(connection, "dbo.sp_InsertBettingRecord", cancellationToken);
+        var parameters = BuildRecordParameters(record, supportedParameters);
+        AddParameter(parameters, supportedParameters, "InsertedId", dbType: DbType.Int64, direction: ParameterDirection.Output);
 
         var command = new CommandDefinition(
             "dbo.sp_InsertBettingRecord",
@@ -37,9 +41,11 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     public async Task<int> UpdateAsync(long id, BettingRecord record, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
-        var parameters = BuildRecordParameters(record);
-        parameters.Add("Id", id, DbType.Int64);
-        parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
+        await EnsureBettingSchemaCompatibilityAsync(connection, cancellationToken);
+        var supportedParameters = await GetStoredProcedureParametersAsync(connection, "dbo.sp_UpdateBettingRecord", cancellationToken);
+        var parameters = BuildRecordParameters(record, supportedParameters);
+        AddParameter(parameters, supportedParameters, "Id", id, DbType.Int64);
+        AddParameter(parameters, supportedParameters, "RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
 
         var command = new CommandDefinition(
             "dbo.sp_UpdateBettingRecord",
@@ -51,11 +57,12 @@ public sealed class SqlServerBettingRepository : IBettingRepository
         return parameters.Get<int>("RowsAffected");
     }
 
-    public async Task<int> DeleteAsync(long id, CancellationToken cancellationToken)
+    public async Task<int> DeleteAsync(long id, string userId, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
         parameters.Add("Id", id, DbType.Int64);
+        parameters.Add("UserId", userId, DbType.String, size: 450);
         parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
 
         var command = new CommandDefinition(
@@ -68,11 +75,12 @@ public sealed class SqlServerBettingRepository : IBettingRepository
         return parameters.Get<int>("RowsAffected");
     }
 
-    public async Task<BettingRecord?> GetByIdAsync(long id, CancellationToken cancellationToken)
+    public async Task<BettingRecord?> GetByIdAsync(long id, string userId, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
         parameters.Add("Id", id, DbType.Int64);
+        parameters.Add("UserId", userId, DbType.String, size: 450);
 
         var command = new CommandDefinition(
             "dbo.sp_GetBettingRecordById",
@@ -119,6 +127,7 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
+        parameters.Add("UserId", transaction.UserId, DbType.String, size: 450);
         parameters.Add("CurrencyCode", transaction.CurrencyCode, DbType.String, size: 3);
         parameters.Add("TransactionDate", transaction.TransactionDate.Date, DbType.Date);
         parameters.Add("Type", transaction.Type, DbType.String, size: 30);
@@ -147,6 +156,7 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
+        parameters.Add("UserId", record.UserId, DbType.String, size: 450);
         parameters.Add("CurrencyCode", record.CurrencyCode, DbType.String, size: 3);
         parameters.Add("TransactionDate", DateTime.UtcNow.Date, DbType.Date);
         parameters.Add("BettingRecordId", record.Id, DbType.Int64);
@@ -173,6 +183,7 @@ public sealed class SqlServerBettingRepository : IBettingRepository
         return new BankrollTransaction
         {
             Id = insertedId,
+            UserId = record.UserId,
             CurrencyCode = record.CurrencyCode,
             TransactionDate = DateTime.UtcNow.Date,
             Type = BankrollTransactionTypes.BetSettlement,
@@ -185,11 +196,13 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     }
 
     public async Task<IReadOnlyList<BankrollTransaction>> GetBankrollTransactionsAsync(
+        string userId,
         string currencyCode,
         CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
+        parameters.Add("UserId", userId, DbType.String, size: 450);
         parameters.Add("CurrencyCode", currencyCode, DbType.String, size: 3);
 
         var command = new CommandDefinition(
@@ -202,10 +215,11 @@ public sealed class SqlServerBettingRepository : IBettingRepository
         return transactions.ToArray();
     }
 
-    public async Task<decimal> GetCurrentBankrollAsync(string currencyCode, CancellationToken cancellationToken)
+    public async Task<decimal> GetCurrentBankrollAsync(string userId, string currencyCode, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
+        parameters.Add("UserId", userId, DbType.String, size: 450);
         parameters.Add("CurrencyCode", currencyCode, DbType.String, size: 3);
 
         var command = new CommandDefinition(
@@ -217,36 +231,184 @@ public sealed class SqlServerBettingRepository : IBettingRepository
         return await connection.QuerySingleOrDefaultAsync<decimal>(command);
     }
 
-    private static DynamicParameters BuildRecordParameters(BettingRecord record)
+    private static DynamicParameters BuildRecordParameters(
+        BettingRecord record,
+        IReadOnlySet<string>? supportedParameters = null)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("CurrencyCode", record.CurrencyCode, DbType.String, size: 3);
-        parameters.Add("League", record.League, DbType.String, size: 100);
-        parameters.Add("Season", record.Season, DbType.String, size: 20);
-        parameters.Add("MatchDate", record.MatchDate.Date, DbType.Date);
-        parameters.Add("HomeTeam", record.HomeTeam, DbType.String, size: 150);
-        parameters.Add("AwayTeam", record.AwayTeam, DbType.String, size: 150);
-        parameters.Add("Bookmaker", record.Bookmaker, DbType.String, size: 100);
-        parameters.Add("MarketType", record.MarketType, DbType.String, size: 50);
-        parameters.Add("BetSelection", record.BetSelection, DbType.String, size: 50);
-        parameters.Add("Line", record.Line, DbType.Decimal);
-        parameters.Add("Odds", record.Odds, DbType.Decimal);
-        parameters.Add("Stake", record.Stake, DbType.Decimal);
-        parameters.Add("Status", record.Status, DbType.String, size: 20);
-        parameters.Add("ActualHomeCorners", record.ActualHomeCorners, DbType.Int32);
-        parameters.Add("ActualAwayCorners", record.ActualAwayCorners, DbType.Int32);
-        parameters.Add("ActualTotalCorners", record.ActualTotalCorners, DbType.Int32);
-        parameters.Add("CashoutAmount", record.CashoutAmount, DbType.Decimal);
-        parameters.Add("PotentialReturn", record.PotentialReturn, DbType.Decimal);
-        parameters.Add("NetReturn", record.NetReturn, DbType.Decimal);
-        parameters.Add("ProfitLoss", record.ProfitLoss, DbType.Decimal);
-        parameters.Add("RoiPercent", record.RoiPercent, DbType.Decimal);
-        parameters.Add("BankrollBefore", record.BankrollBefore, DbType.Decimal);
-        parameters.Add("BankrollAfter", record.BankrollAfter, DbType.Decimal);
-        parameters.Add("ClosingOdds", record.ClosingOdds, DbType.Decimal);
-        parameters.Add("ConfidenceLevel", record.ConfidenceLevel, DbType.String, size: 20);
-        parameters.Add("Notes", record.Notes, DbType.String);
+        AddParameter(parameters, supportedParameters, "UserId", record.UserId, DbType.String, size: 450);
+        AddParameter(parameters, supportedParameters, "CurrencyCode", record.CurrencyCode, DbType.String, size: 3);
+        AddParameter(parameters, supportedParameters, "League", record.League, DbType.String, size: 100);
+        AddParameter(parameters, supportedParameters, "Season", record.Season, DbType.String, size: 20);
+        AddParameter(parameters, supportedParameters, "MatchDate", record.MatchDate.Date, DbType.Date);
+        AddParameter(parameters, supportedParameters, "HomeTeam", record.HomeTeam, DbType.String, size: 150);
+        AddParameter(parameters, supportedParameters, "AwayTeam", record.AwayTeam, DbType.String, size: 150);
+        AddParameter(parameters, supportedParameters, "Bookmaker", record.Bookmaker, DbType.String, size: 100);
+        AddParameter(parameters, supportedParameters, "MarketType", record.MarketType, DbType.String, size: 50);
+        AddParameter(parameters, supportedParameters, "BetSelection", record.BetSelection, DbType.String, size: 50);
+        AddParameter(parameters, supportedParameters, "Line", record.Line, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "Odds", record.Odds, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "Stake", record.Stake, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "Status", record.Status, DbType.String, size: 20);
+        AddParameter(parameters, supportedParameters, "ActualHomeCorners", record.ActualHomeCorners, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualAwayCorners", record.ActualAwayCorners, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualTotalCorners", record.ActualTotalCorners, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualHomeShots", record.ActualHomeShots, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualAwayShots", record.ActualAwayShots, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualTotalShots", record.ActualTotalShots, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualHomeShotsOnGoal", record.ActualHomeShotsOnGoal, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualAwayShotsOnGoal", record.ActualAwayShotsOnGoal, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "ActualTotalShotsOnGoal", record.ActualTotalShotsOnGoal, DbType.Int32);
+        AddParameter(parameters, supportedParameters, "CashoutAmount", record.CashoutAmount, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "PotentialReturn", record.PotentialReturn, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "NetReturn", record.NetReturn, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "ProfitLoss", record.ProfitLoss, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "RoiPercent", record.RoiPercent, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "BankrollBefore", record.BankrollBefore, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "BankrollAfter", record.BankrollAfter, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "ClosingOdds", record.ClosingOdds, DbType.Decimal);
+        AddParameter(parameters, supportedParameters, "ConfidenceLevel", record.ConfidenceLevel, DbType.String, size: 20);
+        AddParameter(parameters, supportedParameters, "PredictionModel", record.PredictionModel, DbType.String, size: 50);
+        AddParameter(parameters, supportedParameters, "Notes", record.Notes, DbType.String);
         return parameters;
+    }
+
+    private static void AddParameter(
+        DynamicParameters parameters,
+        IReadOnlySet<string>? supportedParameters,
+        string name,
+        object? value = null,
+        DbType? dbType = null,
+        ParameterDirection? direction = null,
+        int? size = null)
+    {
+        if (supportedParameters is not null && !supportedParameters.Contains(name))
+        {
+            return;
+        }
+
+        parameters.Add(name, value, dbType, direction, size);
+    }
+
+    private static async Task<IReadOnlySet<string>> GetStoredProcedureParametersAsync(
+        SqlConnection connection,
+        string procedureName,
+        CancellationToken cancellationToken)
+    {
+        var command = new CommandDefinition(
+            """
+            SELECT ParameterName = REPLACE(p.name, '@', '')
+            FROM sys.parameters p
+            WHERE p.object_id = OBJECT_ID(@ProcedureName);
+            """,
+            new { ProcedureName = procedureName },
+            cancellationToken: cancellationToken);
+
+        var names = await connection.QueryAsync<string>(command);
+        var parameters = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (parameters.Count == 0)
+        {
+            throw new InvalidOperationException($"Stored procedure '{procedureName}' was not found or has no parameters.");
+        }
+
+        return parameters;
+    }
+
+    private static async Task EnsureBettingSchemaCompatibilityAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        if (_bettingSchemaUpgraded)
+        {
+            return;
+        }
+
+        await SchemaUpgradeLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_bettingSchemaUpgraded)
+            {
+                return;
+            }
+
+            var command = new CommandDefinition(
+                """
+                IF COL_LENGTH('dbo.BettingRecords', 'ActualHomeShots') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.BettingRecords ADD
+                        ActualHomeShots INT NULL,
+                        ActualAwayShots INT NULL,
+                        ActualTotalShots INT NULL,
+                        ActualHomeShotsOnGoal INT NULL,
+                        ActualAwayShotsOnGoal INT NULL,
+                        ActualTotalShotsOnGoal INT NULL;
+                END;
+
+                IF COL_LENGTH('dbo.BettingRecords', 'PredictionModel') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.BettingRecords
+                        ADD PredictionModel NVARCHAR(50) NOT NULL
+                            CONSTRAINT DF_BettingRecords_PredictionModel DEFAULT 'Manual' WITH VALUES;
+                END;
+
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.check_constraints
+                    WHERE name = 'CK_BettingRecords_MarketType'
+                      AND parent_object_id = OBJECT_ID('dbo.BettingRecords')
+                )
+                BEGIN
+                    ALTER TABLE dbo.BettingRecords DROP CONSTRAINT CK_BettingRecords_MarketType;
+                END;
+
+                ALTER TABLE dbo.BettingRecords
+                    ADD CONSTRAINT CK_BettingRecords_MarketType CHECK
+                    (
+                        MarketType IN
+                        (
+                            'TotalCorners',
+                            'HomeCorners',
+                            'AwayCorners',
+                            'FirstHalfCorners',
+                            'TotalShots',
+                            'TotalShotsOnGoal',
+                            'Other'
+                        )
+                    );
+
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.check_constraints
+                    WHERE name = 'CK_BettingRecords_PredictionModel'
+                      AND parent_object_id = OBJECT_ID('dbo.BettingRecords')
+                )
+                BEGIN
+                    ALTER TABLE dbo.BettingRecords DROP CONSTRAINT CK_BettingRecords_PredictionModel;
+                END;
+
+                ALTER TABLE dbo.BettingRecords
+                    ADD CONSTRAINT CK_BettingRecords_PredictionModel CHECK
+                    (
+                        PredictionModel IN
+                        (
+                            'Manual',
+                            'TotalCornersModel',
+                            'OverUnderLineModel',
+                            'ShotsOnGoalModel'
+                        )
+                    );
+                """,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(command);
+            _bettingSchemaUpgraded = true;
+        }
+        finally
+        {
+            SchemaUpgradeLock.Release();
+        }
     }
 
     private static decimal GetSettlementAmount(BettingRecord record)
@@ -259,6 +421,7 @@ public sealed class SqlServerBettingRepository : IBettingRepository
     private static DynamicParameters BuildFilterParameters(BettingFiltersRequest filters)
     {
         var parameters = new DynamicParameters();
+        parameters.Add("UserId", filters.UserId, DbType.String, size: 450);
         parameters.Add("CurrencyCode", filters.CurrencyCode, DbType.String, size: 3);
         parameters.Add("League", filters.League, DbType.String, size: 100);
         parameters.Add("Season", filters.Season, DbType.String, size: 20);

@@ -1,5 +1,7 @@
 using CornersPrediction.Application.Betting;
+using CornersPrediction.Domain.Betting;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace CornersPredictionApi.Controllers;
 
@@ -57,7 +59,7 @@ public sealed class BettingController : ControllerBase
         [FromQuery] DateTime? dateTo,
         CancellationToken cancellationToken)
     {
-        var filters = new BettingFiltersRequest(currencyCode, league, season, homeTeam, awayTeam, status, marketType, bookmaker, dateFrom, dateTo);
+        var filters = new BettingFiltersRequest(GetEffectiveUserId(), currencyCode, league, season, homeTeam, awayTeam, status, marketType, bookmaker, dateFrom, dateTo);
         var records = await _getRecordsUseCase.GetAsync(filters, cancellationToken);
         return Ok(records);
     }
@@ -77,7 +79,7 @@ public sealed class BettingController : ControllerBase
         [FromQuery] DateTime? dateTo,
         CancellationToken cancellationToken)
     {
-        var filters = new BettingFiltersRequest(currencyCode, league, season, homeTeam, awayTeam, status, marketType, bookmaker, dateFrom, dateTo);
+        var filters = new BettingFiltersRequest(GetEffectiveUserId(), currencyCode, league, season, homeTeam, awayTeam, status, marketType, bookmaker, dateFrom, dateTo);
         var summary = await _getSummaryUseCase.GetAsync(filters, cancellationToken);
         return Ok(summary);
     }
@@ -88,7 +90,7 @@ public sealed class BettingController : ControllerBase
         [FromQuery] string? currencyCode,
         CancellationToken cancellationToken)
     {
-        var transactions = await _getBankrollTransactionsUseCase.GetAsync(currencyCode, cancellationToken);
+        var transactions = await _getBankrollTransactionsUseCase.GetAsync(GetEffectiveUserId(), currencyCode, cancellationToken);
         return Ok(transactions);
     }
 
@@ -98,7 +100,7 @@ public sealed class BettingController : ControllerBase
         [FromQuery] string? currencyCode,
         CancellationToken cancellationToken)
     {
-        var currentBankroll = await _getCurrentBankrollUseCase.GetAsync(currencyCode, cancellationToken);
+        var currentBankroll = await _getCurrentBankrollUseCase.GetAsync(GetEffectiveUserId(), currencyCode, cancellationToken);
         return Ok(new { currencyCode = currencyCode ?? "CLP", currentBankroll });
     }
 
@@ -116,7 +118,7 @@ public sealed class BettingController : ControllerBase
 
         try
         {
-            var created = await _createBankrollTransactionUseCase.CreateAsync(request, cancellationToken);
+            var created = await _createBankrollTransactionUseCase.CreateAsync(request with { UserId = GetEffectiveUserId() }, cancellationToken);
             return Created($"/api/betting/bankroll/{created.Id}", created);
         }
         catch (ArgumentException exception)
@@ -137,7 +139,7 @@ public sealed class BettingController : ControllerBase
     {
         try
         {
-            var record = await _getByIdUseCase.GetAsync(id, cancellationToken);
+            var record = await _getByIdUseCase.GetAsync(id, GetEffectiveUserId(), cancellationToken);
             return record is null ? NotFound(new { error = "Betting record was not found." }) : Ok(record);
         }
         catch (ArgumentException exception)
@@ -160,7 +162,7 @@ public sealed class BettingController : ControllerBase
 
         try
         {
-            var created = await _createUseCase.CreateAsync(request, cancellationToken);
+            var created = await _createUseCase.CreateAsync(request with { UserId = GetEffectiveUserId() }, cancellationToken);
             return Created($"/api/betting/{created.Id}", created);
         }
         catch (ArgumentException exception)
@@ -190,7 +192,7 @@ public sealed class BettingController : ControllerBase
 
         try
         {
-            var rowsAffected = await _updateUseCase.UpdateAsync(id, request, cancellationToken);
+            var rowsAffected = await _updateUseCase.UpdateAsync(id, request with { UserId = GetEffectiveUserId() }, cancellationToken);
             return rowsAffected == 0 ? NotFound(new { error = "Betting record was not found." }) : NoContent();
         }
         catch (ArgumentException exception)
@@ -211,7 +213,7 @@ public sealed class BettingController : ControllerBase
     {
         try
         {
-            var rowsAffected = await _deleteUseCase.DeleteAsync(id, cancellationToken);
+            var rowsAffected = await _deleteUseCase.DeleteAsync(id, GetEffectiveUserId(), cancellationToken);
             return rowsAffected == 0 ? NotFound(new { error = "Betting record was not found." }) : NoContent();
         }
         catch (ArgumentException exception)
@@ -223,5 +225,13 @@ public sealed class BettingController : ControllerBase
             _logger.LogError(exception, "Failed to delete betting record {BettingRecordId}", id);
             return Problem(title: "Could not delete betting record", detail: exception.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
+    }
+
+    private string GetEffectiveUserId()
+    {
+        return User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.Identity?.Name
+            ?? Request.Headers["X-User-Id"].FirstOrDefault()
+            ?? BettingUsers.DefaultUserId;
     }
 }

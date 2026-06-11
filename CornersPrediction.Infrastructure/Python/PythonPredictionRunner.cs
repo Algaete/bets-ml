@@ -42,18 +42,109 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
                 $"Prediction script was not found at '{scriptPath}'.");
         }
 
+        var payloadJson = JsonSerializer.Serialize(features);
+        _logger.LogInformation("Total corners Python payload: {PayloadJson}", payloadJson);
+        var stdout = await RunPythonAsync(scriptPath, payloadJson, cancellationToken);
+        _logger.LogInformation("Total corners Python response: {Stdout}", stdout);
+
+        return ParsePrediction(stdout);
+    }
+
+    public async Task<OverUnderPredictionResult> PredictOverUnderAsync(
+        JsonElement features,
+        CancellationToken cancellationToken)
+    {
+        var scriptPath = ResolvePath(_options.OverUnderScriptPath);
+        if (!File.Exists(scriptPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Over/Under prediction script was not found at '{scriptPath}'.");
+        }
+
+        var modelPath = ResolvePath(_options.OverUnderModelPath);
+        if (!File.Exists(modelPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Over/Under model was not found at '{modelPath}'.");
+        }
+
+        var payloadJson = JsonSerializer.Serialize(features);
+        var stdout = await RunPythonAsync(scriptPath, payloadJson, cancellationToken, modelPath);
+
+        return ParseOverUnderPrediction(stdout);
+    }
+
+    public async Task<ShotsOnGoalPredictionResult> PredictShotsOnGoalAsync(
+        JsonElement features,
+        CancellationToken cancellationToken)
+    {
+        var scriptPath = ResolvePath(_options.ShotsOnGoalScriptPath);
+        if (!File.Exists(scriptPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Shots-on-goal prediction script was not found at '{scriptPath}'.");
+        }
+
+        var modelPath = ResolvePath(_options.ShotsOnGoalModelPath);
+        if (!File.Exists(modelPath) && !Directory.Exists(modelPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Shots/SOG model directory or artifact was not found at '{modelPath}'.");
+        }
+
+        var payloadJson = JsonSerializer.Serialize(features);
+        _logger.LogInformation("Shots/SOG Python payload: {PayloadJson}", payloadJson);
+        var stdout = await RunPythonAsync(scriptPath, payloadJson, cancellationToken, modelPath);
+        _logger.LogInformation("Shots/SOG Python response: {Stdout}", stdout);
+
+        return ParseShotsOnGoalPrediction(stdout);
+    }
+
+    public async Task<DebugModelPredictionResult> PredictDebugModelAsync(
+        string modelKey,
+        JsonElement features,
+        CancellationToken cancellationToken)
+    {
+        var scriptPath = ResolvePath(_options.ModelDebugScriptPath);
+        if (!File.Exists(scriptPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Debug model prediction script was not found at '{scriptPath}'.");
+        }
+
+        var modelPath = ResolvePath(_options.ModelDebugModelPath);
+        if (!Directory.Exists(modelPath))
+        {
+            throw new PredictionException(
+                PredictionErrorType.ScriptNotFound,
+                $"Debug model directory was not found at '{modelPath}'.");
+        }
+
+        var payloadJson = JsonSerializer.Serialize(new { modelKey, features });
+        _logger.LogInformation("Debug model {ModelKey} Python payload: {PayloadJson}", modelKey, payloadJson);
+        var stdout = await RunPythonAsync(scriptPath, payloadJson, cancellationToken, modelPath);
+        _logger.LogInformation("Debug model {ModelKey} Python response: {Stdout}", modelKey, stdout);
+
+        return ParseDebugModelPrediction(stdout);
+    }
+
+    private async Task<string> RunPythonAsync(
+        string scriptPath,
+        string payloadJson,
+        CancellationToken cancellationToken,
+        string? modelPath = null)
+    {
         var timeoutSeconds = _options.TimeoutSeconds > 0 ? _options.TimeoutSeconds : 30;
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeoutCts.Token);
 
-        var payloadJson = JsonSerializer.Serialize(features);
-
-        // This is the exact point where .NET calls Python.
-        // Arguments:
-        // 1. scriptPath -> predict.py
-        // 2. payloadJson -> the model features serialized as JSON
         var startInfo = new ProcessStartInfo
         {
             FileName = ResolveExecutablePath(_options.PythonExecutable),
@@ -66,6 +157,10 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
 
         startInfo.ArgumentList.Add(scriptPath);
         startInfo.ArgumentList.Add(payloadJson);
+        if (!string.IsNullOrWhiteSpace(modelPath))
+        {
+            startInfo.ArgumentList.Add(modelPath);
+        }
 
         using var process = new Process
         {
@@ -111,7 +206,7 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
                 _logger.LogWarning("Python prediction stderr: {StdErr}", stderr);
             }
 
-            return ParsePrediction(stdout);
+            return stdout;
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -177,6 +272,38 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
             using var document = JsonDocument.Parse(stdout);
             var root = document.RootElement;
 
+            if (root.TryGetProperty("predTotalDirect", out _))
+            {
+                var predTotalDirect = ReadRequiredDouble(root, "predTotalDirect");
+                var predHomeCorners = ReadRequiredDouble(root, "predHomeCorners");
+                var predAwayCorners = ReadRequiredDouble(root, "predAwayCorners");
+                var predTotalCombined = ReadRequiredDouble(root, "predTotalCombined");
+                var predFinal = ReadRequiredDouble(root, "predFinal");
+                var predFinalRounded = ReadRequiredDouble(root, "predFinalRounded");
+                var rangeLow = ReadRequiredDouble(root, "rangeLow");
+                var rangeHigh = ReadRequiredDouble(root, "rangeHigh");
+                var bettingLine = ReadOptionalDouble(root, "bettingLine");
+                var distanceToLine = ReadOptionalDouble(root, "distanceToLine");
+                var recommendedSide = ReadOptionalString(root, "recommendedSide") ?? "N/A";
+                var confidence = ReadOptionalString(root, "confidence") ?? "N/A";
+                var message = ReadOptionalString(root, "message") ?? string.Empty;
+
+                return PredictionResult.CreateEnsemble(
+                    predTotalDirect,
+                    predHomeCorners,
+                    predAwayCorners,
+                    predTotalCombined,
+                    predFinal,
+                    predFinalRounded,
+                    rangeLow,
+                    rangeHigh,
+                    bettingLine,
+                    recommendedSide,
+                    distanceToLine,
+                    confidence,
+                    message);
+            }
+
             if (!root.TryGetProperty("predicted_total_corners", out var predictionElement) ||
                 predictionElement.ValueKind is not JsonValueKind.Number ||
                 !predictionElement.TryGetDouble(out var prediction))
@@ -186,8 +313,6 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
                     "Python prediction did not include a numeric 'predicted_total_corners' value.");
             }
 
-            // TODO: Connect model_home_corners_v4 and model_away_corners_v4 here,
-            // then pass their outputs into PredictionResult.Create as comparison values.
             return PredictionResult.Create(prediction);
         }
         catch (JsonException exception)
@@ -198,6 +323,248 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
                 exception);
         }
     }
+
+    private static OverUnderPredictionResult ParseOverUnderPrediction(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                "Python Over/Under prediction returned an empty response.");
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(stdout);
+            var root = document.RootElement;
+
+            var bettingLine = ReadRequiredDouble(root, "bettingLine");
+            var predictedClass = ReadRequiredInt(root, "predictedClass");
+            var distanceToLine = ReadRequiredDouble(root, "distanceToLine");
+            var absDistanceToLine = ReadRequiredDouble(root, "absDistanceToLine");
+            var overProbability = ReadOptionalDouble(root, "overProbability");
+            var underProbability = ReadOptionalDouble(root, "underProbability");
+
+            return new OverUnderPredictionResult(
+                bettingLine,
+                predictedClass,
+                overProbability,
+                underProbability,
+                distanceToLine,
+                absDistanceToLine);
+        }
+        catch (JsonException exception)
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                $"Python Over/Under prediction returned invalid JSON: {stdout}",
+                exception);
+        }
+    }
+
+    private static ShotsOnGoalPredictionResult ParseShotsOnGoalPrediction(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                "Python shots-on-goal prediction returned an empty response.");
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(stdout);
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("markets", out var marketsElement))
+            {
+                var shots = marketsElement.TryGetProperty("shots", out var shotsElement)
+                    ? ParseMarketPrediction(shotsElement)
+                    : null;
+                var sog = marketsElement.TryGetProperty("sog", out var sogElement)
+                    ? ParseMarketPrediction(sogElement)
+                    : throw new PredictionException(
+                        PredictionErrorType.InvalidOutput,
+                        "Python shots/SOG prediction did not include a 'markets.sog' object.");
+                var goals = marketsElement.TryGetProperty("goals", out var goalsElement)
+                    ? ParseMarketPrediction(goalsElement)
+                    : null;
+                var debug = root.TryGetProperty("debug", out var debugElement)
+                    ? debugElement.Clone()
+                    : (JsonElement?)null;
+
+                return new ShotsOnGoalPredictionResult(shots, sog, goals, debug);
+            }
+
+            if (!root.TryGetProperty("predicted_shots_on_goal", out var predictionElement) ||
+                predictionElement.ValueKind is not JsonValueKind.Number ||
+                !predictionElement.TryGetDouble(out var prediction))
+            {
+                throw new PredictionException(
+                    PredictionErrorType.InvalidOutput,
+                    "Python shots-on-goal prediction did not include a numeric 'predicted_shots_on_goal' value.");
+            }
+
+            return new ShotsOnGoalPredictionResult(prediction);
+        }
+        catch (JsonException exception)
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                $"Python shots-on-goal prediction returned invalid JSON: {stdout}",
+                exception);
+        }
+    }
+
+    private static DebugModelPredictionResult ParseDebugModelPrediction(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                "Python debug model prediction returned an empty response.");
+        }
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<DebugModelPredictionResult>(stdout, JsonOptions);
+            if (result is null || string.IsNullOrWhiteSpace(result.ModelKey))
+            {
+                throw new PredictionException(
+                    PredictionErrorType.InvalidOutput,
+                    $"Python debug model prediction returned invalid JSON: {stdout}");
+            }
+
+            return result;
+        }
+        catch (JsonException exception)
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                $"Python debug model prediction returned invalid JSON: {stdout}",
+                exception);
+        }
+    }
+
+    private static MarketPredictionResult ParseMarketPrediction(JsonElement element)
+    {
+        if (element.ValueKind is not JsonValueKind.Object)
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                "Python market prediction value was not a JSON object.");
+        }
+
+        var prediction = ReadRequiredDouble(element, "prediction");
+        var finalPrediction = ReadOptionalDouble(element, "finalPrediction") ?? prediction;
+
+        return new MarketPredictionResult(
+            ReadOptionalDouble(element, "line"),
+            prediction,
+            ReadOptionalString(element, "recommendation"),
+            ReadOptionalString(element, "confidence"),
+            ReadOptionalDouble(element, "distance"),
+            ReadOptionalDouble(element, "historicalAccuracy"),
+            ReadOptionalDouble(element, "homePrediction"),
+            ReadOptionalDouble(element, "awayPrediction"),
+            ReadOptionalDouble(element, "totalDirectPrediction"),
+            ReadOptionalDouble(element, "combinedHomeAwayPrediction"),
+            finalPrediction,
+            ReadOptionalDouble(element, "rawPrediction"),
+            ReadOptionalBool(element, "sanityAdjusted") ?? false,
+            ReadOptionalString(element, "sanityReason"),
+            ReadOptionalDouble(element, "featurePrior"));
+    }
+
+    private static double ReadRequiredDouble(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) ||
+            element.ValueKind is not JsonValueKind.Number ||
+            !element.TryGetDouble(out var value))
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                $"Python Over/Under prediction did not include a numeric '{propertyName}' value.");
+        }
+
+        return value;
+    }
+
+    private static int ReadRequiredInt(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) ||
+            element.ValueKind is not JsonValueKind.Number ||
+            !element.TryGetInt32(out var value))
+        {
+            throw new PredictionException(
+                PredictionErrorType.InvalidOutput,
+                $"Python Over/Under prediction did not include an integer '{propertyName}' value.");
+        }
+
+        return value;
+    }
+
+    private static double? ReadOptionalDouble(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) ||
+            element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (element.ValueKind is JsonValueKind.Number && element.TryGetDouble(out var value))
+        {
+            return value;
+        }
+
+        throw new PredictionException(
+            PredictionErrorType.InvalidOutput,
+            $"Python Over/Under prediction included a non-numeric '{propertyName}' value.");
+    }
+
+    private static string? ReadOptionalString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) ||
+            element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (element.ValueKind is JsonValueKind.String)
+        {
+            return element.GetString();
+        }
+
+        return element.ToString();
+    }
+
+    private static bool? ReadOptionalBool(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var element) ||
+            element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (element.ValueKind is JsonValueKind.True)
+        {
+            return true;
+        }
+
+        if (element.ValueKind is JsonValueKind.False)
+        {
+            return false;
+        }
+
+        throw new PredictionException(
+            PredictionErrorType.InvalidOutput,
+            $"Python Over/Under prediction included a non-boolean '{propertyName}' value.");
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     /// <summary>
     /// Maps structured Python stderr errors into application error categories.

@@ -6,20 +6,34 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>@ViewData["Title"] - @UiText.T(language, "App.Name")</title>
+    <script>
+        (() => {
+            const theme = localStorage.getItem('app-theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        })();
+    </script>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/CornersPrediction.Web.styles.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/app-theme.css" asp-append-version="true" />
 </head>
 <body>
     @{
         var activeController = ViewContext.RouteData.Values["controller"]?.ToString();
         var returnUrl = Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString;
+        var userEmail = User.FindFirst("preferred_username")?.Value
+            ?? User.FindFirst("email")?.Value
+            ?? User.Identity?.Name;
+        var isAuthenticated = User.Identity?.IsAuthenticated == true;
+        var canUsePredictions = User.IsInRole("Admin") || User.IsInRole("Analyst") || User.IsInRole("User");
+        var canAdminUsers = User.IsInRole("Admin");
     }
     <div class="app-shell" id="AppShell">
         <aside class="app-sidebar" id="AppSidebar" aria-label="Main menu">
             <div class="sidebar-brand">
-                <a asp-area="" asp-controller="MatchHistory" asp-action="Index">
+                <a asp-area="" asp-controller="UpcomingMatches" asp-action="Index">
                     <span class="brand-mark">CP</span>
                     <span>
                         <span class="brand-title">@UiText.T(language, "App.Name")</span>
@@ -28,18 +42,34 @@
                 </a>
             </div>
             <nav class="sidebar-nav">
-                <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
-                    <span class="sidebar-icon">MH</span>
-                    <span>@UiText.T(language, "Nav.MatchHistory")</span>
-                </a>
-                <a class="sidebar-link @(activeController == "Predictions" ? "active" : "")" asp-area="" asp-controller="Predictions" asp-action="Index">
-                    <span class="sidebar-icon">PR</span>
-                    <span>@UiText.T(language, "Nav.Predictions")</span>
-                </a>
-                <a class="sidebar-link @(activeController == "Betting" ? "active" : "")" asp-area="" asp-controller="Betting" asp-action="Index">
-                    <span class="sidebar-icon">BT</span>
-                    <span>@UiText.T(language, "Nav.Betting")</span>
-                </a>
+                @if (isAuthenticated)
+                {
+                    <a class="sidebar-link @(activeController == "UpcomingMatches" ? "active" : "")" asp-area="" asp-controller="UpcomingMatches" asp-action="Index">
+                        <span class="sidebar-icon">UP</span>
+                        <span>@UiText.T(language, "Nav.UpcomingMatches")</span>
+                    </a>
+                }
+                @if (canUsePredictions)
+                {
+                    <a class="sidebar-link @(activeController == "Predictions" ? "active" : "")" asp-area="" asp-controller="Predictions" asp-action="Index">
+                        <span class="sidebar-icon">PR</span>
+                        <span>@UiText.T(language, "Nav.Predictions")</span>
+                    </a>
+                }
+                @if (isAuthenticated)
+                {
+                    <a class="sidebar-link @(activeController == "Betting" ? "active" : "")" asp-area="" asp-controller="Betting" asp-action="Index">
+                        <span class="sidebar-icon">BT</span>
+                        <span>@UiText.T(language, "Nav.Betting")</span>
+                    </a>
+                }
+                @if (canAdminUsers)
+                {
+                    <a class="sidebar-link @(activeController == "UserAdmin" ? "active" : "")" asp-area="" asp-controller="UserAdmin" asp-action="Index">
+                        <span class="sidebar-icon">UA</span>
+                        <span>@UiText.T(language, "Nav.Users")</span>
+                    </a>
+                }
             </nav>
             <div class="sidebar-footer">
                 <span class="small text-white-50">@UiText.T(language, "App.LocalWorkspace")</span>
@@ -58,7 +88,27 @@
                     <div class="topbar-title">@ViewData["Title"]</div>
                     <div class="topbar-subtitle">@UiText.T(language, "App.Name")</div>
                 </div>
-                <form class="language-switcher ms-auto" method="post" asp-controller="Language" asp-action="Set">
+                <div class="ms-auto d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                    <button id="ThemeToggle" class="btn btn-sm btn-outline-theme theme-toggle d-inline-flex align-items-center" type="button" data-theme-toggle aria-pressed="false">
+                        <span class="theme-toggle-icon" data-theme-toggle-icon aria-hidden="true">L</span>
+                        <span data-theme-toggle-label>Modo claro</span>
+                    </button>
+                    @if (User.Identity?.IsAuthenticated == true)
+                    {
+                        <span class="small fw-semibold text-secondary">@userEmail</span>
+                        <form asp-area="" asp-controller="Account" asp-action="Logout" method="post" class="m-0">
+                            @Html.AntiForgeryToken()
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">@UiText.T(language, "Auth.SignOut")</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <a class="btn btn-sm btn-primary" asp-area="" asp-controller="Account" asp-action="Login">
+                            @UiText.T(language, "Auth.SignIn")
+                        </a>
+                    }
+                </div>
+                <form class="language-switcher" method="post" asp-controller="Language" asp-action="Set">
                     @Html.AntiForgeryToken()
                     <input type="hidden" name="returnUrl" value="@returnUrl" />
                     <label class="visually-hidden" for="LanguageSelect">@UiText.T(language, "Language.Label")</label>
@@ -89,6 +139,7 @@
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
+    <script src="~/js/theme-toggle.js" asp-append-version="true"></script>
     <script>
         (() => {
             const shell = document.getElementById('AppShell');

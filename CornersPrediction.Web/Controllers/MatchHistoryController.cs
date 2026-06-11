@@ -1,9 +1,12 @@
 using CornersPrediction.Web.Clients;
 using CornersPrediction.Web.Models.MatchHistory;
+using CornersPrediction.Web.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPrediction.Web.Controllers;
 
+[Authorize(Policy = PlatformPolicies.Predictions)]
 public sealed class MatchHistoryController : Controller
 {
     private readonly MatchHistoryApiClient _matchHistoryApiClient;
@@ -18,13 +21,19 @@ public sealed class MatchHistoryController : Controller
     }
 
     [HttpGet]
-    public async Task<IActionResult> Index(CancellationToken cancellationToken)
+    public async Task<IActionResult> Index(
+        [FromQuery] MatchHistoryFiltersViewModel filters,
+        CancellationToken cancellationToken)
     {
+        filters.Take = filters.Take <= 0 ? 20 : Math.Min(filters.Take, 100);
         var leagueOptions = await LoadLeagueOptionsAsync(cancellationToken);
         var formationOptions = await LoadFormationOptionsAsync(cancellationToken);
+        var records = await LoadManualEntriesAsync(filters, cancellationToken);
 
         return View(new MatchHistoryIndexViewModel
         {
+            Filters = filters,
+            Records = records,
             LeagueOptions = leagueOptions,
             FormationOptions = formationOptions
         });
@@ -33,6 +42,7 @@ public sealed class MatchHistoryController : Controller
     [HttpGet]
     public async Task<IActionResult> TeamOptions(
         [FromQuery] string? league,
+        [FromQuery] string? teamGender,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(league))
@@ -40,7 +50,7 @@ public sealed class MatchHistoryController : Controller
             return Json(Array.Empty<Models.Teams.TeamBi3InfoViewModel>());
         }
 
-        var teamOptions = await LoadTeamOptionsAsync(league, cancellationToken);
+        var teamOptions = await LoadTeamOptionsAsync(league, teamGender, cancellationToken);
         return Json(teamOptions);
     }
 
@@ -48,6 +58,8 @@ public sealed class MatchHistoryController : Controller
     public async Task<IActionResult> RecentMatches(
         [FromQuery] string? homeTeam,
         [FromQuery] string? awayTeam,
+        [FromQuery] string? league,
+        [FromQuery] string? teamGender,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
@@ -55,8 +67,47 @@ public sealed class MatchHistoryController : Controller
             return Json(Array.Empty<MatchHistoryItemViewModel>());
         }
 
-        var recentMatches = await LoadRecentMatchesAsync(homeTeam, awayTeam, cancellationToken);
+        var recentMatches = await LoadRecentMatchesAsync(homeTeam, awayTeam, league, teamGender, cancellationToken);
         return Json(recentMatches);
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> PredictionContext(
+        [FromQuery] string? league,
+        [FromQuery] string? homeTeam,
+        [FromQuery] string? awayTeam,
+        [FromQuery] string? teamGender,
+        [FromQuery] double? baseLocalAwayPrediction,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
+        {
+            return Json(null);
+        }
+
+        try
+        {
+            var context = await _matchHistoryApiClient.GetPredictionContextAsync(
+                league ?? string.Empty,
+                homeTeam,
+                awayTeam,
+                teamGender,
+                baseLocalAwayPrediction,
+                cancellationToken);
+
+            return Json(context);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "Prediction context request was cancelled." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not load prediction context from backend API");
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "Prediction context could not be loaded. Check that the API is running." });
+        }
     }
 
     [HttpPost]
@@ -65,12 +116,10 @@ public sealed class MatchHistoryController : Controller
         [Bind(Prefix = "Form")] CreateMatchHistoryViewModel form,
         CancellationToken cancellationToken)
     {
-        var recentMatches = await LoadRecentMatchesAsync(
-            form.HomeTeam,
-            form.AwayTeam,
-            cancellationToken);
+        var filters = new MatchHistoryFiltersViewModel();
+        var records = await LoadManualEntriesAsync(filters, cancellationToken);
         var leagueOptions = await LoadLeagueOptionsAsync(cancellationToken);
-        var teamOptions = await LoadTeamOptionsAsync(form.League, cancellationToken);
+        var teamOptions = await LoadTeamOptionsAsync(form.League, null, cancellationToken);
         var formationOptions = await LoadFormationOptionsAsync(cancellationToken);
 
         if (!ModelState.IsValid)
@@ -78,7 +127,8 @@ public sealed class MatchHistoryController : Controller
             return View("Index", new MatchHistoryIndexViewModel
             {
                 Form = form,
-                RecentMatches = recentMatches,
+                Filters = filters,
+                Records = records,
                 LeagueOptions = leagueOptions,
                 FormationOptions = formationOptions,
                 TeamOptions = teamOptions
@@ -99,7 +149,8 @@ public sealed class MatchHistoryController : Controller
             return View("Index", new MatchHistoryIndexViewModel
             {
                 Form = form,
-                RecentMatches = recentMatches,
+                Filters = filters,
+                Records = records,
                 LeagueOptions = leagueOptions,
                 FormationOptions = formationOptions,
                 TeamOptions = teamOptions
@@ -160,15 +211,32 @@ public sealed class MatchHistoryController : Controller
     private async Task<IReadOnlyList<MatchHistoryItemViewModel>> LoadRecentMatchesAsync(
         string homeTeam,
         string awayTeam,
+        string? league,
+        string? teamGender,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await _matchHistoryApiClient.GetRecentAsync(homeTeam, awayTeam, cancellationToken);
+            return await _matchHistoryApiClient.GetRecentAsync(homeTeam, awayTeam, league, teamGender, cancellationToken);
         }
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Could not load recent matches from backend API");
+            return Array.Empty<MatchHistoryItemViewModel>();
+        }
+    }
+
+    private async Task<IReadOnlyList<MatchHistoryItemViewModel>> LoadManualEntriesAsync(
+        MatchHistoryFiltersViewModel filters,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _matchHistoryApiClient.GetManualEntriesAsync(filters, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not load manually entered matches from backend API");
             return Array.Empty<MatchHistoryItemViewModel>();
         }
     }
@@ -178,7 +246,7 @@ public sealed class MatchHistoryController : Controller
     {
         try
         {
-            return await _matchHistoryApiClient.GetLeagueOptionsAsync(cancellationToken);
+            return await _matchHistoryApiClient.GetLeagueOptionsAsync(null, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -203,11 +271,12 @@ public sealed class MatchHistoryController : Controller
 
     private async Task<IReadOnlyList<Models.Teams.TeamBi3InfoViewModel>> LoadTeamOptionsAsync(
         string league,
+        string? teamGender,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await _matchHistoryApiClient.GetTeamOptionsAsync(league, cancellationToken);
+            return await _matchHistoryApiClient.GetTeamOptionsAsync(league, teamGender, cancellationToken);
         }
         catch (Exception exception)
         {

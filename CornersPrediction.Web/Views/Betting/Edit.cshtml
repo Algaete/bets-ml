@@ -59,7 +59,7 @@
                 <select asp-for="MarketType" class="form-select">
                     @foreach (var item in BettingOptions.MarketTypes)
                     {
-                        <option value="@item">@item</option>
+                        <option value="@item">@BettingOptions.MarketTypeLabel(item)</option>
                     }
                 </select>
             </div>
@@ -106,6 +106,31 @@
                 <input asp-for="ActualTotalCorners" class="form-control" type="number" min="0" id="ActualTotalCorners" />
             </div>
             <div class="col-md-3">
+                <label asp-for="ActualHomeShots" class="form-label">@T("Fields.ActualHomeShots")</label>
+                <input asp-for="ActualHomeShots" class="form-control" type="number" min="0" id="ActualHomeShots" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualAwayShots" class="form-label">@T("Fields.ActualAwayShots")</label>
+                <input asp-for="ActualAwayShots" class="form-control" type="number" min="0" id="ActualAwayShots" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualTotalShots" class="form-label">@T("Fields.ActualTotalShots")</label>
+                <input asp-for="ActualTotalShots" class="form-control" type="number" min="0" id="ActualTotalShots" />
+            </div>
+            <div class="col-md-3"></div>
+            <div class="col-md-3">
+                <label asp-for="ActualHomeShotsOnGoal" class="form-label">@T("Fields.ActualHomeShotsOnGoal")</label>
+                <input asp-for="ActualHomeShotsOnGoal" class="form-control" type="number" min="0" id="ActualHomeShotsOnGoal" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualAwayShotsOnGoal" class="form-label">@T("Fields.ActualAwayShotsOnGoal")</label>
+                <input asp-for="ActualAwayShotsOnGoal" class="form-control" type="number" min="0" id="ActualAwayShotsOnGoal" />
+            </div>
+            <div class="col-md-3">
+                <label asp-for="ActualTotalShotsOnGoal" class="form-label">@T("Fields.ActualTotalShotsOnGoal")</label>
+                <input asp-for="ActualTotalShotsOnGoal" class="form-control" type="number" min="0" id="ActualTotalShotsOnGoal" />
+            </div>
+            <div class="col-md-3">
                 <label asp-for="CashoutAmount" class="form-label">@T("Fields.CashoutAmount")</label>
                 <input asp-for="CashoutAmount" asp-format="@moneyFormat" class="form-control" type="number" step="@moneyStep" id="CashoutAmount" data-money-input />
             </div>
@@ -127,12 +152,22 @@
                     }
                 </select>
             </div>
+            <div class="col-md-3">
+                <label asp-for="PredictionModel" class="form-label">Prediction model</label>
+                <select asp-for="PredictionModel" class="form-select">
+                    @foreach (var item in BettingOptions.PredictionModels)
+                    {
+                        <option value="@item">@item</option>
+                    }
+                </select>
+            </div>
             <div class="col-md-3 d-flex align-items-end">
                 <div class="form-check">
                     <input asp-for="AutoResolveStatus" class="form-check-input" />
                     <label asp-for="AutoResolveStatus" class="form-check-label">@T("Fields.AutoResolve")</label>
                 </div>
             </div>
+            <partial name="_KellyCalculator" model="Model" />
             <div class="col-12">
                 <label asp-for="Notes" class="form-label">@T("Fields.Notes")</label>
                 <textarea asp-for="Notes" class="form-control" rows="3"></textarea>
@@ -152,14 +187,20 @@
             const home = document.getElementById('ActualHomeCorners');
             const away = document.getElementById('ActualAwayCorners');
             const total = document.getElementById('ActualTotalCorners');
+            const homeShots = document.getElementById('ActualHomeShots');
+            const awayShots = document.getElementById('ActualAwayShots');
+            const totalShots = document.getElementById('ActualTotalShots');
+            const homeSog = document.getElementById('ActualHomeShotsOnGoal');
+            const awaySog = document.getElementById('ActualAwayShotsOnGoal');
+            const totalSog = document.getElementById('ActualTotalShotsOnGoal');
             const status = document.getElementById('Status');
             const cashout = document.getElementById('CashoutAmount');
             const currency = document.getElementById('CurrencyCode');
             const moneyInputs = document.querySelectorAll('[data-money-input]');
 
-            const updateTotal = () => {
-                if (home.value !== '' && away.value !== '') {
-                    total.value = Number(home.value) + Number(away.value);
+            const updateTotal = (left, right, target) => {
+                if (left.value !== '' && right.value !== '') {
+                    target.value = Number(left.value) + Number(right.value);
                 }
             };
 
@@ -172,12 +213,17 @@
                 moneyInputs.forEach(input => input.step = step);
             };
 
-            home.addEventListener('input', updateTotal);
-            away.addEventListener('input', updateTotal);
+            home.addEventListener('input', () => updateTotal(home, away, total));
+            away.addEventListener('input', () => updateTotal(home, away, total));
+            homeShots.addEventListener('input', () => updateTotal(homeShots, awayShots, totalShots));
+            awayShots.addEventListener('input', () => updateTotal(homeShots, awayShots, totalShots));
+            homeSog.addEventListener('input', () => updateTotal(homeSog, awaySog, totalSog));
+            awaySog.addEventListener('input', () => updateTotal(homeSog, awaySog, totalSog));
             status.addEventListener('change', updateCashout);
             currency.addEventListener('change', updateMoneyStep);
             updateCashout();
             updateMoneyStep();
         })();
     </script>
+    <partial name="_KellyCalculatorScripts" />
 }

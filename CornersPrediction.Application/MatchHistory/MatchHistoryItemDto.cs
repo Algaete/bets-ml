@@ -22,4 +22,7 @@ public sealed record MatchHistoryItemDto(
     double HomePossession,
     double AwayPossession,
     int TotalCorners,
+    string? QueryTeamCondition,
+    string? HistoryType,
+    int? HistoryRank,
     DateTime CreatedAtUtc);

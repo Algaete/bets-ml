@@ -1,0 +1,51 @@
+@model CornersPrediction.Web.Models.Admin.PlatformUserFormViewModel
+@{
+    var language = UiText.GetLanguage(Context);
+    string T(string key) => UiText.T(language, key);
+}
+
+<div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+<input asp-for="Id" type="hidden" />
+
+<div class="row g-3">
+    <div class="col-md-6">
+        <label asp-for="DisplayName" class="form-label">@T("UserAdmin.DisplayName")</label>
+        <input asp-for="DisplayName" class="form-control" autocomplete="off" />
+        <span asp-validation-for="DisplayName" class="text-danger"></span>
+    </div>
+    <div class="col-md-6">
+        <label asp-for="Email" class="form-label">@T("Common.Email")</label>
+        <input asp-for="Email" class="form-control" autocomplete="off" />
+        <span asp-validation-for="Email" class="text-danger"></span>
+    </div>
+    <div class="col-12">
+        <label asp-for="ExternalUserId" class="form-label">@T("UserAdmin.ExternalIdLabel")</label>
+        <input asp-for="ExternalUserId" class="form-control" autocomplete="off" placeholder="@T("UserAdmin.ExternalIdPlaceholder")" />
+        <div class="form-text">@T("UserAdmin.ExternalIdHint")</div>
+    </div>
+    <div class="col-12">
+        <div class="form-check form-switch">
+            <input asp-for="IsActive" class="form-check-input" type="checkbox" />
+            <label asp-for="IsActive" class="form-check-label">@T("UserAdmin.ActiveUser")</label>
+        </div>
+    </div>
+    <div class="col-12">
+        <label class="form-label">@T("Common.Roles")</label>
+        <div class="row g-2">
+            @foreach (var role in Model.AvailableRoles)
+            {
+                var isChecked = Model.Roles.Any(item => item.Equals(role.Name, StringComparison.OrdinalIgnoreCase));
+                <div class="col-md-6 col-xl-3">
+                    <label class="border rounded p-3 d-block h-100">
+                        <span class="form-check">
+                            <input class="form-check-input" type="checkbox" name="Roles" value="@role.Name" checked="@isChecked" />
+                            <span class="form-check-label fw-semibold">@role.Name</span>
+                        </span>
+                        <span class="d-block text-muted small mt-1">@role.Description</span>
+                    </label>
+                </div>
+            }
+        </div>
+        <div class="form-text">@T("UserAdmin.NoRoleHint")</div>
+    </div>
+</div>

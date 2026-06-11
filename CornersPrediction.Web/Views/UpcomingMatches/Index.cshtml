@@ -1,0 +1,273 @@
+@model CornersPrediction.Web.Models.UpcomingMatches.UpcomingMatchesIndexViewModel
+
+@{
+    ViewData["Title"] = UiText.T(Context, "UpcomingMatches.Title");
+    var language = UiText.GetLanguage(Context);
+    string T(string key) => UiText.T(language, key);
+    var leagueOptions = Model.Matches
+        .Select(match => match.Liga)
+        .Where(league => !string.IsNullOrWhiteSpace(league))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(league => league)
+        .ToArray();
+    var groupedMatches = Model.Matches
+        .OrderBy(match => match.Liga)
+        .ThenBy(match => match.FechaPartido)
+        .ThenBy(match => match.EquipoLocal)
+        .GroupBy(match => match.Liga)
+        .ToArray();
+    var initialGender = (Model.Genero ?? string.Empty).Trim().ToUpperInvariant();
+    if (initialGender is "MASCULINO" or "MALE" or "MEN")
+    {
+        initialGender = "M";
+    }
+    else if (initialGender is "FEMENINO" or "FEMALE" or "WOMEN")
+    {
+        initialGender = "F";
+    }
+}
+
+<div class="upcoming-hero mb-4">
+    <div>
+        <div class="text-muted small text-uppercase fw-semibold">@T("UpcomingMatches.Eyebrow")</div>
+        <h1 class="h3 mb-1">@T("UpcomingMatches.Title")</h1>
+        <p class="text-muted mb-0">@T("UpcomingMatches.Description")</p>
+    </div>
+    <div class="upcoming-hero-actions">
+        <span class="upcoming-count-pill"><span id="UpcomingVisibleCount">@Model.Matches.Count</span> / @Model.Matches.Count @T("UpcomingMatches.MatchCount")</span>
+        <a asp-controller="Predictions" asp-action="Index" class="btn btn-outline-secondary">@T("UpcomingMatches.ManualPredict")</a>
+    </div>
+</div>
+
+<section class="surface-panel upcoming-filter-panel mb-4">
+    <div class="upcoming-filter-grid">
+        <div>
+            <label class="form-label" for="UpcomingGenderFilter">@T("UpcomingMatches.Gender")</label>
+            <select id="UpcomingGenderFilter" class="form-select">
+                <option value="">@T("UpcomingMatches.AllGenders")</option>
+                @if (initialGender == "M")
+                {
+                    <option value="M" selected>@T("UpcomingMatches.Male")</option>
+                }
+                else
+                {
+                    <option value="M">@T("UpcomingMatches.Male")</option>
+                }
+                @if (initialGender == "F")
+                {
+                    <option value="F" selected>@T("UpcomingMatches.Female")</option>
+                }
+                else
+                {
+                    <option value="F">@T("UpcomingMatches.Female")</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label" for="UpcomingLeagueFilter">@T("UpcomingMatches.League")</label>
+            <select id="UpcomingLeagueFilter" class="form-select">
+                <option value="">@T("UpcomingMatches.AllLeagues")</option>
+                @foreach (var league in leagueOptions)
+                {
+                    @if (string.Equals(Model.Liga, league, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="@league" selected>@league</option>
+                    }
+                    else
+                    {
+                        <option value="@league">@league</option>
+                    }
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label" for="UpcomingSearchFilter">@T("UpcomingMatches.Team")</label>
+            <input id="UpcomingSearchFilter"
+                   class="form-control"
+                   placeholder="@T("UpcomingMatches.SearchPlaceholder")"
+                   autocomplete="off" />
+        </div>
+        <div class="upcoming-filter-actions">
+            <button id="ClearUpcomingFilters" type="button" class="btn btn-outline-secondary w-100">@T("Common.Clear")</button>
+        </div>
+    </div>
+</section>
+
+@if (!ViewData.ModelState.IsValid)
+{
+    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+}
+
+<section class="upcoming-grid-shell">
+    @if (Model.Matches.Count == 0)
+    {
+        <div class="empty-state">
+            <h2 class="h5">@T("UpcomingMatches.EmptyTitle")</h2>
+            <p class="text-muted mb-0">@T("UpcomingMatches.EmptyCopy")</p>
+        </div>
+    }
+    else
+    {
+        <div id="UpcomingMatchesGrid" class="upcoming-league-list">
+            @foreach (var leagueGroup in groupedMatches)
+            {
+                var leagueName = leagueGroup.Key;
+                var leagueAccent = (leagueName ?? string.Empty).Sum(character => (int)character) % 6;
+                var leagueMatches = leagueGroup
+                    .OrderBy(match => match.FechaPartido)
+                    .ThenBy(match => match.EquipoLocal)
+                    .ToArray();
+
+                <section class="upcoming-league-section" data-league-section="@leagueName" data-league-accent="@leagueAccent">
+                    <div class="upcoming-league-divider">
+                        <div class="upcoming-league-title">
+                            <span class="upcoming-league-mark" aria-hidden="true"></span>
+                            <span>@leagueName</span>
+                        </div>
+                        <span class="upcoming-league-count">
+                            <span data-league-visible-count>@leagueMatches.Length</span> / @leagueMatches.Length @T("UpcomingMatches.MatchCount")
+                        </span>
+                    </div>
+
+                    <div class="upcoming-match-grid">
+                        @foreach (var match in leagueMatches)
+                        {
+                            var searchText = $"{match.Liga} {match.Genero} {match.EquipoLocal} {match.EquipoVisita}";
+                            <article class="upcoming-match-card"
+                                     data-league-accent="@leagueAccent"
+                                     data-gender="@match.TeamGenderForPrediction"
+                                     data-league="@match.Liga"
+                                     data-search="@searchText">
+                                <div class="upcoming-card-top">
+                                    <span class="upcoming-date-chip">
+                                        <span>@match.FechaPartido.ToString("ddd dd-MM")</span>
+                                        <strong>@match.FechaPartido.ToString("HH:mm")</strong>
+                                    </span>
+                                    <span class="upcoming-tag">@match.Genero</span>
+                                    @if (match.EsKnockout)
+                                    {
+                                        <span class="upcoming-tag knockout">KO</span>
+                                    }
+                                </div>
+
+                                <div class="upcoming-teams">
+                                    <div class="upcoming-team">
+                                        <span class="team-side">@T("UpcomingMatches.HomeSide")</span>
+                                        <strong>@match.EquipoLocal</strong>
+                                    </div>
+                                    <div class="upcoming-versus">vs</div>
+                                    <div class="upcoming-team text-end">
+                                        <span class="team-side">@T("UpcomingMatches.AwaySide")</span>
+                                        <strong>@match.EquipoVisita</strong>
+                                    </div>
+                                </div>
+
+                                <div class="upcoming-card-footer">
+                                    <span class="text-muted small">ID @match.PartidoID</span>
+                                    <a class="btn btn-sm btn-primary"
+                                       asp-controller="Predictions"
+                                       asp-action="Index"
+                                       asp-route-homeTeam="@match.EquipoLocal"
+                                       asp-route-awayTeam="@match.EquipoVisita"
+                                       asp-route-league="@match.Liga"
+                                       asp-route-season="@match.FechaPartido.Year"
+                                       asp-route-matchDate="@match.FechaPartido.ToString("yyyy-MM-dd")"
+                                       asp-route-isKnockout="@match.EsKnockout"
+                                       asp-route-teamGender="@match.TeamGenderForPrediction">
+                                        @T("UpcomingMatches.Predict")
+                                    </a>
+                                </div>
+                            </article>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+
+        <div id="UpcomingNoResults" class="empty-state d-none">
+            <h2 class="h5">@T("UpcomingMatches.NoResultsTitle")</h2>
+            <p class="text-muted mb-0">@T("UpcomingMatches.NoResultsCopy")</p>
+        </div>
+    }
+</section>
+
+@section Scripts {
+    <script>
+        (() => {
+            const genderFilter = document.getElementById('UpcomingGenderFilter');
+            const leagueFilter = document.getElementById('UpcomingLeagueFilter');
+            const searchFilter = document.getElementById('UpcomingSearchFilter');
+            const clearButton = document.getElementById('ClearUpcomingFilters');
+            const countLabel = document.getElementById('UpcomingVisibleCount');
+            const noResults = document.getElementById('UpcomingNoResults');
+            const cards = Array.from(document.querySelectorAll('.upcoming-match-card'));
+            const leagueSections = Array.from(document.querySelectorAll('.upcoming-league-section'));
+
+            const normalize = value => String(value ?? '')
+                .trim()
+                .toLocaleLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
+
+            const applyFilters = () => {
+                const gender = normalize(genderFilter?.value);
+                const league = normalize(leagueFilter?.value);
+                const search = normalize(searchFilter?.value);
+                let visibleCount = 0;
+
+                for (const card of cards) {
+                    const cardGender = normalize(card.dataset.gender);
+                    const cardLeague = normalize(card.dataset.league);
+                    const cardSearch = normalize(card.dataset.search);
+                    const isVisible =
+                        (!gender || cardGender === gender) &&
+                        (!league || cardLeague === league) &&
+                        (!search || cardSearch.includes(search));
+
+                    card.classList.toggle('d-none', !isVisible);
+                    if (isVisible) {
+                        visibleCount += 1;
+                    }
+                }
+
+                if (countLabel) {
+                    countLabel.textContent = visibleCount.toString();
+                }
+
+                for (const section of leagueSections) {
+                    const visibleCards = Array.from(section.querySelectorAll('.upcoming-match-card'))
+                        .filter(card => !card.classList.contains('d-none'));
+                    const sectionCount = section.querySelector('[data-league-visible-count]');
+                    if (sectionCount) {
+                        sectionCount.textContent = visibleCards.length.toString();
+                    }
+
+                    section.classList.toggle('d-none', visibleCards.length === 0);
+                }
+
+                noResults?.classList.toggle('d-none', visibleCount > 0);
+            };
+
+            genderFilter?.addEventListener('change', applyFilters);
+            leagueFilter?.addEventListener('change', applyFilters);
+            searchFilter?.addEventListener('input', applyFilters);
+            clearButton?.addEventListener('click', () => {
+                if (genderFilter) {
+                    genderFilter.value = '';
+                }
+
+                if (leagueFilter) {
+                    leagueFilter.value = '';
+                }
+
+                if (searchFilter) {
+                    searchFilter.value = '';
+                }
+
+                applyFilters();
+            });
+
+            applyFilters();
+        })();
+    </script>
+}

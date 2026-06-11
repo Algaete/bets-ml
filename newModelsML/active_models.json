@@ -1,0 +1,32 @@
+{
+  "shots": {
+    "version": "shots_v3_catboost",
+    "directory": "artifacts_shots_v3",
+    "columns": "model_columns_shots_v3.pkl",
+    "total": "model_total_shots_catboost_v3.pkl",
+    "home": "model_home_shots_catboost_v3.pkl",
+    "away": "model_away_shots_catboost_v3.pkl",
+    "directWeight": 1.0,
+    "combinedWeight": 0.0
+  },
+  "sog": {
+    "version": "sog_v1",
+    "directory": "sog_v1",
+    "columns": "model_columns_shots_sog_filtered_v1.pkl",
+    "total": "model_total_sog_filtered_v1.pkl",
+    "home": "model_home_sog_filtered_v1.pkl",
+    "away": "model_away_sog_filtered_v1.pkl",
+    "directWeight": 0.8,
+    "combinedWeight": 0.2
+  },
+  "goals": {
+    "version": "goals_v1",
+    "directory": "goals_v1",
+    "columns": "model_columns_goals_v1.pkl",
+    "total": "model_total_goals_v1.pkl",
+    "home": "model_home_goals_v1.pkl",
+    "away": "model_away_goals_v1.pkl",
+    "directWeight": 1.0,
+    "combinedWeight": 0.0
+  }
+}

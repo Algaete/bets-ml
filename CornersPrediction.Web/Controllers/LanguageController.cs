@@ -1,4 +1,5 @@
 using CornersPrediction.Web.Localization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPrediction.Web.Controllers;
@@ -6,6 +7,7 @@ namespace CornersPrediction.Web.Controllers;
 public sealed class LanguageController : Controller
 {
     [HttpPost]
+    [AllowAnonymous]
     [ValidateAntiForgeryToken]
     public IActionResult Set(string language, string? returnUrl)
     {
@@ -26,6 +28,6 @@ public sealed class LanguageController : Controller
             return LocalRedirect(returnUrl);
         }
 
-        return RedirectToAction("Index", "MatchHistory");
+        return RedirectToAction("Index", "UpcomingMatches");
     }
 }

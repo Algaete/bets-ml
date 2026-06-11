@@ -16,5 +16,31 @@ public interface IMatchHistoryRepository
     Task<IReadOnlyList<MatchHistoryItem>> GetRecentAsync(
         string homeTeam,
         string awayTeam,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MatchHistoryItem>> GetManualEntriesAsync(
+        string? league,
+        string? team,
+        int take,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MatchHistoryItem>> GetLast10GeneralMatchesAsync(
+        string team,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MatchHistoryItem>> GetLast10HomeMatchesAsync(
+        string homeTeam,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MatchHistoryItem>> GetLast10AwayMatchesAsync(
+        string awayTeam,
+        string? league,
+        string teamGender,
         CancellationToken cancellationToken);
 }

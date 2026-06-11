@@ -12,6 +12,8 @@ public sealed class BettingIndexViewModel
     public BettingSummaryViewModel Summary { get; init; } = new();
     public BankrollTransactionFormViewModel BankrollForm { get; init; } = new();
     public decimal CurrentBankroll { get; init; }
+    public decimal PendingStake { get; init; }
+    public decimal AvailableBankroll { get; init; }
 }
 
 public sealed class BettingFiltersViewModel
@@ -62,12 +64,22 @@ public sealed class BettingRecordFormViewModel
     public int? ActualHomeCorners { get; set; }
     public int? ActualAwayCorners { get; set; }
     public int? ActualTotalCorners { get; set; }
+    public int? ActualHomeShots { get; set; }
+    public int? ActualAwayShots { get; set; }
+    public int? ActualTotalShots { get; set; }
+    public int? ActualHomeShotsOnGoal { get; set; }
+    public int? ActualAwayShotsOnGoal { get; set; }
+    public int? ActualTotalShotsOnGoal { get; set; }
     public decimal? CashoutAmount { get; set; }
     public decimal? BankrollBefore { get; set; }
     public decimal? ClosingOdds { get; set; }
     public string? ConfidenceLevel { get; set; }
+    public string PredictionModel { get; set; } = "Manual";
     public string? Notes { get; set; }
     public bool AutoResolveStatus { get; set; }
+    [Range(0, 100)]
+    public decimal? EstimatedProbabilityPercent { get; set; }
+    public string KellyStrategy { get; set; } = "None";
 }
 
 public sealed class BettingRecordViewModel
@@ -89,6 +101,12 @@ public sealed class BettingRecordViewModel
     public int? ActualHomeCorners { get; set; }
     public int? ActualAwayCorners { get; set; }
     public int? ActualTotalCorners { get; set; }
+    public int? ActualHomeShots { get; set; }
+    public int? ActualAwayShots { get; set; }
+    public int? ActualTotalShots { get; set; }
+    public int? ActualHomeShotsOnGoal { get; set; }
+    public int? ActualAwayShotsOnGoal { get; set; }
+    public int? ActualTotalShotsOnGoal { get; set; }
     public decimal? CashoutAmount { get; set; }
     public decimal PotentialReturn { get; set; }
     public decimal NetReturn { get; set; }
@@ -98,6 +116,7 @@ public sealed class BettingRecordViewModel
     public decimal? BankrollAfter { get; set; }
     public decimal? ClosingOdds { get; set; }
     public string? ConfidenceLevel { get; set; }
+    public string PredictionModel { get; set; } = "Manual";
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
@@ -154,9 +173,23 @@ public sealed class BankrollTransactionViewModel
 public static class BettingOptions
 {
     public static readonly string[] Statuses = ["Pending", "Won", "Lost", "Void", "Cashout"];
-    public static readonly string[] MarketTypes = ["TotalCorners", "HomeCorners", "AwayCorners", "FirstHalfCorners", "Other"];
+    public static readonly string[] MarketTypes = ["TotalCorners", "HomeCorners", "AwayCorners", "FirstHalfCorners", "TotalShots", "TotalShotsOnGoal", "Other"];
     public static readonly string[] BetSelections = ["Over", "Under", "Home", "Away", "Other"];
     public static readonly string[] ConfidenceLevels = ["Low", "Medium", "High"];
+    public static readonly string[] PredictionModels = ["Manual", "TotalCornersModel", "ShotsOnGoalModel"];
     public static readonly string[] BankrollTransactionTypes = ["Deposit", "Withdrawal", "BetSettlement", "ManualAdjustment"];
     public static readonly string[] CurrencyCodes = ["CLP", "USD", "AUD"];
+    public static readonly string[] KellyStrategies = ["None", "Kelly", "HalfKelly", "QuarterKelly"];
+
+    public static string MarketTypeLabel(string marketType) => marketType switch
+    {
+        "TotalCorners" => "Total corners",
+        "HomeCorners" => "Home corners",
+        "AwayCorners" => "Away corners",
+        "FirstHalfCorners" => "First half corners",
+        "TotalShots" => "Total shots",
+        "TotalShotsOnGoal" => "Total shots on goal (SOG)",
+        "Other" => "Other",
+        _ => marketType
+    };
 }

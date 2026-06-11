@@ -1,0 +1,49 @@
+{
+  "version": "shots_v3_catboost",
+  "models": {
+    "total": "model_total_shots_catboost_v3.pkl",
+    "home": "model_home_shots_catboost_v3.pkl",
+    "away": "model_away_shots_catboost_v3.pkl",
+    "columns": "model_columns_shots_v3.pkl"
+  },
+  "best_ensemble": {
+    "weight_direct": 1.0,
+    "weight_home_away": 0.0,
+    "mae": 4.557178096058806,
+    "rmse": 5.758361677916315,
+    "r2": 0.04851579511813542,
+    "spearman": 0.24040271456199416
+  },
+  "metrics": {
+    "total": {
+      "mae": 4.557178096058806,
+      "rmse": 5.758361677916315,
+      "r2": 0.04851579511813542,
+      "spearman": 0.24040271456199416
+    },
+    "home": {
+      "mae": 3.8299895104559196,
+      "rmse": 4.915850470374211,
+      "r2": 0.13014292059857313,
+      "spearman": 0.3587156118290068
+    },
+    "away": {
+      "mae": 3.420942574676635,
+      "rmse": 4.362214790609074,
+      "r2": 0.12374110514878467,
+      "spearman": 0.34422362930278333
+    },
+    "direct_total": {
+      "mae": 4.557178096058806,
+      "rmse": 5.758361677916315,
+      "r2": 0.04851579511813542,
+      "spearman": 0.24040271456199416
+    },
+    "combined_home_away": {
+      "mae": 4.605554929015646,
+      "rmse": 5.836124903690282,
+      "r2": 0.02264382535387166,
+      "spearman": 0.2399496482581681
+    }
+  }
+}

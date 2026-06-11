@@ -9,12 +9,8 @@ namespace CornersPrediction.Infrastructure.SqlServer;
 
 public sealed class TeamInfoRepository : ITeamInfoRepository
 {
-    private static readonly string[] TeamProcedureCandidates =
-    [
-        "sp_GetTeamBig3Info"
-    ];
-
-    private const string LeagueProcedureName = "sp_GetTeamBig3Leagues";
+    private const string LeagueProcedureName = "sp_GetMatchHistoryLeagues";
+    private const string TeamProcedureName = "sp_GetTeamsByLeague";
     private const string FormationProcedureName = "sp_GetFormationList";
 
     private readonly string _connectionString;
@@ -25,11 +21,17 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
             throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
     }
 
-    public async Task<IReadOnlyList<string>> GetBig3LeaguesAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<string>> GetBig3LeaguesAsync(string teamGender, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
+        var parameters = await BuildSupportedParametersAsync(
+            connection,
+            LeagueProcedureName,
+            new Dictionary<string, object?> { ["TeamGender"] = teamGender },
+            cancellationToken);
         var command = new CommandDefinition(
             LeagueProcedureName,
+            parameters,
             commandType: CommandType.StoredProcedure,
             cancellationToken: cancellationToken);
 
@@ -39,18 +41,37 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
 
     public async Task<IReadOnlyList<TeamBi3Info>> GetBi3InfoAsync(
         string league,
+        string teamGender,
         CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
-        var procedure = await ResolveTeamProcedureNameAsync(connection, cancellationToken);
+        var parameters = await BuildSupportedParametersAsync(
+            connection,
+            TeamProcedureName,
+            new Dictionary<string, object?>
+            {
+                ["League"] = league,
+                ["TeamGender"] = teamGender
+            },
+            cancellationToken);
         var command = new CommandDefinition(
-            $"{QuoteName(procedure.SchemaName)}.{QuoteName(procedure.ProcedureName)}",
-            new { League = league },
+            TeamProcedureName,
+            parameters,
             commandType: CommandType.StoredProcedure,
             cancellationToken: cancellationToken);
 
-        var teams = await connection.QueryAsync<TeamBi3Info>(command);
-        return teams.ToArray();
+        var teams = await connection.QueryAsync<TeamInfoRow>(command);
+        return teams
+            .Select(team => new TeamBi3Info
+            {
+                League = string.IsNullOrWhiteSpace(team.League) ? league : team.League,
+                Season = team.Season ?? string.Empty,
+                Team = string.IsNullOrWhiteSpace(team.Team) ? team.StandardizedTeam ?? string.Empty : team.Team,
+                IsBig3 = team.IsBig3,
+                CreatedAt = team.CreatedAt
+            })
+            .Where(team => !string.IsNullOrWhiteSpace(team.Team))
+            .ToArray();
     }
 
     public async Task<IReadOnlyList<string>> GetFormationsAsync(CancellationToken cancellationToken)
@@ -70,36 +91,43 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
             .ToArray();
     }
 
-    private static async Task<ResolvedProcedureName> ResolveTeamProcedureNameAsync(
+    private static async Task<DynamicParameters> BuildSupportedParametersAsync(
         SqlConnection connection,
+        string procedureName,
+        IReadOnlyDictionary<string, object?> values,
         CancellationToken cancellationToken)
     {
         var command = new CommandDefinition(
             """
-            SELECT TOP 1
-                SCHEMA_NAME(schema_id) AS SchemaName,
-                name AS ProcedureName
-            FROM sys.procedures
-            WHERE name IN @ProcedureNames
-            ORDER BY CASE name
-                WHEN 'sp_GetTeamBig3Info' THEN 0
-                WHEN 'sp_GetTeamBi3Info' THEN 1
-                WHEN 'sp_GetTeamBig4Info' THEN 2
-                ELSE 3
-            END
+            SELECT ParameterName = REPLACE(p.name, '@', '')
+            FROM sys.parameters p
+            WHERE p.object_id = OBJECT_ID(@ProcedureName);
             """,
-            new { ProcedureNames = TeamProcedureCandidates },
+            new { ProcedureName = procedureName },
             cancellationToken: cancellationToken);
 
-        var procedure = await connection.QueryFirstOrDefaultAsync<ResolvedProcedureName>(command);
-        return procedure ?? throw new InvalidOperationException(
-            "Could not find stored procedure sp_GetTeamBig3Info, sp_GetTeamBi3Info or sp_GetTeamBig4Info.");
+        var supported = (await connection.QueryAsync<string>(command))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var parameters = new DynamicParameters();
+        foreach (var value in values)
+        {
+            if (supported.Contains(value.Key))
+            {
+                parameters.Add(value.Key, value.Value);
+            }
+        }
+
+        return parameters;
     }
 
-    private static string QuoteName(string value)
+    private sealed class TeamInfoRow
     {
-        return $"[{value.Replace("]", "]]")}]";
+        public string? League { get; init; }
+        public string? Season { get; init; }
+        public string? Team { get; init; }
+        public string? StandardizedTeam { get; init; }
+        public bool IsBig3 { get; init; }
+        public DateTime CreatedAt { get; init; }
     }
-
-    private sealed record ResolvedProcedureName(string SchemaName, string ProcedureName);
 }

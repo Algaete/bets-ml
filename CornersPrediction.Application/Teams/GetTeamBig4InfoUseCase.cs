@@ -16,6 +16,7 @@ public sealed class GetTeamBi3InfoUseCase : IGetTeamBi3InfoUseCase
 
     public async Task<IReadOnlyList<TeamBi3InfoDto>> GetAsync(
         string league,
+        string? teamGender,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(league))
@@ -23,7 +24,10 @@ public sealed class GetTeamBi3InfoUseCase : IGetTeamBi3InfoUseCase
             return Array.Empty<TeamBi3InfoDto>();
         }
 
-        var teams = await _repository.GetBi3InfoAsync(league.Trim(), cancellationToken);
+        var teams = await _repository.GetBi3InfoAsync(
+            league.Trim(),
+            TeamGenderOptions.Normalize(teamGender),
+            cancellationToken);
 
         return teams
             .OrderBy(team => team.League)
@@ -51,9 +55,11 @@ public sealed class GetTeamBig3LeaguesUseCase : IGetTeamBig3LeaguesUseCase
         _repository = repository;
     }
 
-    public async Task<IReadOnlyList<string>> GetAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<string>> GetAsync(string? teamGender, CancellationToken cancellationToken)
     {
-        var leagues = await _repository.GetBig3LeaguesAsync(cancellationToken);
+        var leagues = await _repository.GetBig3LeaguesAsync(
+            TeamGenderOptions.Normalize(teamGender),
+            cancellationToken);
 
         return leagues
             .Where(league => !string.IsNullOrWhiteSpace(league))

@@ -14,6 +14,8 @@ public sealed class MatchHistoryController : ControllerBase
     private readonly IUpdateMatchHistoryItemUseCase _updateMatchHistoryItemUseCase;
     private readonly IDeleteMatchHistoryItemUseCase _deleteMatchHistoryItemUseCase;
     private readonly IGetRecentMatchHistoryUseCase _getRecentMatchHistoryUseCase;
+    private readonly IGetManualMatchHistoryEntriesUseCase _getManualMatchHistoryEntriesUseCase;
+    private readonly IGetPredictionContextUseCase _getPredictionContextUseCase;
     private readonly ILogger<MatchHistoryController> _logger;
 
     public MatchHistoryController(
@@ -21,13 +23,48 @@ public sealed class MatchHistoryController : ControllerBase
         IUpdateMatchHistoryItemUseCase updateMatchHistoryItemUseCase,
         IDeleteMatchHistoryItemUseCase deleteMatchHistoryItemUseCase,
         IGetRecentMatchHistoryUseCase getRecentMatchHistoryUseCase,
+        IGetManualMatchHistoryEntriesUseCase getManualMatchHistoryEntriesUseCase,
+        IGetPredictionContextUseCase getPredictionContextUseCase,
         ILogger<MatchHistoryController> logger)
     {
         _createMatchHistoryItemUseCase = createMatchHistoryItemUseCase;
         _updateMatchHistoryItemUseCase = updateMatchHistoryItemUseCase;
         _deleteMatchHistoryItemUseCase = deleteMatchHistoryItemUseCase;
         _getRecentMatchHistoryUseCase = getRecentMatchHistoryUseCase;
+        _getManualMatchHistoryEntriesUseCase = getManualMatchHistoryEntriesUseCase;
+        _getPredictionContextUseCase = getPredictionContextUseCase;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Returns the latest manually entered matches, optionally filtered by league and team.
+    /// </summary>
+    [HttpGet("records")]
+    [ProducesResponseType(typeof(IReadOnlyList<MatchHistoryItemDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetManualEntries(
+        [FromQuery] string? league,
+        [FromQuery] string? team,
+        [FromQuery] int take = 20,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var entries = await _getManualMatchHistoryEntriesUseCase.GetAsync(
+                league,
+                team,
+                take,
+                cancellationToken);
+
+            return Ok(entries);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to load manually entered match history items");
+            return Problem(
+                title: "Could not load match records",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     /// <summary>
@@ -39,6 +76,8 @@ public sealed class MatchHistoryController : ControllerBase
     public async Task<IActionResult> GetRecent(
         [FromQuery] string? homeTeam,
         [FromQuery] string? awayTeam,
+        [FromQuery] string? league,
+        [FromQuery] string? teamGender,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
@@ -48,7 +87,12 @@ public sealed class MatchHistoryController : ControllerBase
 
         try
         {
-            var matches = await _getRecentMatchHistoryUseCase.GetAsync(homeTeam, awayTeam, cancellationToken);
+            var matches = await _getRecentMatchHistoryUseCase.GetAsync(
+                homeTeam,
+                awayTeam,
+                league,
+                teamGender,
+                cancellationToken);
             return Ok(matches);
         }
         catch (ArgumentException exception)
@@ -60,6 +104,55 @@ public sealed class MatchHistoryController : ControllerBase
             _logger.LogError(exception, "Failed to load recent match history items");
             return Problem(
                 title: "Could not load match history",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    /// <summary>
+    /// Returns general and condition-specific recent history, plus the temporary enriched prediction context.
+    /// </summary>
+    [HttpGet("prediction-context")]
+    [ProducesResponseType(typeof(PredictionContextDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetPredictionContext(
+        [FromQuery] string? league,
+        [FromQuery] string? homeTeam,
+        [FromQuery] string? awayTeam,
+        [FromQuery] string? teamGender,
+        [FromQuery] double? baseLocalAwayPrediction,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
+        {
+            return BadRequest(new { error = "homeTeam and awayTeam query parameters are required." });
+        }
+
+        try
+        {
+            var context = await _getPredictionContextUseCase.GetAsync(
+                homeTeam,
+                awayTeam,
+                league,
+                teamGender,
+                baseLocalAwayPrediction,
+                cancellationToken);
+
+            return Ok(context);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "Prediction context request was cancelled." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to load prediction context");
+            return Problem(
+                title: "Could not load prediction context",
                 detail: exception.Message,
                 statusCode: StatusCodes.Status500InternalServerError);
         }

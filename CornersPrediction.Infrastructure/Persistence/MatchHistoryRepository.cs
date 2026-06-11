@@ -73,11 +73,14 @@ public sealed class MatchHistoryRepository : IMatchHistoryRepository
     public async Task<IReadOnlyList<MatchHistoryItem>> GetRecentAsync(
         string homeTeam,
         string awayTeam,
+        string? league,
+        string teamGender,
         CancellationToken cancellationToken)
     {
         var homeMatches = await _dbContext.MatchHistoryItems
             .AsNoTracking()
             .Where(item => item.HomeTeam == homeTeam)
+            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league)
             .OrderByDescending(item => item.MatchDate)
             .ThenByDescending(item => item.Id)
             .Take(10)
@@ -86,6 +89,7 @@ public sealed class MatchHistoryRepository : IMatchHistoryRepository
         var awayMatches = await _dbContext.MatchHistoryItems
             .AsNoTracking()
             .Where(item => item.AwayTeam == awayTeam)
+            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league)
             .OrderByDescending(item => item.MatchDate)
             .ThenByDescending(item => item.Id)
             .Take(10)
@@ -102,5 +106,115 @@ public sealed class MatchHistoryRepository : IMatchHistoryRepository
         }
 
         return homeMatches.Concat(awayMatches).ToArray();
+    }
+
+    public async Task<IReadOnlyList<MatchHistoryItem>> GetManualEntriesAsync(
+        string? league,
+        string? team,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var query = _dbContext.MatchHistoryItems.AsNoTracking();
+
+        query = FilterByLeague(query, league);
+
+        if (!string.IsNullOrWhiteSpace(team))
+        {
+            query = query.Where(item => item.HomeTeam.Contains(team) || item.AwayTeam.Contains(team));
+        }
+
+        return await query
+            .OrderByDescending(item => item.CreatedAtUtc)
+            .ThenByDescending(item => item.MatchDate)
+            .ThenByDescending(item => item.Id)
+            .Take(Math.Clamp(take, 1, 100))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<MatchHistoryItem>> GetLast10GeneralMatchesAsync(
+        string team,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken)
+    {
+        var query = _dbContext.MatchHistoryItems
+            .AsNoTracking()
+            .Where(item => item.HomeTeam == team || item.AwayTeam == team);
+
+        query = FilterByLeague(query, league);
+
+        var matches = await query
+            .OrderByDescending(item => item.MatchDate)
+            .ThenByDescending(item => item.Id)
+            .Take(10)
+            .ToListAsync(cancellationToken);
+
+        foreach (var item in matches)
+        {
+            item.TeamCondition = item.HomeTeam == team ? "HOME" : "AWAY";
+        }
+
+        return matches;
+    }
+
+    public async Task<IReadOnlyList<MatchHistoryItem>> GetLast10HomeMatchesAsync(
+        string homeTeam,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken)
+    {
+        var query = _dbContext.MatchHistoryItems
+            .AsNoTracking()
+            .Where(item => item.HomeTeam == homeTeam);
+
+        query = FilterByLeague(query, league);
+
+        var matches = await query
+            .OrderByDescending(item => item.MatchDate)
+            .ThenByDescending(item => item.Id)
+            .Take(10)
+            .ToListAsync(cancellationToken);
+
+        foreach (var item in matches)
+        {
+            item.TeamCondition = "HOME";
+        }
+
+        return matches;
+    }
+
+    public async Task<IReadOnlyList<MatchHistoryItem>> GetLast10AwayMatchesAsync(
+        string awayTeam,
+        string? league,
+        string teamGender,
+        CancellationToken cancellationToken)
+    {
+        var query = _dbContext.MatchHistoryItems
+            .AsNoTracking()
+            .Where(item => item.AwayTeam == awayTeam);
+
+        query = FilterByLeague(query, league);
+
+        var matches = await query
+            .OrderByDescending(item => item.MatchDate)
+            .ThenByDescending(item => item.Id)
+            .Take(10)
+            .ToListAsync(cancellationToken);
+
+        foreach (var item in matches)
+        {
+            item.TeamCondition = "AWAY";
+        }
+
+        return matches;
+    }
+
+    private static IQueryable<MatchHistoryItem> FilterByLeague(
+        IQueryable<MatchHistoryItem> query,
+        string? league)
+    {
+        return string.IsNullOrWhiteSpace(league)
+            ? query
+            : query.Where(item => item.League == league);
     }
 }

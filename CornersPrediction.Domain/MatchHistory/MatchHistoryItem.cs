@@ -7,6 +7,9 @@ public sealed class MatchHistoryItem
 {
     public int Id { get; set; }
     public string? TeamCondition { get; set; }
+    public string? QueryTeamCondition { get; set; }
+    public string? HistoryType { get; set; }
+    public int? HistoryRank { get; set; }
     public required string League { get; set; }
     public required string Season { get; set; }
     public DateOnly MatchDate { get; set; }

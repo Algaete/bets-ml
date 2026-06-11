@@ -12,4 +12,22 @@ public interface IPythonPredictionRunner
     /// Executes a prediction using the supplied feature JSON.
     /// </summary>
     Task<PredictionResult> PredictAsync(JsonElement features, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes the Over/Under classifier using the supplied feature JSON.
+    /// </summary>
+    Task<OverUnderPredictionResult> PredictOverUnderAsync(JsonElement features, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes the shots-on-goal regression model using the supplied feature JSON.
+    /// </summary>
+    Task<ShotsOnGoalPredictionResult> PredictShotsOnGoalAsync(JsonElement features, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes one raw model artifact for diagnostic testing.
+    /// </summary>
+    Task<DebugModelPredictionResult> PredictDebugModelAsync(
+        string modelKey,
+        JsonElement features,
+        CancellationToken cancellationToken);
 }

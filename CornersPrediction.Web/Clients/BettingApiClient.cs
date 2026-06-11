@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using CornersPrediction.Web.Models.Betting;
 
 namespace CornersPrediction.Web.Clients;
@@ -117,6 +118,7 @@ public sealed class BettingApiClient
             form.BankrollBefore,
             form.ClosingOdds,
             form.ConfidenceLevel,
+            form.PredictionModel,
             form.Notes
         };
     }
@@ -141,10 +143,17 @@ public sealed class BettingApiClient
             form.ActualHomeCorners,
             form.ActualAwayCorners,
             form.ActualTotalCorners,
+            form.ActualHomeShots,
+            form.ActualAwayShots,
+            form.ActualTotalShots,
+            form.ActualHomeShotsOnGoal,
+            form.ActualAwayShotsOnGoal,
+            form.ActualTotalShotsOnGoal,
             form.CashoutAmount,
             form.BankrollBefore,
             form.ClosingOdds,
             form.ConfidenceLevel,
+            form.PredictionModel,
             form.Notes,
             form.AutoResolveStatus
         };
@@ -182,7 +191,36 @@ public sealed class BettingApiClient
         }
 
         var error = await response.Content.ReadAsStringAsync(cancellationToken);
-        throw new InvalidOperationException($"Backend API rejected the betting request: {error}");
+        throw new InvalidOperationException($"Backend API rejected the betting request: {ExtractErrorMessage(error)}");
+    }
+
+    private static string ExtractErrorMessage(string error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+        {
+            return "No error details were returned.";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(error);
+            var root = document.RootElement;
+            foreach (var propertyName in new[] { "detail", "error", "title" })
+            {
+                if (root.TryGetProperty(propertyName, out var property) &&
+                    property.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(property.GetString()))
+                {
+                    return property.GetString()!;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // The API may return plain text for some failures.
+        }
+
+        return error;
     }
 
     private sealed class CurrentBankrollResponse

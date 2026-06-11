@@ -28,17 +28,23 @@ public sealed class TeamsController : ControllerBase
     }
 
     /// <summary>
-    /// Calls sp_TeamCompetitionBig3 and returns the available leagues.
+    /// Calls sp_GetMatchHistoryLeagues and returns the available standardized leagues.
     /// </summary>
     [HttpGet("big3-leagues")]
     [ProducesResponseType(typeof(IReadOnlyList<string>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> GetBig3Leagues(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetBig3Leagues(
+        [FromQuery] string? teamGender,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var leagues = await _getTeamBig3LeaguesUseCase.GetAsync(cancellationToken);
+            var leagues = await _getTeamBig3LeaguesUseCase.GetAsync(teamGender, cancellationToken);
             return Ok(leagues);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
         }
         catch (Exception exception)
         {
@@ -51,7 +57,7 @@ public sealed class TeamsController : ControllerBase
     }
 
     /// <summary>
-    /// Calls sp_GetTeamBig3Info with a League parameter and returns filtered team values.
+    /// Calls sp_GetTeamsByLeague with a League parameter and returns standardized team values.
     /// </summary>
     [HttpGet("big3-info")]
     [HttpGet("bi3-info")]
@@ -60,6 +66,7 @@ public sealed class TeamsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetBi3Info(
         [FromQuery] string? league,
+        [FromQuery] string? teamGender,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(league))
@@ -69,8 +76,12 @@ public sealed class TeamsController : ControllerBase
 
         try
         {
-            var teams = await _getTeamBi3InfoUseCase.GetAsync(league, cancellationToken);
+            var teams = await _getTeamBi3InfoUseCase.GetAsync(league, teamGender, cancellationToken);
             return Ok(teams);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
         }
         catch (Exception exception)
         {

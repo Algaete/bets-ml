@@ -1,0 +1,755 @@
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-main: #050505;
+  --bg-secondary: #0B0F19;
+  --card-bg: #121212;
+  --card-bg-soft: #1E1E1E;
+  --border-color: #2A2A2A;
+  --text-main: #FFFFFF;
+  --text-muted: #A3A3A3;
+  --accent-premium: #F5C542;
+  --accent-ml: #38BDF8;
+  --accent-ml-secondary: #A855F7;
+  --success: #22C55E;
+  --danger: #EF4444;
+  --warning: #FACC15;
+  --neutral: #6B7280;
+  --shadow-soft: 0 18px 44px rgba(0, 0, 0, 0.34);
+  --shadow-card: 0 14px 34px rgba(0, 0, 0, 0.26);
+  --focus-ring: rgba(56, 189, 248, 0.28);
+  --table-head-bg: #161B26;
+  --table-row-hover: rgba(56, 189, 248, 0.08);
+  --premium-soft: rgba(245, 197, 66, 0.14);
+  --ml-soft: rgba(56, 189, 248, 0.14);
+  --purple-soft: rgba(168, 85, 247, 0.15);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-main: #F8FAFC;
+  --bg-secondary: #EEF2F7;
+  --card-bg: #FFFFFF;
+  --card-bg-soft: #F1F5F9;
+  --border-color: #E5E7EB;
+  --text-main: #111827;
+  --text-muted: #6B7280;
+  --accent-premium: #B7791F;
+  --accent-ml: #0284C7;
+  --accent-ml-secondary: #7C3AED;
+  --success: #16A34A;
+  --danger: #DC2626;
+  --warning: #F59E0B;
+  --neutral: #64748B;
+  --shadow-soft: 0 18px 44px rgba(15, 23, 42, 0.08);
+  --shadow-card: 0 12px 28px rgba(15, 23, 42, 0.06);
+  --focus-ring: rgba(2, 132, 199, 0.22);
+  --table-head-bg: #F1F5F9;
+  --table-row-hover: rgba(2, 132, 199, 0.07);
+  --premium-soft: rgba(183, 121, 31, 0.12);
+  --ml-soft: rgba(2, 132, 199, 0.12);
+  --purple-soft: rgba(124, 58, 237, 0.12);
+}
+
+html {
+  background: var(--bg-main);
+}
+
+body {
+  background:
+    radial-gradient(circle at 10% -10%, var(--ml-soft), transparent 32rem),
+    radial-gradient(circle at 110% 8%, var(--purple-soft), transparent 28rem),
+    var(--bg-main) !important;
+  color: var(--text-main);
+}
+
+a {
+  color: var(--accent-ml);
+}
+
+a:hover {
+  color: var(--accent-premium);
+}
+
+.text-muted,
+.text-secondary,
+.small.text-muted {
+  color: var(--text-muted) !important;
+}
+
+.text-success {
+  color: var(--success) !important;
+}
+
+.text-danger {
+  color: var(--danger) !important;
+}
+
+.app-sidebar {
+  background:
+    linear-gradient(180deg, rgba(56, 189, 248, 0.08), transparent 28rem),
+    var(--bg-secondary) !important;
+  border-right: 1px solid var(--border-color);
+  box-shadow: var(--shadow-soft);
+}
+
+.sidebar-brand {
+  border-bottom-color: var(--border-color);
+}
+
+.sidebar-brand a,
+.brand-title {
+  color: var(--text-main) !important;
+}
+
+.brand-subtitle {
+  color: var(--text-muted);
+}
+
+.brand-mark {
+  background: linear-gradient(135deg, var(--accent-premium), var(--accent-ml));
+  color: #050505;
+  box-shadow: 0 0 24px rgba(56, 189, 248, 0.18);
+}
+
+.sidebar-link {
+  color: var(--text-muted);
+}
+
+.sidebar-link:hover,
+.sidebar-link:focus {
+  color: var(--text-main);
+  background: var(--card-bg-soft);
+}
+
+.sidebar-link.active {
+  color: var(--text-main);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.20), rgba(245, 197, 66, 0.12));
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.sidebar-icon {
+  background: var(--card-bg-soft);
+  color: var(--accent-ml);
+}
+
+.sidebar-link.active .sidebar-icon {
+  background: var(--accent-ml);
+  color: #050505;
+}
+
+.sidebar-footer {
+  border-top-color: var(--border-color);
+}
+
+.app-main {
+  background: transparent;
+}
+
+.app-topbar {
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent) !important;
+  border-bottom-color: var(--border-color);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.08);
+}
+
+.topbar-title {
+  color: var(--text-main);
+}
+
+.topbar-subtitle {
+  color: var(--text-muted);
+}
+
+.app-content {
+  color: var(--text-main);
+}
+
+.app-footer {
+  border-top-color: var(--border-color);
+  color: var(--text-muted) !important;
+}
+
+.surface-panel,
+.bankroll-panel,
+.metric-tile,
+.card,
+.upcoming-match-card,
+.prediction-result-card,
+.history-context-card,
+.empty-state,
+.modal-content,
+.dropdown-menu {
+  background: var(--card-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 16px !important;
+  color: var(--text-main);
+  box-shadow: var(--shadow-card) !important;
+}
+
+.card-header,
+.card-footer,
+.modal-header,
+.modal-footer {
+  background: var(--card-bg-soft) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main);
+}
+
+.surface-panel,
+.bankroll-panel {
+  position: relative;
+}
+
+.surface-panel::before,
+.bankroll-panel::before,
+.prediction-result-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.08), transparent 35%, rgba(245, 197, 66, 0.05));
+}
+
+.surface-panel > *,
+.bankroll-panel > *,
+.prediction-result-card > * {
+  position: relative;
+}
+
+.metric-tile {
+  background:
+    linear-gradient(135deg, var(--card-bg), var(--card-bg-soft)) !important;
+}
+
+.metric-label,
+.prediction-card-label,
+.history-stats,
+.team-side,
+.upcoming-league,
+.upcoming-tag,
+.metric-tile .small {
+  color: var(--text-muted) !important;
+}
+
+.metric-value,
+.bankroll-value,
+.prediction-main-value,
+.upcoming-team strong,
+.generated-feature-card h2 {
+  color: var(--text-main) !important;
+}
+
+.bankroll-value,
+.prediction-main-value {
+  letter-spacing: 0;
+  text-shadow: 0 0 28px var(--ml-soft);
+}
+
+.form-control,
+.form-select,
+.form-check-input,
+.input-group-text,
+textarea,
+select,
+input {
+  background-color: var(--card-bg-soft) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.form-control::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 0.82;
+}
+
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  border-color: var(--accent-ml) !important;
+  box-shadow: 0 0 0 0.22rem var(--focus-ring) !important;
+}
+
+.form-label,
+label {
+  color: var(--text-main);
+}
+
+.form-section {
+  border-top-color: var(--border-color);
+}
+
+.btn {
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.btn-primary,
+.btn-ml {
+  background: linear-gradient(135deg, var(--accent-ml), var(--accent-ml-secondary)) !important;
+  border-color: transparent !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 10px 22px var(--ml-soft);
+}
+
+.btn-primary:hover,
+.btn-ml:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.btn-premium,
+.btn-warning {
+  background: linear-gradient(135deg, var(--accent-premium), var(--warning)) !important;
+  border-color: transparent !important;
+  color: #050505 !important;
+}
+
+.btn-outline-secondary,
+.btn-outline-primary,
+.btn-outline-theme {
+  background: transparent !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.btn-outline-secondary:hover,
+.btn-outline-primary:hover,
+.btn-outline-theme:hover {
+  background: var(--card-bg-soft) !important;
+  border-color: var(--accent-ml) !important;
+  color: var(--text-main) !important;
+}
+
+.btn-danger-soft {
+  background: color-mix(in srgb, var(--danger) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent) !important;
+  color: var(--danger) !important;
+}
+
+.btn-success-soft {
+  background: color-mix(in srgb, var(--success) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--success) 32%, transparent) !important;
+  color: var(--success) !important;
+}
+
+.theme-toggle {
+  min-height: 34px;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.language-switcher {
+  margin-left: 0;
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--premium-soft);
+  color: var(--accent-premium);
+  font-weight: 900;
+}
+
+.badge,
+.prediction-status-chip,
+.upcoming-tag,
+.upcoming-count-pill,
+.currency-tabs a {
+  border-radius: 999px !important;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.badge-success,
+.text-bg-success,
+.bg-success {
+  background: color-mix(in srgb, var(--success) 18%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--success) 42%, transparent) !important;
+  color: var(--success) !important;
+}
+
+.badge-danger,
+.text-bg-danger,
+.bg-danger {
+  background: color-mix(in srgb, var(--danger) 18%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent) !important;
+  color: var(--danger) !important;
+}
+
+.badge-warning,
+.text-bg-warning,
+.bg-warning {
+  background: color-mix(in srgb, var(--warning) 20%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent) !important;
+  color: var(--warning) !important;
+}
+
+.badge-neutral,
+.text-bg-secondary,
+.text-bg-light,
+.bg-secondary {
+  background: color-mix(in srgb, var(--neutral) 20%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--neutral) 34%, transparent) !important;
+  color: var(--text-muted) !important;
+}
+
+.badge-ml,
+.text-bg-primary,
+.bg-primary {
+  background: var(--ml-soft) !important;
+  border: 1px solid color-mix(in srgb, var(--accent-ml) 42%, transparent) !important;
+  color: var(--accent-ml) !important;
+}
+
+.badge-premium {
+  background: var(--premium-soft) !important;
+  border: 1px solid color-mix(in srgb, var(--accent-premium) 45%, transparent) !important;
+  color: var(--accent-premium) !important;
+}
+
+.table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--text-main);
+  --bs-table-border-color: var(--border-color);
+  --bs-table-hover-bg: var(--table-row-hover);
+  --bs-table-hover-color: var(--text-main);
+  color: var(--text-main) !important;
+}
+
+.table thead th,
+.table-sticky-head thead th {
+  background: var(--table-head-bg) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border-color) !important;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.table td,
+.table th {
+  border-color: var(--border-color) !important;
+}
+
+.table-responsive,
+.betting-table-wrap,
+.history-table-wrap,
+.prediction-features-wrap {
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+}
+
+.alert {
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-soft);
+  color: var(--text-main);
+}
+
+.alert-success {
+  border-color: color-mix(in srgb, var(--success) 34%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, var(--card-bg));
+  color: var(--success);
+}
+
+.alert-danger {
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, var(--card-bg));
+  color: var(--danger);
+}
+
+.alert-warning {
+  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, var(--card-bg));
+  color: var(--warning);
+}
+
+.alert-info {
+  border-color: color-mix(in srgb, var(--accent-ml) 34%, transparent);
+  background: var(--ml-soft);
+  color: var(--accent-ml);
+}
+
+.prediction-result-card {
+  border-color: color-mix(in srgb, var(--success) 36%, var(--border-color)) !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--success) 10%, var(--card-bg)), var(--card-bg)) !important;
+}
+
+.prediction-result-card.accent,
+#EnrichedPredictionCard,
+#ModelComparison {
+  border-color: color-mix(in srgb, var(--accent-ml) 36%, var(--border-color)) !important;
+  background: linear-gradient(135deg, var(--ml-soft), var(--card-bg)) !important;
+}
+
+.generated-feature-card {
+  border-color: color-mix(in srgb, var(--accent-ml-secondary) 35%, var(--border-color)) !important;
+}
+
+.prediction-confidence-badge {
+  color: var(--text-main) !important;
+}
+
+.prediction-confidence-badge.confidence-low,
+.prediction-confidence-badge.confidence-no-bet {
+  background: color-mix(in srgb, var(--danger) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent) !important;
+  color: var(--danger) !important;
+}
+
+.prediction-confidence-badge.confidence-medium {
+  background: color-mix(in srgb, var(--warning) 18%, transparent) !important;
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent) !important;
+  color: var(--warning) !important;
+}
+
+.prediction-confidence-badge.confidence-high,
+.prediction-confidence-badge.confidence-very-high {
+  background: color-mix(in srgb, var(--success) 16%, transparent) !important;
+  border-color: color-mix(in srgb, var(--success) 38%, transparent) !important;
+  color: var(--success) !important;
+}
+
+.history-context-header,
+.history-stats {
+  background: var(--card-bg-soft) !important;
+  border-color: var(--border-color) !important;
+}
+
+.currency-tabs a {
+  background: var(--card-bg-soft);
+  border-color: var(--border-color);
+  color: var(--text-muted);
+}
+
+.currency-tabs a.active {
+  background: linear-gradient(135deg, var(--ml-soft), var(--premium-soft));
+  border-color: var(--accent-ml);
+  color: var(--text-main);
+}
+
+.upcoming-match-card,
+.upcoming-league-divider {
+  background: linear-gradient(180deg, var(--card-bg), color-mix(in srgb, var(--card-bg-soft) 42%, var(--card-bg))) !important;
+}
+
+.upcoming-date-chip,
+.upcoming-versus {
+  background: var(--league-soft);
+  border-color: color-mix(in srgb, var(--league-accent) 34%, var(--border-color));
+  color: var(--league-accent);
+}
+
+.upcoming-date-chip strong {
+  color: #050505 !important;
+  text-shadow: none;
+}
+
+.upcoming-date-chip span {
+  color: var(--league-accent) !important;
+  font-weight: 800;
+}
+
+.upcoming-team strong {
+  color: var(--text-main) !important;
+}
+
+.upcoming-teams {
+  border-color: var(--border-color);
+}
+
+.upcoming-league-mark {
+  box-shadow: 0 0 0 3px var(--league-soft), 0 0 22px color-mix(in srgb, var(--league-accent) 26%, transparent);
+}
+
+.upcoming-league-divider {
+  border-color: var(--border-color) !important;
+  border-left-color: var(--league-accent) !important;
+  box-shadow: var(--shadow-card);
+}
+
+.upcoming-league-title {
+  color: var(--text-main);
+}
+
+.upcoming-league-count {
+  color: var(--text-muted);
+}
+
+.upcoming-count-pill {
+  background: var(--ml-soft);
+  border-color: color-mix(in srgb, var(--accent-ml) 38%, transparent);
+  color: var(--accent-ml);
+}
+
+.betting-records-table tbody tr:hover,
+.table-hover tbody tr:hover {
+  background: var(--table-row-hover);
+}
+
+.dropdown-item {
+  color: var(--text-main);
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+  background: var(--card-bg-soft);
+  color: var(--accent-ml);
+}
+
+.btn-close {
+  filter: invert(var(--btn-close-invert, 0));
+}
+
+:root[data-theme="dark"] .btn-close {
+  --btn-close-invert: 1;
+}
+
+.chart-card,
+.chart-container {
+  min-height: 280px;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.dashboard-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  min-height: 220px;
+  padding: clamp(1.25rem, 3vw, 2rem);
+  overflow: hidden;
+}
+
+.dashboard-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -8rem -10rem auto;
+  width: 22rem;
+  height: 22rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--premium-soft), transparent 68%);
+  pointer-events: none;
+}
+
+.dashboard-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.dashboard-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.dashboard-action-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-height: 150px;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--card-bg);
+  color: var(--text-main);
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+}
+
+.dashboard-action-card:hover,
+.dashboard-action-card:focus {
+  color: var(--text-main);
+  border-color: var(--accent-ml);
+  transform: translateY(-2px);
+}
+
+.dashboard-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.dashboard-action-icon.premium {
+  background: var(--premium-soft);
+  color: var(--accent-premium);
+}
+
+.dashboard-action-icon.ml {
+  background: var(--ml-soft);
+  color: var(--accent-ml);
+}
+
+.dashboard-action-icon.success {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+
+.dashboard-action-icon.neutral {
+  background: color-mix(in srgb, var(--neutral) 18%, transparent);
+  color: var(--text-muted);
+}
+
+.dashboard-action-title,
+.dashboard-action-copy {
+  display: block;
+}
+
+.dashboard-action-title {
+  font-weight: 800;
+}
+
+.dashboard-action-copy {
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 991.98px) {
+  .app-topbar {
+    gap: 0.6rem;
+  }
+
+  .theme-toggle [data-theme-toggle-label] {
+    display: none;
+  }
+
+  .dashboard-hero {
+    display: block;
+  }
+
+  .dashboard-hero-actions {
+    justify-content: flex-start;
+    margin-top: 1rem;
+  }
+
+  .dashboard-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767.98px) {
+  .dashboard-card-grid {
+    grid-template-columns: 1fr;
+  }
+}

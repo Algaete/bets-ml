@@ -1,0 +1,104 @@
+<script>
+    (() => {
+        const strategy = document.getElementById('KellyStrategy');
+        const probability = document.getElementById('EstimatedProbabilityPercent');
+        const odds = document.getElementById('Odds');
+        const bankroll = document.getElementById('BankrollBefore');
+        const stake = document.getElementById('Stake');
+        const currency = document.getElementById('CurrencyCode');
+        const suggestedStake = document.getElementById('KellySuggestedStake');
+        const edgeText = document.getElementById('KellyEdgeText');
+        const applyButton = document.getElementById('ApplyKellyStake');
+
+        if (!strategy || !probability || !odds || !bankroll || !stake || !currency || !suggestedStake || !edgeText || !applyButton) {
+            return;
+        }
+
+        let currentSuggestedStake = 0;
+
+        const multipliers = {
+            Kelly: 1,
+            HalfKelly: 0.5,
+            QuarterKelly: 0.25
+        };
+
+        const parseNumber = input => {
+            const value = Number(String(input.value || '').replace(',', '.'));
+            return Number.isFinite(value) ? value : 0;
+        };
+
+        const roundMoney = value => {
+            return currency.value === 'CLP'
+                ? Math.max(0, Math.round(value))
+                : Math.max(0, Math.round(value * 100) / 100);
+        };
+
+        const formatMoney = value => {
+            const decimals = currency.value === 'CLP' ? 0 : 2;
+            return `${currency.value} ${value.toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            })}`;
+        };
+
+        const setUnavailable = message => {
+            currentSuggestedStake = 0;
+            suggestedStake.textContent = '-';
+            edgeText.textContent = message;
+            applyButton.disabled = true;
+        };
+
+        const calculateKelly = () => {
+            const selectedStrategy = strategy.value;
+            const multiplier = multipliers[selectedStrategy] ?? 0;
+            const decimalOdds = parseNumber(odds);
+            const bankrollValue = parseNumber(bankroll);
+            const probabilityValue = parseNumber(probability) / 100;
+
+            if (multiplier <= 0) {
+                setUnavailable('Kelly disabled.');
+                return;
+            }
+
+            if (decimalOdds <= 1 || bankrollValue <= 0 || probabilityValue <= 0) {
+                setUnavailable('Enter bankroll, odds and probability.');
+                return;
+            }
+
+            const b = decimalOdds - 1;
+            const q = 1 - probabilityValue;
+            const fullKellyFraction = ((b * probabilityValue) - q) / b;
+            const impliedProbability = 1 / decimalOdds;
+            const edge = probabilityValue - impliedProbability;
+
+            if (fullKellyFraction <= 0) {
+                setUnavailable(`No positive edge. Implied ${(impliedProbability * 100).toFixed(1)}%.`);
+                return;
+            }
+
+            const adjustedFraction = fullKellyFraction * multiplier;
+            currentSuggestedStake = roundMoney(bankrollValue * adjustedFraction);
+            suggestedStake.textContent = formatMoney(currentSuggestedStake);
+            edgeText.textContent = `Edge ${(edge * 100).toFixed(1)}% · stake ${(adjustedFraction * 100).toFixed(2)}% of bankroll`;
+            applyButton.disabled = currentSuggestedStake <= 0;
+        };
+
+        const applySuggestedStake = () => {
+            if (currentSuggestedStake <= 0) {
+                return;
+            }
+
+            stake.value = currency.value === 'CLP'
+                ? String(Math.round(currentSuggestedStake))
+                : currentSuggestedStake.toFixed(2);
+            stake.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+
+        [strategy, probability, odds, bankroll, currency].forEach(input => {
+            input.addEventListener('input', calculateKelly);
+            input.addEventListener('change', calculateKelly);
+        });
+        applyButton.addEventListener('click', applySuggestedStake);
+        calculateKelly();
+    })();
+</script>

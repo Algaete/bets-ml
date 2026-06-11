@@ -1,0 +1,17 @@
+{
+  "target": "TotalShots",
+  "best_ensemble": {
+    "weight_direct": 0.8,
+    "weight_home_away": 0.19999999999999996,
+    "mae": 4.536652323773244,
+    "rmse": 5.721127744484717,
+    "r2": 0.06078072854417327,
+    "spearman": 0.2507972852254678
+  },
+  "models": {
+    "total": "model_total_shots_only_v2.pkl",
+    "home": "model_home_shots_only_v2.pkl",
+    "away": "model_away_shots_only_v2.pkl",
+    "columns": "model_columns_shots_only_v2.pkl"
+  }
+}

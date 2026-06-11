@@ -1,6 +1,8 @@
 using CornersPrediction.Application.Abstractions;
 using CornersPrediction.Application.Abstractions.Persistence;
+using CornersPrediction.Application.Admin;
 using CornersPrediction.Application.Betting;
+using CornersPrediction.Application.UpcomingMatches;
 using CornersPrediction.Infrastructure.Options;
 using CornersPrediction.Infrastructure.Persistence;
 using CornersPrediction.Infrastructure.Python;
@@ -29,7 +31,9 @@ public static class DependencyInjection
         services.AddSingleton<IPythonPredictionRunner, PythonPredictionRunner>();
         services.AddScoped<IMatchHistoryRepository, SqlServerMatchHistoryRepository>();
         services.AddScoped<IBettingRepository, SqlServerBettingRepository>();
+        services.AddScoped<IUserAdminRepository, SqlServerUserAdminRepository>();
         services.AddScoped<ITeamInfoRepository, TeamInfoRepository>();
+        services.AddScoped<IUpcomingMatchesRepository, SqlServerUpcomingMatchesRepository>();
 
         return services;
     }
