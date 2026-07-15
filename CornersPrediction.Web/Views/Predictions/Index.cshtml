@@ -107,6 +107,26 @@
                     <label class="form-check-label small text-muted" for="IsKnockout">@T("Predictions.SingleElimination")</label>
                 </div>
             </div>
+            <div class="setup-field setup-ranking">
+                <label class="form-label" for="HomeRankingPosition">Posicion ranking local</label>
+                <input id="HomeRankingPosition" class="form-control" type="number" min="1" step="1" placeholder="1" />
+            </div>
+            <div class="setup-field setup-ranking">
+                <label class="form-label" for="AwayRankingPosition">Posicion ranking visita</label>
+                <input id="AwayRankingPosition" class="form-control" type="number" min="1" step="1" placeholder="12" />
+            </div>
+            <div class="setup-field setup-ranking">
+                <label class="form-label" for="RankingTotalTeams">Total equipos ranking</label>
+                <input id="RankingTotalTeams" class="form-control" type="number" min="2" step="1" placeholder="19" />
+            </div>
+            <div class="setup-field setup-ranking-source">
+                <label class="form-label" for="RankingSource">Fuente ranking</label>
+                <input id="RankingSource" class="form-control" placeholder="FIFA, Liga Chilena 2026" autocomplete="off" />
+            </div>
+            <div class="setup-field setup-ranking">
+                <label class="form-label" for="RankingSeason">Temporada ranking</label>
+                <input id="RankingSeason" class="form-control" placeholder="2026" autocomplete="off" />
+            </div>
             <datalist id="FormationOptions">
                 @foreach (var formation in formationOptions)
                 {
@@ -182,11 +202,11 @@
                     <div id="CornersDirectValue" class="fw-semibold"></div>
                 </div>
                 <div>
-                    <div class="small text-muted">Home corners ML</div>
+                    <div class="small text-muted">Home corners final</div>
                     <div id="CornersHomeValue" class="fw-semibold"></div>
                 </div>
                 <div>
-                    <div class="small text-muted">Away corners ML</div>
+                    <div class="small text-muted">Away corners final</div>
                     <div id="CornersAwayValue" class="fw-semibold"></div>
                 </div>
                 <div>
@@ -206,10 +226,45 @@
                     <span id="CornersConfidenceBadge" class="badge"></span>
                 </div>
             </div>
+            <div id="RankingAdjustmentCard" class="ranking-adjustment-card mt-3 d-none">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                    <div>
+                        <div class="fw-semibold">Ajuste manual por ranking</div>
+                        <div id="RankingAdjustmentStatus" class="small text-muted"></div>
+                    </div>
+                    <span id="RankingAdjustmentBadge" class="badge text-bg-secondary">Sin ajuste</span>
+                </div>
+                <div class="ranking-adjustment-grid">
+                    <div>
+                        <div class="small text-muted">ML HomeCorners base</div>
+                        <div id="RankingBaseHomeValue" class="fw-semibold"></div>
+                        <div id="RankingHomePctValue" class="small"></div>
+                        <div id="RankingFinalHomeValue" class="fw-semibold"></div>
+                    </div>
+                    <div>
+                        <div class="small text-muted">ML AwayCorners base</div>
+                        <div id="RankingBaseAwayValue" class="fw-semibold"></div>
+                        <div id="RankingAwayPctValue" class="small"></div>
+                        <div id="RankingFinalAwayValue" class="fw-semibold"></div>
+                    </div>
+                    <div>
+                        <div class="small text-muted">ML TotalCorners base</div>
+                        <div id="RankingBaseTotalValue" class="fw-semibold"></div>
+                        <div class="small text-muted">Final TotalCorners</div>
+                        <div id="RankingFinalTotalValue" class="fw-semibold"></div>
+                    </div>
+                </div>
+            </div>
             <div id="CornersRecommendationMessage" class="alert alert-light border mt-3 mb-0 d-none"></div>
             <div class="mt-3 d-flex flex-wrap gap-2">
                 <a id="CreateBetFromTotalModelLink" class="btn btn-sm btn-outline-success d-none" href="/Betting/Create">
                     @T("Predictions.CreateCornersBet")
+                </a>
+                <a id="CreateBetFromHomeCornersLink" class="btn btn-sm btn-outline-success d-none" href="/Betting/Create">
+                    Home corners
+                </a>
+                <a id="CreateBetFromAwayCornersLink" class="btn btn-sm btn-outline-success d-none" href="/Betting/Create">
+                    Away corners
                 </a>
             </div>
         </div>
@@ -232,6 +287,10 @@
                 <div>
                     <div class="small text-muted">Context SOG</div>
                     <div id="EnrichedShotsOnGoalValue" class="fw-semibold"></div>
+                </div>
+                <div>
+                    <div class="small text-muted">Context goals</div>
+                    <div id="EnrichedGoalsValue" class="fw-semibold"></div>
                 </div>
                 <div>
                     <div class="small text-muted">Corners ML final</div>
@@ -310,6 +369,12 @@
                 <a id="CreateBetFromShotsLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
                     Create shots bet
                 </a>
+                <a id="CreateBetFromHomeShotsLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Home shots
+                </a>
+                <a id="CreateBetFromAwayShotsLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Away shots
+                </a>
             </div>
         </div>
 
@@ -365,6 +430,12 @@
                 <a id="CreateBetFromShotsOnGoalLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
                     Create SOG bet
                 </a>
+                <a id="CreateBetFromHomeSogLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Home SOG
+                </a>
+                <a id="CreateBetFromAwaySogLink" class="btn btn-sm btn-outline-info d-none" href="/Betting/Create">
+                    Away SOG
+                </a>
             </div>
         </div>
 
@@ -415,6 +486,17 @@
                     <div class="small text-muted">Direct total</div>
                     <div id="GoalsDirectValue" class="fw-semibold"></div>
                 </div>
+            </div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+                <a id="CreateBetFromGoalsLink" class="btn btn-sm btn-outline-warning d-none" href="/Betting/Create">
+                    Create goals bet
+                </a>
+                <a id="CreateBetFromHomeGoalsLink" class="btn btn-sm btn-outline-warning d-none" href="/Betting/Create">
+                    Home goals
+                </a>
+                <a id="CreateBetFromAwayGoalsLink" class="btn btn-sm btn-outline-warning d-none" href="/Betting/Create">
+                    Away goals
+                </a>
             </div>
         </div>
 
@@ -640,6 +722,11 @@
             const shotsLineInput = document.getElementById('ShotsLine');
             const sogLineInput = document.getElementById('SogLine');
             const goalsLineInput = document.getElementById('GoalsLine');
+            const homeRankingPositionInput = document.getElementById('HomeRankingPosition');
+            const awayRankingPositionInput = document.getElementById('AwayRankingPosition');
+            const rankingTotalTeamsInput = document.getElementById('RankingTotalTeams');
+            const rankingSourceInput = document.getElementById('RankingSource');
+            const rankingSeasonInput = document.getElementById('RankingSeason');
             const loadHistoryButton = document.getElementById('LoadHistoryButton');
             const predictButton = document.getElementById('PredictButton');
             const historyStatusBadge = document.getElementById('historyStatusBadge');
@@ -655,15 +742,36 @@
             const cornersRecommendedSideValue = document.getElementById('CornersRecommendedSideValue');
             const cornersDistanceToLineValue = document.getElementById('CornersDistanceToLineValue');
             const cornersConfidenceBadge = document.getElementById('CornersConfidenceBadge');
+            const rankingAdjustmentCard = document.getElementById('RankingAdjustmentCard');
+            const rankingAdjustmentStatus = document.getElementById('RankingAdjustmentStatus');
+            const rankingAdjustmentBadge = document.getElementById('RankingAdjustmentBadge');
+            const rankingBaseHomeValue = document.getElementById('RankingBaseHomeValue');
+            const rankingBaseAwayValue = document.getElementById('RankingBaseAwayValue');
+            const rankingBaseTotalValue = document.getElementById('RankingBaseTotalValue');
+            const rankingHomePctValue = document.getElementById('RankingHomePctValue');
+            const rankingAwayPctValue = document.getElementById('RankingAwayPctValue');
+            const rankingFinalHomeValue = document.getElementById('RankingFinalHomeValue');
+            const rankingFinalAwayValue = document.getElementById('RankingFinalAwayValue');
+            const rankingFinalTotalValue = document.getElementById('RankingFinalTotalValue');
             const cornersRecommendationMessage = document.getElementById('CornersRecommendationMessage');
             const createBetFromTotalModelLink = document.getElementById('CreateBetFromTotalModelLink');
+            const createBetFromHomeCornersLink = document.getElementById('CreateBetFromHomeCornersLink');
+            const createBetFromAwayCornersLink = document.getElementById('CreateBetFromAwayCornersLink');
             const createBetFromContextShotsLink = document.getElementById('CreateBetFromContextShotsLink');
             const createBetFromShotsLink = document.getElementById('CreateBetFromShotsLink');
+            const createBetFromHomeShotsLink = document.getElementById('CreateBetFromHomeShotsLink');
+            const createBetFromAwayShotsLink = document.getElementById('CreateBetFromAwayShotsLink');
             const createBetFromShotsOnGoalLink = document.getElementById('CreateBetFromShotsOnGoalLink');
+            const createBetFromHomeSogLink = document.getElementById('CreateBetFromHomeSogLink');
+            const createBetFromAwaySogLink = document.getElementById('CreateBetFromAwaySogLink');
+            const createBetFromGoalsLink = document.getElementById('CreateBetFromGoalsLink');
+            const createBetFromHomeGoalsLink = document.getElementById('CreateBetFromHomeGoalsLink');
+            const createBetFromAwayGoalsLink = document.getElementById('CreateBetFromAwayGoalsLink');
             const enrichedPredictionCard = document.getElementById('EnrichedPredictionCard');
             const enrichedPredictionValue = document.getElementById('EnrichedPredictionValue');
             const enrichedShotsValue = document.getElementById('EnrichedShotsValue');
             const enrichedShotsOnGoalValue = document.getElementById('EnrichedShotsOnGoalValue');
+            const enrichedGoalsValue = document.getElementById('EnrichedGoalsValue');
             const basePredictionValue = document.getElementById('BasePredictionValue');
             const predictionDifferenceValue = document.getElementById('PredictionDifferenceValue');
             const homeContextBreakdownValue = document.getElementById('HomeContextBreakdownValue');
@@ -827,6 +935,16 @@
                 ['GolesRival']) ?? 0;
             const round = value => Math.round((Number(value) || 0) * 100) / 100;
             const formatDecimal = (value, decimals = 2) => Number(value || 0).toFixed(decimals);
+            const formatOptionalDecimal = (value, decimals = 2) =>
+                value === null || value === undefined || Number.isNaN(Number(value)) ? 'N/A' : Number(value).toFixed(decimals);
+            const formatPercent = value => {
+                const parsed = Number(value);
+                if (!Number.isFinite(parsed)) {
+                    return 'N/A';
+                }
+
+                return `${parsed >= 0 ? '+' : ''}${(parsed * 100).toFixed(2)}%`;
+            };
             const formatRange = (low, high) => `${Math.round(Number(low || 0))} - ${Math.round(Number(high || 0))} corners`;
             const formatShotsOnGoalRange = (low, high) => `${Math.round(Number(low || 0))} - ${Math.round(Number(high || 0))} SOG`;
             const formatMarketLine = value => value === null || value === undefined ? 'N/A' : formatDecimal(value, 1);
@@ -1071,12 +1189,15 @@
                     enriched,
                     enrichedShots: Number(getContextValue(comparison, 'EnrichedShotsPrediction') ?? 0),
                     enrichedShotsOnGoal: Number(getContextValue(comparison, 'EnrichedShotsOnGoalPrediction') ?? 0),
+                    enrichedGoals: Number(getContextValue(comparison, 'EnrichedGoalsPrediction') ?? 0),
                     homeExpectedCorners: Number(getContextValue(comparison, 'HomeExpectedCorners') ?? 0),
                     awayExpectedCorners: Number(getContextValue(comparison, 'AwayExpectedCorners') ?? 0),
                     homeExpectedShots: Number(getContextValue(comparison, 'HomeExpectedShots') ?? 0),
                     awayExpectedShots: Number(getContextValue(comparison, 'AwayExpectedShots') ?? 0),
                     homeExpectedShotsOnGoal: Number(getContextValue(comparison, 'HomeExpectedShotsOnGoal') ?? 0),
                     awayExpectedShotsOnGoal: Number(getContextValue(comparison, 'AwayExpectedShotsOnGoal') ?? 0),
+                    homeExpectedGoals: Number(getContextValue(comparison, 'HomeExpectedGoals') ?? 0),
+                    awayExpectedGoals: Number(getContextValue(comparison, 'AwayExpectedGoals') ?? 0),
                     difference,
                     recommendation: hasBasePrediction && difference <= 1.0
                         ? 'ML and context aligned'
@@ -1100,10 +1221,11 @@
                 enrichedPredictionValue.textContent = formatDecimal(details.enriched);
                 enrichedShotsValue.textContent = `${formatDecimal(details.enrichedShots)} shots`;
                 enrichedShotsOnGoalValue.textContent = `${formatDecimal(details.enrichedShotsOnGoal)} SOG`;
+                enrichedGoalsValue.textContent = `${formatDecimal(details.enrichedGoals)} goals`;
                 basePredictionValue.textContent = hasBasePrediction ? `${formatDecimal(basePrediction)} corners` : 'Pending model result';
                 predictionDifferenceValue.textContent = hasBasePrediction ? `${formatDecimal(details.difference)} corners` : 'Pending';
-                homeContextBreakdownValue.textContent = `${formatDecimal(details.homeExpectedCorners)} C / ${formatDecimal(details.homeExpectedShots)} Sh / ${formatDecimal(details.homeExpectedShotsOnGoal)} SOG`;
-                awayContextBreakdownValue.textContent = `${formatDecimal(details.awayExpectedCorners)} C / ${formatDecimal(details.awayExpectedShots)} Sh / ${formatDecimal(details.awayExpectedShotsOnGoal)} SOG`;
+                homeContextBreakdownValue.textContent = `${formatDecimal(details.homeExpectedCorners)} C / ${formatDecimal(details.homeExpectedShots)} Sh / ${formatDecimal(details.homeExpectedShotsOnGoal)} SOG / ${formatDecimal(details.homeExpectedGoals)} G`;
+                awayContextBreakdownValue.textContent = `${formatDecimal(details.awayExpectedCorners)} C / ${formatDecimal(details.awayExpectedShots)} Sh / ${formatDecimal(details.awayExpectedShotsOnGoal)} SOG / ${formatDecimal(details.awayExpectedGoals)} G`;
                 predictionRecommendationBadge.textContent = details.recommendation;
                 predictionRecommendationBadge.className = `prediction-status-chip ${hasBasePrediction ? (isConsistent ? 'status-success' : 'status-warning') : 'status-muted'}`;
                 enrichedPredictionCard.classList.remove('d-none');
@@ -1134,6 +1256,7 @@
                     lines.push(`Predicción enriquecida: ${formatDecimal(enrichedDetails.enriched)}`);
                     lines.push(`Context shots: ${formatDecimal(enrichedDetails.enrichedShots)}`);
                     lines.push(`Context shots on goal: ${formatDecimal(enrichedDetails.enrichedShotsOnGoal)}`);
+                    lines.push(`Context goals: ${formatDecimal(enrichedDetails.enrichedGoals)}`);
                     if (enrichedDetails.difference !== null) {
                         lines.push(`ML vs context difference: ${formatDecimal(enrichedDetails.difference)} corners`);
                     }
@@ -1171,6 +1294,23 @@
                 return lines.join('\n');
             };
 
+            const buildSinglePredictionBettingNotes = (label, prediction) => {
+                const lines = [
+                    'Datos generados desde Predictions',
+                    `${leagueSelect.value.trim()} | ${seasonInput.value.trim()} | ${matchDateInput.value}`,
+                    `${homeTeamSelect.value.trim()} vs ${awayTeamSelect.value.trim()}`,
+                    `${label} prediction: ${formatDecimal(prediction)}`,
+                    `${label} suggested line: ${formatDecimal(getSuggestedHalfLineBelow(prediction), 1)}`,
+                    'Selection preset: Over'
+                ];
+
+                if (lastTotalPrediction) {
+                    lines.push(`Corners ML final: ${formatDecimal(lastTotalPrediction.predictedTotalCorners)}`);
+                }
+
+                return lines.join('\n');
+            };
+
             const buildContextShotsBettingNotes = details => {
                 const lines = [
                     'Datos generados desde Predictions',
@@ -1180,6 +1320,7 @@
                     `Home expected shots: ${formatDecimal(details.homeExpectedShots)}`,
                     `Away expected shots: ${formatDecimal(details.awayExpectedShots)}`,
                     `Context SOG prediction: ${formatDecimal(details.enrichedShotsOnGoal)}`,
+                    `Context goals prediction: ${formatDecimal(details.enrichedGoals)}`,
                     `Context corners prediction: ${formatDecimal(details.enriched)}`
                 ];
 
@@ -1221,6 +1362,36 @@
                 notes: notes ?? buildBettingNotes(prediction)
             });
 
+            const hideBetLink = link => {
+                link.href = '/Betting/Create';
+                link.classList.add('d-none');
+            };
+
+            const configureSinglePredictionBetLink = (link, prediction, marketType, predictionModel, label, confidence = null) => {
+                const value = Number(prediction);
+                if (!Number.isFinite(value) || value <= 0) {
+                    hideBetLink(link);
+                    return;
+                }
+
+                const parameters = new URLSearchParams({
+                    league: leagueSelect.value.trim(),
+                    season: seasonInput.value.trim(),
+                    matchDate: matchDateInput.value,
+                    homeTeam: homeTeamSelect.value.trim(),
+                    awayTeam: awayTeamSelect.value.trim(),
+                    marketType,
+                    betSelection: 'Over',
+                    line: formatDecimal(getSuggestedHalfLineBelow(value), 1),
+                    predictionModel,
+                    confidenceLevel: toConfidenceLevel(confidence),
+                    notes: buildSinglePredictionBettingNotes(label, value)
+                });
+
+                link.href = `/Betting/Create?${parameters.toString()}`;
+                link.classList.remove('d-none');
+            };
+
             const configureTotalModelBetLink = prediction => {
                 const parameters = buildBettingQueryBase(prediction, 'TotalCornersModel');
                 parameters.set('betSelection', getRecommendedTotalBetSelection(prediction));
@@ -1229,6 +1400,20 @@
 
                 createBetFromTotalModelLink.href = `/Betting/Create?${parameters.toString()}`;
                 createBetFromTotalModelLink.classList.remove('d-none');
+                configureSinglePredictionBetLink(
+                    createBetFromHomeCornersLink,
+                    prediction.predHomeCorners,
+                    'HomeCorners',
+                    'TotalCornersModel',
+                    'Home corners',
+                    prediction.confidence);
+                configureSinglePredictionBetLink(
+                    createBetFromAwayCornersLink,
+                    prediction.predAwayCorners,
+                    'AwayCorners',
+                    'TotalCornersModel',
+                    'Away corners',
+                    prediction.confidence);
             };
 
             const configureContextShotsBetLink = details => {
@@ -1257,8 +1442,7 @@
 
             const configureMarketBetLink = (link, market, marketType, predictionModel, label) => {
                 if (!market) {
-                    link.href = '/Betting/Create';
-                    link.classList.add('d-none');
+                    hideBetLink(link);
                     return;
                 }
 
@@ -1282,20 +1466,65 @@
 
             const configureShotsBetLink = market => {
                 configureMarketBetLink(createBetFromShotsLink, market, 'TotalShots', 'ShotsOnGoalModel', 'Shots');
+                configureSinglePredictionBetLink(createBetFromHomeShotsLink, market?.homePrediction, 'HomeShots', 'ShotsOnGoalModel', 'Home shots', market?.confidence);
+                configureSinglePredictionBetLink(createBetFromAwayShotsLink, market?.awayPrediction, 'AwayShots', 'ShotsOnGoalModel', 'Away shots', market?.confidence);
             };
 
             const configureShotsOnGoalBetLink = market => {
                 if (!market) {
-                    createBetFromShotsOnGoalLink.href = '/Betting/Create';
-                    createBetFromShotsOnGoalLink.classList.add('d-none');
+                    hideBetLink(createBetFromShotsOnGoalLink);
+                    hideBetLink(createBetFromHomeSogLink);
+                    hideBetLink(createBetFromAwaySogLink);
                     return;
                 }
 
                 configureMarketBetLink(createBetFromShotsOnGoalLink, market, 'TotalShotsOnGoal', 'ShotsOnGoalModel', 'SOG');
+                configureSinglePredictionBetLink(createBetFromHomeSogLink, market.homePrediction, 'HomeShotsOnGoal', 'ShotsOnGoalModel', 'Home SOG', market.confidence);
+                configureSinglePredictionBetLink(createBetFromAwaySogLink, market.awayPrediction, 'AwayShotsOnGoal', 'ShotsOnGoalModel', 'Away SOG', market.confidence);
+            };
+
+            const configureGoalsBetLink = market => {
+                configureMarketBetLink(createBetFromGoalsLink, market, 'TotalGoals', 'GoalsModel', 'Goals');
+                configureSinglePredictionBetLink(createBetFromHomeGoalsLink, market?.homePrediction, 'HomeGoals', 'GoalsModel', 'Home goals', market?.confidence);
+                configureSinglePredictionBetLink(createBetFromAwayGoalsLink, market?.awayPrediction, 'AwayGoals', 'GoalsModel', 'Away goals', market?.confidence);
+            };
+
+            const renderRankingAdjustment = result => {
+                const adjustment = result.rankingAdjustment;
+                if (!adjustment) {
+                    rankingAdjustmentCard.classList.add('d-none');
+                    return;
+                }
+
+                rankingAdjustmentCard.classList.remove('d-none');
+                rankingAdjustmentBadge.textContent = adjustment.applied ? 'Aplicado' : 'Sin ajuste';
+                rankingAdjustmentBadge.className = `badge ${adjustment.applied ? 'text-bg-success' : 'text-bg-secondary'}`;
+                rankingAdjustmentStatus.textContent = adjustment.applied
+                    ? `${adjustment.rankingSource ?? 'Ranking'} ${adjustment.rankingSeason ?? ''}`.trim()
+                    : adjustment.reason ?? 'Ranking no aplicado';
+                rankingBaseHomeValue.textContent = formatOptionalDecimal(result.baseHomeCorners);
+                rankingBaseAwayValue.textContent = formatOptionalDecimal(result.baseAwayCorners);
+                rankingBaseTotalValue.textContent = formatOptionalDecimal(result.baseTotalCorners);
+                rankingHomePctValue.textContent = `Ranking Factor Home: ${formatPercent(adjustment.homeAdjustmentPct)}`;
+                rankingHomePctValue.className = `small ${Number(adjustment.homeAdjustmentPct ?? 0) >= 0 ? 'text-success' : 'text-danger'}`;
+                rankingAwayPctValue.textContent = `Ranking Factor Away: ${formatPercent(adjustment.awayAdjustmentPct)}`;
+                rankingAwayPctValue.className = `small ${Number(adjustment.awayAdjustmentPct ?? 0) >= 0 ? 'text-success' : 'text-danger'}`;
+                rankingFinalHomeValue.textContent = `Final HomeCorners: ${formatOptionalDecimal(result.finalHomeCorners)}`;
+                rankingFinalAwayValue.textContent = `Final AwayCorners: ${formatOptionalDecimal(result.finalAwayCorners)}`;
+                rankingFinalTotalValue.textContent = formatOptionalDecimal(result.finalTotalCorners);
+            };
+
+            const refreshCurrentFeatures = () => {
+                if (!currentFeatures) {
+                    return;
+                }
+
+                currentFeatures = buildFeatures();
+                renderFeatures(currentFeatures);
             };
 
             const setPrediction = result => {
-                const predictedTotalCorners = getPredictionNumber(result);
+                const predictedTotalCorners = Number(result.finalTotalCorners ?? getPredictionNumber(result));
                 const mae = getOptionalNumber(result, 'mae') ?? MAE_TOTAL;
                 const rmse = getOptionalNumber(result, 'rmse') ?? RMSE_TOTAL;
                 const probableRangeLow = getOptionalNumber(result, 'probableRangeLow') ?? getOptionalNumber(result, 'rangeLow') ?? Math.max(0, predictedTotalCorners - mae);
@@ -1303,9 +1532,9 @@
                 const wideRangeLow = getOptionalNumber(result, 'wideRangeLow') ?? probableRangeLow;
                 const wideRangeHigh = getOptionalNumber(result, 'wideRangeHigh') ?? probableRangeHigh;
                 const predTotalDirect = getOptionalNumber(result, 'predTotalDirect') ?? getOptionalNumber(result, 'rawTotalCornersPrediction');
-                const predHomeCorners = getOptionalNumber(result, 'predHomeCorners') ?? getOptionalNumber(result, 'homeCornersPrediction');
-                const predAwayCorners = getOptionalNumber(result, 'predAwayCorners') ?? getOptionalNumber(result, 'awayCornersPrediction');
-                const predTotalCombined = getOptionalNumber(result, 'predTotalCombined');
+                const predHomeCorners = getOptionalNumber(result, 'finalHomeCorners') ?? getOptionalNumber(result, 'predHomeCorners') ?? getOptionalNumber(result, 'homeCornersPrediction');
+                const predAwayCorners = getOptionalNumber(result, 'finalAwayCorners') ?? getOptionalNumber(result, 'predAwayCorners') ?? getOptionalNumber(result, 'awayCornersPrediction');
+                const predTotalCombined = getOptionalNumber(result, 'finalTotalCorners') ?? getOptionalNumber(result, 'predTotalCombined');
                 const bettingLine = getOptionalNumber(result, 'bettingLine');
                 const distanceToLine = getOptionalNumber(result, 'distanceToLine');
                 const recommendedSide = result.recommendedSide ?? 'N/A';
@@ -1341,6 +1570,7 @@
                 cornersRecommendationMessage.textContent = recommendationMessage;
                 cornersRecommendationMessage.className = `alert mt-3 mb-0 ${confidence === 'LOW' ? 'alert-warning' : confidence === 'HIGH' || confidence === 'VERY_HIGH' ? 'alert-success' : 'alert-light border'}`;
                 cornersRecommendationMessage.classList.toggle('d-none', !recommendationMessage);
+                renderRankingAdjustment(result);
                 predictionResult.classList.remove('d-none');
                 renderEnrichedPrediction(predictedTotalCorners);
                 lastTotalPrediction = {
@@ -1532,6 +1762,7 @@
                 shotsOnGoalWarning.classList.add('d-none');
                 configureShotsBetLink(shotsMarket);
                 configureShotsOnGoalBetLink(sogMarket);
+                configureGoalsBetLink(goalsMarket);
             };
 
             const showShotsOnGoalWarning = () => {
@@ -1540,6 +1771,7 @@
                 goalsResult.classList.add('d-none');
                 configureShotsBetLink(null);
                 configureShotsOnGoalBetLink(null);
+                configureGoalsBetLink(null);
                 shotsOnGoalWarning.classList.remove('d-none');
             };
 
@@ -1566,19 +1798,50 @@
                 cornersDistanceToLineValue.textContent = '';
                 cornersConfidenceBadge.textContent = '';
                 cornersConfidenceBadge.className = 'badge';
+                rankingAdjustmentCard.classList.add('d-none');
+                rankingAdjustmentStatus.textContent = '';
+                rankingAdjustmentBadge.textContent = 'Sin ajuste';
+                rankingAdjustmentBadge.className = 'badge text-bg-secondary';
+                rankingBaseHomeValue.textContent = '';
+                rankingBaseAwayValue.textContent = '';
+                rankingBaseTotalValue.textContent = '';
+                rankingHomePctValue.textContent = '';
+                rankingAwayPctValue.textContent = '';
+                rankingFinalHomeValue.textContent = '';
+                rankingFinalAwayValue.textContent = '';
+                rankingFinalTotalValue.textContent = '';
                 cornersRecommendationMessage.textContent = '';
                 cornersRecommendationMessage.className = 'alert alert-light border mt-3 mb-0 d-none';
                 createBetFromTotalModelLink.href = '/Betting/Create';
+                createBetFromHomeCornersLink.href = '/Betting/Create';
+                createBetFromAwayCornersLink.href = '/Betting/Create';
                 createBetFromContextShotsLink.href = '/Betting/Create';
                 createBetFromShotsLink.href = '/Betting/Create';
+                createBetFromHomeShotsLink.href = '/Betting/Create';
+                createBetFromAwayShotsLink.href = '/Betting/Create';
                 createBetFromShotsOnGoalLink.href = '/Betting/Create';
+                createBetFromHomeSogLink.href = '/Betting/Create';
+                createBetFromAwaySogLink.href = '/Betting/Create';
+                createBetFromGoalsLink.href = '/Betting/Create';
+                createBetFromHomeGoalsLink.href = '/Betting/Create';
+                createBetFromAwayGoalsLink.href = '/Betting/Create';
                 createBetFromTotalModelLink.classList.add('d-none');
+                createBetFromHomeCornersLink.classList.add('d-none');
+                createBetFromAwayCornersLink.classList.add('d-none');
                 createBetFromContextShotsLink.classList.add('d-none');
                 createBetFromShotsLink.classList.add('d-none');
+                createBetFromHomeShotsLink.classList.add('d-none');
+                createBetFromAwayShotsLink.classList.add('d-none');
                 createBetFromShotsOnGoalLink.classList.add('d-none');
+                createBetFromHomeSogLink.classList.add('d-none');
+                createBetFromAwaySogLink.classList.add('d-none');
+                createBetFromGoalsLink.classList.add('d-none');
+                createBetFromHomeGoalsLink.classList.add('d-none');
+                createBetFromAwayGoalsLink.classList.add('d-none');
                 enrichedPredictionValue.textContent = '';
                 enrichedShotsValue.textContent = '';
                 enrichedShotsOnGoalValue.textContent = '';
+                enrichedGoalsValue.textContent = '';
                 basePredictionValue.textContent = '';
                 predictionDifferenceValue.textContent = '';
                 homeContextBreakdownValue.textContent = '';
@@ -2033,6 +2296,18 @@
                 const awayTeam = awayTeamSelect.value.trim();
                 const homeBig3 = getBig3Flag(homeTeam);
                 const awayBig3 = getBig3Flag(awayTeam);
+                const addOptionalInt = (target, key, input) => {
+                    const value = input.value.trim();
+                    if (value) {
+                        target[key] = Number.parseInt(value, 10);
+                    }
+                };
+                const addOptionalText = (target, key, input) => {
+                    const value = input.value.trim();
+                    if (value) {
+                        target[key] = value;
+                    }
+                };
                 const features = {
                     League: leagueSelect.value.trim(),
                     Season: seasonInput.value.trim(),
@@ -2052,6 +2327,12 @@
                     AwayIsCountry: 0,
                     CountryDiff: 0
                 };
+
+                addOptionalInt(features, 'HomeRankingPosition', homeRankingPositionInput);
+                addOptionalInt(features, 'AwayRankingPosition', awayRankingPositionInput);
+                addOptionalInt(features, 'RankingTotalTeams', rankingTotalTeamsInput);
+                addOptionalText(features, 'RankingSource', rankingSourceInput);
+                addOptionalText(features, 'RankingSeason', rankingSeasonInput);
 
                 features.Home_MatchesLast3 = take(currentHomeGeneralMatches, 3).length;
                 features.Away_MatchesLast3 = take(currentAwayGeneralMatches, 3).length;
@@ -2387,12 +2668,7 @@
                     delete homeFormationInput.dataset.autofillValue;
                 }
 
-                if (!currentFeatures) {
-                    return;
-                }
-
-                currentFeatures = buildFeatures();
-                renderFeatures(currentFeatures);
+                refreshCurrentFeatures();
             });
             awayFormationInput.addEventListener('input', () => {
                 if (awayFormationInput.value !== awayFormationInput.dataset.autofillValue) {
@@ -2400,31 +2676,24 @@
                     delete awayFormationInput.dataset.autofillValue;
                 }
 
-                if (!currentFeatures) {
-                    return;
-                }
-
-                currentFeatures = buildFeatures();
-                renderFeatures(currentFeatures);
+                refreshCurrentFeatures();
             });
             seasonInput.addEventListener('input', () => {
-                if (currentFeatures) {
-                    currentFeatures = buildFeatures();
-                    renderFeatures(currentFeatures);
-                }
+                refreshCurrentFeatures();
             });
             matchDateInput.addEventListener('change', () => {
-                if (currentFeatures) {
-                    currentFeatures = buildFeatures();
-                    renderFeatures(currentFeatures);
-                }
+                refreshCurrentFeatures();
             });
             isKnockoutInput.addEventListener('change', () => {
-                if (currentFeatures) {
-                    currentFeatures = buildFeatures();
-                    renderFeatures(currentFeatures);
-                }
+                refreshCurrentFeatures();
             });
+            [
+                homeRankingPositionInput,
+                awayRankingPositionInput,
+                rankingTotalTeamsInput,
+                rankingSourceInput,
+                rankingSeasonInput
+            ].forEach(input => input.addEventListener('input', refreshCurrentFeatures));
             loadHistoryButton.addEventListener('click', () => loadHistory(true));
             predictButton.addEventListener('click', predict);
             initializePreloadedMatch();

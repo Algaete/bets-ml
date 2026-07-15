@@ -4,6 +4,7 @@ using CornersPrediction.Application.Teams;
 using CornersPrediction.Application.Betting;
 using CornersPrediction.Application.Admin;
 using CornersPrediction.Application.UpcomingMatches;
+using CornersPrediction.Application.AutomatedCorners;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CornersPrediction.Application;
@@ -17,6 +18,7 @@ public static class DependencyInjection
         services.AddScoped<IShotsOnGoalPredictionUseCase, ShotsOnGoalPredictionUseCase>();
         services.AddScoped<IModelDebugPredictionUseCase, ModelDebugPredictionUseCase>();
         services.AddScoped<ICreateMatchHistoryItemUseCase, CreateMatchHistoryItemUseCase>();
+        services.AddScoped<IBulkCreateMatchHistoryUseCase, BulkCreateMatchHistoryUseCase>();
         services.AddScoped<IUpdateMatchHistoryItemUseCase, UpdateMatchHistoryItemUseCase>();
         services.AddScoped<IDeleteMatchHistoryItemUseCase, DeleteMatchHistoryItemUseCase>();
         services.AddScoped<IGetRecentMatchHistoryUseCase, GetRecentMatchHistoryUseCase>();
@@ -35,6 +37,8 @@ public static class DependencyInjection
         services.AddScoped<ICreateBankrollTransactionUseCase, CreateBankrollTransactionUseCase>();
         services.AddScoped<IGetBankrollTransactionsUseCase, GetBankrollTransactionsUseCase>();
         services.AddScoped<IGetCurrentBankrollUseCase, GetCurrentBankrollUseCase>();
+        services.AddScoped<IGetAutomatedCornerSelectionsUseCase, GetAutomatedCornerSelectionsUseCase>();
+        services.AddScoped<IUpdateAutomatedCornerSelectionStatusUseCase, UpdateAutomatedCornerSelectionStatusUseCase>();
         services.AddScoped<ICreatePlatformUserUseCase, CreatePlatformUserUseCase>();
         services.AddScoped<IUpdatePlatformUserUseCase, UpdatePlatformUserUseCase>();
         services.AddScoped<IDeletePlatformUserUseCase, DeletePlatformUserUseCase>();

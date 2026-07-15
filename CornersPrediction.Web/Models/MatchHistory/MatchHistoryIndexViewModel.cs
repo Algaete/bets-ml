@@ -6,6 +6,10 @@ public sealed class MatchHistoryIndexViewModel
 {
     public CreateMatchHistoryViewModel Form { get; init; } = new();
 
+    public BulkMatchHistoryImportViewModel BulkForm { get; init; } = new();
+
+    public BulkMatchHistoryImportResultViewModel? BulkResult { get; init; }
+
     public MatchHistoryFiltersViewModel Filters { get; init; } = new();
 
     public IReadOnlyList<MatchHistoryItemViewModel> Records { get; init; } =
@@ -21,5 +25,8 @@ public sealed class MatchHistoryIndexViewModel
         Array.Empty<string>();
 
     public IReadOnlyList<TeamBi3InfoViewModel> TeamOptions { get; init; } =
+        Array.Empty<TeamBi3InfoViewModel>();
+
+    public IReadOnlyList<TeamBi3InfoViewModel> BulkTeamOptions { get; init; } =
         Array.Empty<TeamBi3InfoViewModel>();
 }

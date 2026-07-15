@@ -142,10 +142,33 @@ public static class BetMarketTypes
     public const string AwayCorners = "AwayCorners";
     public const string FirstHalfCorners = "FirstHalfCorners";
     public const string TotalShots = "TotalShots";
+    public const string HomeShots = "HomeShots";
+    public const string AwayShots = "AwayShots";
     public const string TotalShotsOnGoal = "TotalShotsOnGoal";
+    public const string HomeShotsOnGoal = "HomeShotsOnGoal";
+    public const string AwayShotsOnGoal = "AwayShotsOnGoal";
+    public const string TotalGoals = "TotalGoals";
+    public const string HomeGoals = "HomeGoals";
+    public const string AwayGoals = "AwayGoals";
     public const string Other = "Other";
 
-    public static readonly string[] All = [TotalCorners, HomeCorners, AwayCorners, FirstHalfCorners, TotalShots, TotalShotsOnGoal, Other];
+    public static readonly string[] All =
+    [
+        TotalCorners,
+        HomeCorners,
+        AwayCorners,
+        FirstHalfCorners,
+        TotalShots,
+        HomeShots,
+        AwayShots,
+        TotalShotsOnGoal,
+        HomeShotsOnGoal,
+        AwayShotsOnGoal,
+        TotalGoals,
+        HomeGoals,
+        AwayGoals,
+        Other
+    ];
 }
 
 public static class BetSelections
@@ -164,8 +187,9 @@ public static class BetConfidenceLevels
     public const string Low = "Low";
     public const string Medium = "Medium";
     public const string High = "High";
+    public const string VeryHigh = "VeryHigh";
 
-    public static readonly string[] All = [Low, Medium, High];
+    public static readonly string[] All = [Low, Medium, High, VeryHigh];
 }
 
 public static class BetPredictionModels
@@ -174,8 +198,18 @@ public static class BetPredictionModels
     public const string TotalCornersModel = "TotalCornersModel";
     public const string OverUnderLineModel = "OverUnderLineModel";
     public const string ShotsOnGoalModel = "ShotsOnGoalModel";
+    public const string GoalsModel = "GoalsModel";
+    public const string AutomatedCornersBot = "AutomatedCornersBot";
 
-    public static readonly string[] All = [Manual, TotalCornersModel, OverUnderLineModel, ShotsOnGoalModel];
+    public static readonly string[] All =
+    [
+        Manual,
+        TotalCornersModel,
+        OverUnderLineModel,
+        ShotsOnGoalModel,
+        GoalsModel,
+        AutomatedCornersBot
+    ];
 }
 
 public static class BettingCurrencies

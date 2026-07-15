@@ -42,10 +42,10 @@ BEGIN
         IsDeleted BIT NOT NULL CONSTRAINT DF_BettingRecords_IsDeleted DEFAULT 0,
         CONSTRAINT CK_BettingRecords_CurrencyCode CHECK (CurrencyCode IN ('CLP', 'USD', 'AUD')),
         CONSTRAINT CK_BettingRecords_Status CHECK (Status IN ('Pending', 'Won', 'Lost', 'Void', 'Cashout')),
-        CONSTRAINT CK_BettingRecords_MarketType CHECK (MarketType IN ('TotalCorners', 'HomeCorners', 'AwayCorners', 'FirstHalfCorners', 'TotalShots', 'TotalShotsOnGoal', 'Other')),
+        CONSTRAINT CK_BettingRecords_MarketType CHECK (MarketType IN ('TotalCorners', 'HomeCorners', 'AwayCorners', 'FirstHalfCorners', 'TotalShots', 'HomeShots', 'AwayShots', 'TotalShotsOnGoal', 'HomeShotsOnGoal', 'AwayShotsOnGoal', 'TotalGoals', 'HomeGoals', 'AwayGoals', 'Other')),
         CONSTRAINT CK_BettingRecords_BetSelection CHECK (BetSelection IN ('Over', 'Under', 'Home', 'Away', 'Other')),
-        CONSTRAINT CK_BettingRecords_ConfidenceLevel CHECK (ConfidenceLevel IS NULL OR ConfidenceLevel IN ('Low', 'Medium', 'High')),
-        CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel')),
+        CONSTRAINT CK_BettingRecords_ConfidenceLevel CHECK (ConfidenceLevel IS NULL OR ConfidenceLevel IN ('Low', 'Medium', 'High', 'VeryHigh')),
+        CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot')),
         CONSTRAINT CK_BettingRecords_Line CHECK (Line >= 0),
         CONSTRAINT CK_BettingRecords_Odds CHECK (Odds > 1),
         CONSTRAINT CK_BettingRecords_Stake CHECK (Stake > 0),
@@ -144,7 +144,7 @@ END
 GO
 
 ALTER TABLE dbo.BettingRecords
-    ADD CONSTRAINT CK_BettingRecords_MarketType CHECK (MarketType IN ('TotalCorners', 'HomeCorners', 'AwayCorners', 'FirstHalfCorners', 'TotalShots', 'TotalShotsOnGoal', 'Other'));
+    ADD CONSTRAINT CK_BettingRecords_MarketType CHECK (MarketType IN ('TotalCorners', 'HomeCorners', 'AwayCorners', 'FirstHalfCorners', 'TotalShots', 'HomeShots', 'AwayShots', 'TotalShotsOnGoal', 'HomeShotsOnGoal', 'AwayShotsOnGoal', 'TotalGoals', 'HomeGoals', 'AwayGoals', 'Other'));
 GO
 
 IF EXISTS
@@ -160,7 +160,23 @@ END
 GO
 
 ALTER TABLE dbo.BettingRecords
-    ADD CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel'));
+    ADD CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot'));
+GO
+
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_BettingRecords_ConfidenceLevel'
+      AND parent_object_id = OBJECT_ID('dbo.BettingRecords')
+)
+BEGIN
+    ALTER TABLE dbo.BettingRecords DROP CONSTRAINT CK_BettingRecords_ConfidenceLevel;
+END
+GO
+
+ALTER TABLE dbo.BettingRecords
+    ADD CONSTRAINT CK_BettingRecords_ConfidenceLevel CHECK (ConfidenceLevel IS NULL OR ConfidenceLevel IN ('Low', 'Medium', 'High', 'VeryHigh'));
 GO
 
 IF EXISTS

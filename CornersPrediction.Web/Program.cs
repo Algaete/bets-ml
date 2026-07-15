@@ -156,6 +156,21 @@ builder.Services.AddHttpClient<UpcomingMatchesApiClient>((services, client) =>
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 
+builder.Services.AddHttpClient<AutomatedCornersApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
+builder.Services.AddHttpClient<CornersPipelineApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(30);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
 var app = builder.Build();
 
 app.UseForwardedHeaders();

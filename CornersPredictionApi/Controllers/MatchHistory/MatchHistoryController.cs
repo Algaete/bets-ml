@@ -11,6 +11,7 @@ namespace CornersPredictionApi.Controllers.MatchHistory;
 public sealed class MatchHistoryController : ControllerBase
 {
     private readonly ICreateMatchHistoryItemUseCase _createMatchHistoryItemUseCase;
+    private readonly IBulkCreateMatchHistoryUseCase _bulkCreateMatchHistoryUseCase;
     private readonly IUpdateMatchHistoryItemUseCase _updateMatchHistoryItemUseCase;
     private readonly IDeleteMatchHistoryItemUseCase _deleteMatchHistoryItemUseCase;
     private readonly IGetRecentMatchHistoryUseCase _getRecentMatchHistoryUseCase;
@@ -20,6 +21,7 @@ public sealed class MatchHistoryController : ControllerBase
 
     public MatchHistoryController(
         ICreateMatchHistoryItemUseCase createMatchHistoryItemUseCase,
+        IBulkCreateMatchHistoryUseCase bulkCreateMatchHistoryUseCase,
         IUpdateMatchHistoryItemUseCase updateMatchHistoryItemUseCase,
         IDeleteMatchHistoryItemUseCase deleteMatchHistoryItemUseCase,
         IGetRecentMatchHistoryUseCase getRecentMatchHistoryUseCase,
@@ -28,6 +30,7 @@ public sealed class MatchHistoryController : ControllerBase
         ILogger<MatchHistoryController> logger)
     {
         _createMatchHistoryItemUseCase = createMatchHistoryItemUseCase;
+        _bulkCreateMatchHistoryUseCase = bulkCreateMatchHistoryUseCase;
         _updateMatchHistoryItemUseCase = updateMatchHistoryItemUseCase;
         _deleteMatchHistoryItemUseCase = deleteMatchHistoryItemUseCase;
         _getRecentMatchHistoryUseCase = getRecentMatchHistoryUseCase;
@@ -187,6 +190,40 @@ public sealed class MatchHistoryController : ControllerBase
             _logger.LogError(exception, "Failed to save match history item");
             return Problem(
                 title: "Could not save match",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    /// <summary>
+    /// Stores several completed matches from a JSON array pasted in the web app.
+    /// </summary>
+    [HttpPost("bulk")]
+    [ProducesResponseType(typeof(BulkMatchHistoryImportResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> BulkCreate(
+        [FromBody] BulkCreateMatchHistoryCommand? command,
+        CancellationToken cancellationToken)
+    {
+        if (command is null)
+        {
+            return BadRequest(new { error = "Request body is required." });
+        }
+
+        try
+        {
+            var result = await _bulkCreateMatchHistoryUseCase.CreateAsync(command, cancellationToken);
+            return Ok(result);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to bulk import match history items");
+            return Problem(
+                title: "Could not import matches",
                 detail: exception.Message,
                 statusCode: StatusCodes.Status500InternalServerError);
         }

@@ -55,6 +55,14 @@
                         <span class="sidebar-icon">PR</span>
                         <span>@UiText.T(language, "Nav.Predictions")</span>
                     </a>
+                    <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
+                        <span class="sidebar-icon">MH</span>
+                        <span>@UiText.T(language, "Nav.MatchHistory")</span>
+                    </a>
+                    <a class="sidebar-link @(activeController == "BotPicks" ? "active" : "")" asp-area="" asp-controller="BotPicks" asp-action="Index">
+                        <span class="sidebar-icon">BP</span>
+                        <span>@UiText.T(language, "Nav.BotPicks")</span>
+                    </a>
                 }
                 @if (isAuthenticated)
                 {
@@ -65,6 +73,10 @@
                 }
                 @if (canAdminUsers)
                 {
+                    <a class="sidebar-link @(activeController == "RobotPanel" ? "active" : "")" asp-area="" asp-controller="RobotPanel" asp-action="Index">
+                        <span class="sidebar-icon">RB</span>
+                        <span>@UiText.T(language, "Nav.RobotPanel")</span>
+                    </a>
                     <a class="sidebar-link @(activeController == "UserAdmin" ? "active" : "")" asp-area="" asp-controller="UserAdmin" asp-action="Index">
                         <span class="sidebar-icon">UA</span>
                         <span>@UiText.T(language, "Nav.Users")</span>

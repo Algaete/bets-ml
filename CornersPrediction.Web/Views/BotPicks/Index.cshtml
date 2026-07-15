@@ -1,0 +1,1180 @@
+@model CornersPrediction.Web.Models.BotPicks.BotPicksIndexViewModel
+
+@{
+    var language = UiText.GetLanguage(Context);
+    ViewData["Title"] = UiText.T(language, "BotPicks.Title");
+    var dateFrom = Model.Filters.DateFrom?.ToString("yyyy-MM-dd");
+    var dateTo = Model.Filters.DateTo?.ToString("yyyy-MM-dd");
+    var selectedStatus = Model.Filters.Status ?? string.Empty;
+    var selectedMarketType = Model.Filters.MarketType ?? string.Empty;
+    var canUpdateResults = User.IsInRole("Admin");
+}
+
+<div class="betting-hero mb-4">
+    <div>
+        <div class="text-muted small text-uppercase fw-semibold">@UiText.T(language, "BotPicks.Eyebrow")</div>
+        <h1 class="h3 mb-1">@UiText.T(language, "BotPicks.Title")</h1>
+        <p class="text-muted mb-0">@UiText.T(language, "BotPicks.Description")</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <label class="bot-picks-bankroll-control">
+            <span>Bankroll inicial</span>
+            <input id="BotPicksInitialBankroll" class="form-control form-control-sm" type="number" min="0" step="0.01" value="100" />
+        </label>
+        <button id="RefreshBotPicksButton" class="btn btn-outline-secondary" type="button">Refresh</button>
+    </div>
+</div>
+
+<div id="BotPicksError" class="alert alert-danger d-none" role="alert"></div>
+
+<section class="metric-grid mb-4" aria-label="Bot picks summary">
+    <div class="metric-tile">
+        <div class="metric-label">Total apuestas</div>
+        <div id="BotPicksTotal" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Pendientes</div>
+        <div id="BotPicksPending" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Ganadas</div>
+        <div id="BotPicksWon" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Perdidas</div>
+        <div id="BotPicksLost" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Void</div>
+        <div id="BotPicksVoid" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Profit/Loss</div>
+        <div id="BotPicksProfitLoss" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Yield %</div>
+        <div id="BotPicksYieldPct" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Bankroll actual</div>
+        <div id="BotPicksBankroll" class="metric-value">...</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Bankroll Kelly aprox</div>
+        <div id="BotPicksKellyBankroll" class="metric-value">...</div>
+        <div id="BotPicksKellyUnits" class="metric-footnote">Confianza redondeada</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Bankroll 1/4 Kelly aprox</div>
+        <div id="BotPicksQuarterKellyBankroll" class="metric-value">...</div>
+        <div id="BotPicksQuarterKellyUnits" class="metric-footnote">25% de Kelly aprox</div>
+    </div>
+</section>
+
+<section class="bot-comparison-grid mb-4" aria-label="Bot A/B comparison">
+    <div class="bot-comparison-card bot-comparison-card-a">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Bot A Actual + historico</div>
+                <div id="BotPicksBotATotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-a">Bot A</span>
+        </div>
+        <div id="BotPicksBotARecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotAProfit">P/L ...</span>
+            <span id="BotPicksBotAYield">Yield ...</span>
+        </div>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-b">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Bot B Conservador</div>
+                <div id="BotPicksBotBTotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-b">Bot B</span>
+        </div>
+        <div id="BotPicksBotBRecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotBProfit">P/L ...</span>
+            <span id="BotPicksBotBYield">Yield ...</span>
+        </div>
+    </div>
+</section>
+
+<form id="BotPicksFilters" class="surface-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h6 mb-1">Filtros</h2>
+            <div class="text-muted small">Fecha, liga, estado, mercado y busqueda local. La version del bot se cambia con las pestanas de abajo.</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-outline-secondary" asp-controller="BotPicks" asp-action="Index">Clear</a>
+            <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
+        </div>
+    </div>
+
+    <div class="row g-3 align-items-end">
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="DateFrom">Date from</label>
+            <input id="DateFrom" name="DateFrom" class="form-control" type="date" value="@dateFrom" />
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="DateTo">Date to</label>
+            <input id="DateTo" name="DateTo" class="form-control" type="date" value="@dateTo" />
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="Status">Status</label>
+            <select id="Status" name="Status" class="form-select">
+                <option value="">All</option>
+                @foreach (var status in new[] { "Pending", "Won", "Lost", "Void" })
+                {
+                    if (selectedStatus.Equals(status, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="@status" selected>@status</option>
+                    }
+                    else
+                    {
+                        <option value="@status">@status</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="MarketType">Market</label>
+            <select id="MarketType" name="MarketType" class="form-select">
+                <option value="">All</option>
+                @foreach (var marketType in new[] { "TotalCorners", "HomeTeamCorners", "AwayTeamCorners" })
+                {
+                    if (selectedMarketType.Equals(marketType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="@marketType" selected>@marketType</option>
+                    }
+                    else
+                    {
+                        <option value="@marketType">@marketType</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="League">League</label>
+            <input id="League" name="League" class="form-control" value="@Model.Filters.League" placeholder="All leagues" autocomplete="off" />
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="SearchText">Search</label>
+            <input id="SearchText" class="form-control" type="search" placeholder="Equipo o liga" autocomplete="off" />
+        </div>
+    </div>
+</form>
+
+<section class="bot-picks-tabs mb-4" aria-label="Bot pick views">
+    <button class="bot-picks-tab is-active" type="button" data-bot-tab="">
+        <span class="bot-picks-tab-label">Todos</span>
+        <span id="BotPicksTabAllCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-a" type="button" data-bot-tab="A">
+        <span class="bot-picks-tab-label">Bot A Actual</span>
+        <span id="BotPicksTabACount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-b" type="button" data-bot-tab="B">
+        <span class="bot-picks-tab-label">Bot B Conservador</span>
+        <span id="BotPicksTabBCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-legacy" type="button" data-bot-tab="Legacy">
+        <span class="bot-picks-tab-label">Legacy</span>
+        <span id="BotPicksTabLegacyCount" class="bot-picks-tab-count">...</span>
+    </button>
+</section>
+
+<section class="surface-panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 id="BotPicksTableTitle" class="h6 mb-1">Tabla principal</h2>
+            <div id="BotPicksVisibleCount" class="text-muted small">Loading...</div>
+        </div>
+        <span id="BotPicksSortState" class="badge text-bg-light">Fecha asc</span>
+    </div>
+
+    <div id="BotPicksLoading" class="py-5 text-center">
+        <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+        <div class="text-muted small mt-2">Loading bot picks...</div>
+    </div>
+
+    <div id="BotPicksEmpty" class="alert alert-light border d-none mb-0">
+        No hay recomendaciones para estos filtros.
+    </div>
+
+    <div id="BotPicksTableWrap" class="table-responsive d-none">
+        <table class="table table-sm align-middle mb-0 bot-picks-table">
+            <thead>
+                <tr>
+                    <th><button type="button" class="table-sort-button" data-sort="matchDate">Fecha</button></th>
+                    <th>Liga</th>
+                    <th>Partido</th>
+                    <th>Bot</th>
+                    <th>Mercado</th>
+                    <th>Pick</th>
+                    <th class="text-end">Cuota</th>
+                    <th class="text-end">Stake plan</th>
+                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="probabilityEdge">Edge</button></th>
+                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="expectedValue">EV</button></th>
+                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="selectionScore">Score</button></th>
+                    <th>Estado</th>
+                    <th class="text-end">P/L</th>
+                    <th class="text-end">Yield</th>
+                    <th>Resultado</th>
+                    <th class="text-end">Detalle</th>
+                </tr>
+            </thead>
+            <tbody id="BotPicksTableBody"></tbody>
+        </table>
+    </div>
+</section>
+
+<div class="modal fade" id="BotPickDetailModal" tabindex="-1" aria-labelledby="BotPickDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title h5" id="BotPickDetailModalLabel">Detalle recomendacion</h2>
+                    <div id="BotPickDetailSubtitle" class="text-muted small"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="BotPickDetailBody" class="modal-body"></div>
+            <div class="modal-footer">
+                <a id="BotPickSourceLink" class="btn btn-outline-secondary d-none" href="#" target="_blank" rel="noopener noreferrer">Source</a>
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+		        (() => {
+		            const endpointUrl = '@Url.Action("Selections", "BotPicks")';
+		            const statusEndpointUrl = '@Url.Action("Status", "BotPicks")';
+		            const canUpdateResults = @(canUpdateResults ? "true" : "false");
+		            const locale = '@language' === 'es' ? 'es-CL' : 'en-US';
+	            const filtersForm = document.getElementById('BotPicksFilters');
+	            const initialBankrollInput = document.getElementById('BotPicksInitialBankroll');
+	            const dateFromInput = document.getElementById('DateFrom');
+            const dateToInput = document.getElementById('DateTo');
+            const statusSelect = document.getElementById('Status');
+            const marketTypeSelect = document.getElementById('MarketType');
+            const leagueInput = document.getElementById('League');
+            const searchInput = document.getElementById('SearchText');
+            const refreshButton = document.getElementById('RefreshBotPicksButton');
+            const loadingState = document.getElementById('BotPicksLoading');
+            const emptyState = document.getElementById('BotPicksEmpty');
+            const tableWrap = document.getElementById('BotPicksTableWrap');
+            const tableBody = document.getElementById('BotPicksTableBody');
+            const errorState = document.getElementById('BotPicksError');
+            const visibleCount = document.getElementById('BotPicksVisibleCount');
+            const sortState = document.getElementById('BotPicksSortState');
+            const tableTitle = document.getElementById('BotPicksTableTitle');
+            const botTabButtons = Array.from(document.querySelectorAll('[data-bot-tab]'));
+            const detailModalElement = document.getElementById('BotPickDetailModal');
+            const detailModal = bootstrap.Modal.getOrCreateInstance(detailModalElement);
+            const detailSubtitle = document.getElementById('BotPickDetailSubtitle');
+            const detailBody = document.getElementById('BotPickDetailBody');
+            const sourceLink = document.getElementById('BotPickSourceLink');
+            const selectionsById = new Map();
+
+            let selections = [];
+            let filteredSelections = [];
+	            let sortField = 'matchDate';
+	            let sortDirection = 'asc';
+            let activeBotTab = localStorage.getItem('bot-picks-active-tab') ?? '';
+	            let requestController;
+
+            if (!['', 'A', 'B', 'Legacy'].includes(activeBotTab)) {
+                activeBotTab = '';
+            }
+
+	            const savedInitialBankroll = localStorage.getItem('bot-picks-initial-bankroll');
+	            if (savedInitialBankroll && Number.isFinite(Number(savedInitialBankroll))) {
+	                initialBankrollInput.value = savedInitialBankroll;
+	            }
+
+            const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+            const number = value => {
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : null;
+            };
+            const escapeHtml = value => String(value ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+
+            const parseDecisionReason = raw => {
+                if (!raw || typeof raw !== 'string') {
+                    return null;
+                }
+
+                try {
+                    const parsed = JSON.parse(raw);
+                    return parsed && typeof parsed === 'object' ? parsed : null;
+                } catch {
+                    return null;
+                }
+            };
+
+            const getDecisionReason = item => parseDecisionReason(getValue(item, 'DecisionReason'));
+
+            const getBotInfo = item => {
+                const version = String(getValue(item, 'AutomationVersion') ?? '').trim();
+                const normalizedVersion = version.toUpperCase();
+                if (normalizedVersion.endsWith('-A')) {
+                    return { key: 'A', statsKey: 'A', label: 'Bot A', description: 'Actual', badgeClass: 'bot-badge-a' };
+                }
+
+                if (normalizedVersion.endsWith('-B')) {
+                    return { key: 'B', statsKey: 'B', label: 'Bot B', description: 'Conservador', badgeClass: 'bot-badge-b' };
+                }
+
+                return { key: 'Legacy', statsKey: 'Legacy', label: 'Legacy', description: version || 'Sin version', badgeClass: 'bot-badge-legacy' };
+            };
+
+            const hasNeutralAdjustment = item => getDecisionReason(item)?.isNeutralAdjusted === true;
+
+            const dateFormatter = new Intl.DateTimeFormat(locale, {
+                year: 'numeric',
+                month: 'short',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const dateOnlyFormatter = new Intl.DateTimeFormat(locale, {
+                year: 'numeric',
+                month: 'short',
+                day: '2-digit'
+            });
+            const decimalFormatter = new Intl.NumberFormat(locale, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+            const compactDecimalFormatter = new Intl.NumberFormat(locale, {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 2
+            });
+
+            const formatDate = value => {
+                if (!value) {
+                    return '-';
+                }
+
+                const date = new Date(value);
+                return Number.isNaN(date.getTime()) ? '-' : dateFormatter.format(date);
+            };
+
+            const formatDateOnly = value => {
+                if (!value) {
+                    return '-';
+                }
+
+                const date = new Date(value);
+                return Number.isNaN(date.getTime()) ? '-' : dateOnlyFormatter.format(date);
+            };
+
+            const formatDecimal = (value, fallback = '-') => {
+                const parsed = number(value);
+                return parsed === null ? fallback : decimalFormatter.format(parsed);
+            };
+
+            const formatCompact = value => {
+                const parsed = number(value);
+                return parsed === null ? '-' : compactDecimalFormatter.format(parsed);
+            };
+
+            const formatPercent = value => {
+                const parsed = number(value);
+                if (parsed === null) {
+                    return '-';
+                }
+
+                const percent = Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
+                return `${compactDecimalFormatter.format(percent)}%`;
+            };
+
+            const formatQueryNumber = (value, decimals = 2) => {
+                const parsed = number(value);
+                return parsed === null ? null : parsed.toFixed(decimals);
+            };
+
+	            const signedClass = value => {
+	                const parsed = number(value);
+	                return parsed === null || parsed === 0 ? 'text-muted' : parsed > 0 ? 'text-success' : 'text-danger';
+	            };
+
+	            const statusRowClass = status => {
+	                const normalized = String(status ?? '').toLowerCase();
+	                if (normalized === 'won') return 'bot-pick-row-won';
+	                if (normalized === 'lost') return 'bot-pick-row-lost';
+	                if (normalized === 'void') return 'bot-pick-row-void';
+	                return 'bot-pick-row-pending';
+	            };
+
+	            const confidenceStakeUnits = confidence => {
+	                const normalized = String(confidence ?? '').trim().toLowerCase().replaceAll('_', ' ');
+	                if (normalized === 'very high') return 2;
+	                if (normalized === 'high') return 1.5;
+	                if (normalized === 'low') return 0.5;
+	                return 1;
+	            };
+
+	            const simulatedProfitLoss = (item, stakeUnits) => {
+	                const status = String(getValue(item, 'Status') ?? '').toLowerCase();
+	                const odds = number(getValue(item, 'Odds'));
+	                if (status === 'won' && odds !== null) {
+	                    return stakeUnits * (odds - 1);
+	                }
+
+	                if (status === 'lost') {
+	                    return -stakeUnits;
+	                }
+
+	                return 0;
+	            };
+
+            const statusBadgeClass = status => {
+                const normalized = String(status ?? '').toLowerCase();
+                if (normalized === 'won') return 'text-bg-success';
+                if (normalized === 'lost') return 'text-bg-danger';
+                if (normalized === 'void') return 'text-bg-secondary';
+                if (normalized === 'pending') return 'text-bg-warning';
+                return 'text-bg-light';
+            };
+
+            const sideBadgeClass = side => String(side ?? '').toLowerCase() === 'over'
+                ? 'text-bg-success'
+                : 'text-bg-info';
+
+            const highValueClass = value => {
+                const parsed = number(value);
+                return parsed !== null && parsed >= 0.08 ? 'fw-semibold text-success' : '';
+            };
+
+            const marketLabel = marketType => {
+                const normalized = String(marketType ?? '');
+                if (normalized === 'HomeTeamCorners') return 'Corners local';
+                if (normalized === 'AwayTeamCorners') return 'Corners visita';
+                return 'Corners totales';
+            };
+
+	            const confidenceBadgeClass = confidence => {
+	                const normalized = String(confidence ?? '').toLowerCase();
+	                if (normalized === 'very high' || normalized === 'very_high') return 'text-bg-primary';
+	                if (normalized === 'high') return 'text-bg-success';
+	                if (normalized === 'medium') return 'text-bg-warning';
+	                if (normalized === 'low') return 'text-bg-secondary';
+	                return 'text-bg-light';
+            };
+
+            const getLeague = item => getValue(item, 'StandardizedLeague') || getValue(item, 'League') || '-';
+            const getHomeTeam = item => getValue(item, 'StandardizedHomeTeam') || getValue(item, 'HomeTeam') || '-';
+            const getAwayTeam = item => getValue(item, 'StandardizedAwayTeam') || getValue(item, 'AwayTeam') || '-';
+            const formatRecommendation = item => {
+                const marketType = getValue(item, 'MarketType');
+                const side = getValue(item, 'SelectedSide') ?? '-';
+                const line = formatCompact(getValue(item, 'LineValue'));
+
+                if (marketType === 'HomeTeamCorners') {
+                    return `${getHomeTeam(item)} ${side} ${line} corners`;
+                }
+
+                if (marketType === 'AwayTeamCorners') {
+                    return `${getAwayTeam(item)} ${side} ${line} corners`;
+                }
+
+                return `${side} ${line} corners totales`;
+            };
+
+            const toBettingMarketType = marketType => {
+                const normalized = String(marketType ?? '');
+                if (normalized === 'HomeTeamCorners') return 'HomeCorners';
+                if (normalized === 'AwayTeamCorners') return 'AwayCorners';
+                return 'TotalCorners';
+            };
+
+            const toBettingConfidence = confidence => {
+                const normalized = String(confidence ?? '').trim().toLowerCase().replaceAll('_', ' ');
+                if (normalized === 'very high') return 'VeryHigh';
+                if (normalized === 'high') return 'High';
+                if (normalized === 'low') return 'Low';
+                return 'Medium';
+            };
+
+            const toDateInputValue = value => {
+                if (!value) {
+                    return '';
+                }
+
+                const raw = String(value);
+                if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+                    return raw.slice(0, 10);
+                }
+
+                const date = new Date(raw);
+                return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+            };
+
+            const buildBettingNotes = item => {
+                const botInfo = getBotInfo(item);
+                const parts = [
+                    `${botInfo.label} recommendation: ${formatRecommendation(item)}`,
+                    `AutomationVersion: ${getValue(item, 'AutomationVersion') || 'Legacy'}`,
+                    `SelectionId: ${getValue(item, 'AutomatedCornerBetSelectionId')}`,
+                    `RunId: ${getValue(item, 'RunId') || '-'}`,
+                    `Edge: ${formatPercent(getValue(item, 'ProbabilityEdge'))}`,
+                    `EV: ${formatPercent(getValue(item, 'ExpectedValue'))}`,
+                    `Score: ${formatCompact(getValue(item, 'SelectionScore'))}`
+                ];
+
+                const sourceUrl = getValue(item, 'SourceUrl');
+                if (sourceUrl) {
+                    parts.push(`Source: ${sourceUrl}`);
+                }
+
+                return parts.join('\n');
+            };
+
+            const buildBettingCreateUrl = item => {
+                const matchDate = toDateInputValue(getValue(item, 'MatchDate'));
+                const parameters = new URLSearchParams({
+                    league: getLeague(item),
+                    season: getValue(item, 'Season') || (matchDate ? matchDate.slice(0, 4) : new Date().getFullYear().toString()),
+                    matchDate,
+                    homeTeam: getHomeTeam(item),
+                    awayTeam: getAwayTeam(item),
+                    marketType: toBettingMarketType(getValue(item, 'MarketType')),
+                    betSelection: getValue(item, 'SelectedSide') || 'Over',
+                    bookmaker: getValue(item, 'Source') || '',
+                    kellyStrategy: number(getValue(item, 'KellyFraction')) > 0 ? 'Kelly' : 'None',
+                    confidenceLevel: toBettingConfidence(getValue(item, 'ConfidenceLevel')),
+                    predictionModel: 'AutomatedCornersBot',
+                    notes: buildBettingNotes(item)
+                });
+                const numericParameters = {
+                    line: formatQueryNumber(getValue(item, 'LineValue'), 2),
+                    odds: formatQueryNumber(getValue(item, 'Odds'), 2),
+                    stake: formatQueryNumber(getValue(item, 'Stake'), 2)
+                };
+                Object.entries(numericParameters).forEach(([key, value]) => {
+                    if (value !== null) {
+                        parameters.set(key, value);
+                    }
+                });
+
+                const modelProbability = number(getValue(item, 'ModelProbability'));
+                if (modelProbability !== null) {
+                    parameters.set(
+                        'estimatedProbabilityPercent',
+                        (Math.abs(modelProbability) <= 1 ? modelProbability * 100 : modelProbability).toFixed(2));
+                }
+
+                return `/Betting/Create?${parameters.toString()}`;
+            };
+
+            const buildQuery = () => {
+                const query = new URLSearchParams();
+                if (dateFromInput.value) query.set('dateFrom', dateFromInput.value);
+                if (dateToInput.value) query.set('dateTo', dateToInput.value);
+                if (statusSelect.value) query.set('status', statusSelect.value);
+                if (marketTypeSelect.value) query.set('marketType', marketTypeSelect.value);
+                if (leagueInput.value.trim()) query.set('league', leagueInput.value.trim());
+                const serialized = query.toString();
+                return serialized ? `?${serialized}` : '';
+            };
+
+            const botTabLabel = botKey => {
+                if (botKey === 'A') return 'Bot A Actual';
+                if (botKey === 'B') return 'Bot B Conservador';
+                if (botKey === 'Legacy') return 'Legacy';
+                return 'Todos los bots';
+            };
+
+            const matchesSearch = item => {
+                const search = searchInput.value.trim().toLowerCase();
+                if (!search) {
+                    return true;
+                }
+
+                return [
+                    getLeague(item),
+                    getValue(item, 'League'),
+                    getHomeTeam(item),
+                    getAwayTeam(item),
+                    getValue(item, 'SourceMatchId')
+                ]
+                    .filter(Boolean)
+                    .some(value => String(value).toLowerCase().includes(search));
+            };
+
+            const getSearchFilteredSelections = () => selections.filter(matchesSearch);
+
+            const updateBotTabs = baseItems => {
+                const countByBot = botKey => baseItems.filter(item => getBotInfo(item).key === botKey).length;
+                document.getElementById('BotPicksTabAllCount').textContent = `${baseItems.length}`;
+                document.getElementById('BotPicksTabACount').textContent = `${countByBot('A')}`;
+                document.getElementById('BotPicksTabBCount').textContent = `${countByBot('B')}`;
+                document.getElementById('BotPicksTabLegacyCount').textContent = `${countByBot('Legacy')}`;
+
+                botTabButtons.forEach(button => {
+                    const isActive = button.dataset.botTab === activeBotTab;
+                    button.classList.toggle('is-active', isActive);
+                    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                });
+
+                tableTitle.textContent = activeBotTab
+                    ? `Recomendaciones ${botTabLabel(activeBotTab)}`
+                    : 'Recomendaciones de todos los bots';
+            };
+
+            const setLoading = isLoading => {
+                loadingState.classList.toggle('d-none', !isLoading);
+                tableWrap.classList.toggle('d-none', isLoading || filteredSelections.length === 0);
+                emptyState.classList.toggle('d-none', isLoading || filteredSelections.length > 0);
+                refreshButton.disabled = isLoading;
+            };
+
+            const setError = message => {
+                errorState.textContent = message ?? '';
+                errorState.classList.toggle('d-none', !message);
+            };
+
+		            const summarize = (items, comparisonItems = items) => {
+		                const summarizeBot = botKey => {
+                            const botItems = comparisonItems.filter(item => {
+                                const botInfo = getBotInfo(item);
+                                if (botKey === 'A') {
+                                    return botInfo.key === 'A' || botInfo.key === 'Legacy';
+                                }
+
+                                return botInfo.key === botKey;
+                            });
+		                    const won = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'won').length;
+		                    const lost = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'lost').length;
+		                    const pending = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'pending').length;
+		                    const profitLoss = botItems
+		                        .map(item => number(getValue(item, 'ProfitLoss')))
+		                        .filter(value => value !== null)
+		                        .reduce((sum, value) => sum + value, 0);
+		                    const settledStake = botItems
+		                        .filter(item => ['won', 'lost'].includes(String(getValue(item, 'Status')).toLowerCase()))
+		                        .map(item => number(getValue(item, 'Stake')))
+		                        .filter(value => value !== null)
+		                        .reduce((sum, value) => sum + value, 0);
+
+		                    return {
+		                        total: botItems.length,
+		                        won,
+		                        lost,
+		                        pending,
+		                        profitLoss,
+		                        yieldPct: settledStake > 0 ? (profitLoss / settledStake) * 100 : null
+		                    };
+		                };
+
+		                const total = items.length;
+	                const pending = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'pending').length;
+	                const won = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'won').length;
+	                const lost = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'lost').length;
+	                const voidCount = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'void').length;
+	                const profitRows = items
+	                    .map(item => number(getValue(item, 'ProfitLoss')))
+	                    .filter(value => value !== null);
+	                const profitLoss = profitRows.reduce((sum, value) => sum + value, 0);
+	                const settledStake = items
+	                    .filter(item => ['won', 'lost'].includes(String(getValue(item, 'Status')).toLowerCase()))
+	                    .map(item => number(getValue(item, 'Stake')))
+	                    .filter(value => value !== null)
+	                    .reduce((sum, value) => sum + value, 0);
+	                const yieldPct = settledStake > 0 ? (profitLoss / settledStake) * 100 : null;
+	                const initialBankroll = number(initialBankrollInput.value) ?? 100;
+	                const currentBankroll = initialBankroll + profitLoss;
+	                const settledItems = items.filter(item => ['won', 'lost', 'void'].includes(String(getValue(item, 'Status')).toLowerCase()));
+	                const kellySim = settledItems.reduce((summary, item) => {
+	                    const units = confidenceStakeUnits(getValue(item, 'ConfidenceLevel'));
+	                    return {
+	                        units: summary.units + units,
+	                        profitLoss: summary.profitLoss + simulatedProfitLoss(item, units)
+	                    };
+	                }, { units: 0, profitLoss: 0 });
+	                const quarterKellySim = {
+	                    units: kellySim.units / 4,
+	                    profitLoss: kellySim.profitLoss / 4
+	                };
+
+	                document.getElementById('BotPicksTotal').textContent = total.toString();
+	                document.getElementById('BotPicksPending').textContent = pending.toString();
+	                document.getElementById('BotPicksWon').textContent = won.toString();
+	                document.getElementById('BotPicksLost').textContent = lost.toString();
+	                document.getElementById('BotPicksVoid').textContent = voidCount.toString();
+
+	                const profitElement = document.getElementById('BotPicksProfitLoss');
+	                profitElement.textContent = profitRows.length === 0 ? '-' : formatDecimal(profitLoss);
+	                profitElement.className = `metric-value ${signedClass(profitLoss)}`;
+
+	                const yieldElement = document.getElementById('BotPicksYieldPct');
+	                yieldElement.textContent = yieldPct === null ? '-' : `${compactDecimalFormatter.format(yieldPct)}%`;
+	                yieldElement.className = `metric-value ${signedClass(yieldPct)}`;
+
+	                const bankrollElement = document.getElementById('BotPicksBankroll');
+	                bankrollElement.textContent = formatDecimal(currentBankroll);
+	                bankrollElement.className = `metric-value ${signedClass(currentBankroll - initialBankroll)}`;
+
+	                const kellyBankrollElement = document.getElementById('BotPicksKellyBankroll');
+	                kellyBankrollElement.textContent = formatDecimal(initialBankroll + kellySim.profitLoss);
+	                kellyBankrollElement.className = `metric-value ${signedClass(kellySim.profitLoss)}`;
+	                document.getElementById('BotPicksKellyUnits').textContent = `${formatCompact(kellySim.units)}u en stakes aprox`;
+
+		                const quarterKellyBankrollElement = document.getElementById('BotPicksQuarterKellyBankroll');
+		                quarterKellyBankrollElement.textContent = formatDecimal(initialBankroll + quarterKellySim.profitLoss);
+		                quarterKellyBankrollElement.className = `metric-value ${signedClass(quarterKellySim.profitLoss)}`;
+		                document.getElementById('BotPicksQuarterKellyUnits').textContent = `${formatCompact(quarterKellySim.units)}u en stakes aprox`;
+
+		                const botA = summarizeBot('A');
+		                const botB = summarizeBot('B');
+		                const renderBotSummary = (prefix, summary) => {
+		                    document.getElementById(`${prefix}Total`).textContent = `${summary.total} recomendaciones`;
+		                    document.getElementById(`${prefix}Record`).textContent = `${summary.won} W / ${summary.lost} L / ${summary.pending} P`;
+
+		                    const profitElement = document.getElementById(`${prefix}Profit`);
+		                    profitElement.textContent = `P/L ${formatDecimal(summary.profitLoss)}`;
+		                    profitElement.className = signedClass(summary.profitLoss);
+
+		                    const yieldElement = document.getElementById(`${prefix}Yield`);
+		                    yieldElement.textContent = `Yield ${summary.yieldPct === null ? '-' : `${compactDecimalFormatter.format(summary.yieldPct)}%`}`;
+		                    yieldElement.className = signedClass(summary.yieldPct);
+		                };
+
+		                renderBotSummary('BotPicksBotA', botA);
+		                renderBotSummary('BotPicksBotB', botB);
+		            };
+
+            const sortValue = item => {
+                if (sortField === 'matchDate') {
+                    const date = new Date(getValue(item, 'MatchDate'));
+                    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+                }
+
+                return number(getValue(item, sortField.charAt(0).toUpperCase() + sortField.slice(1))) ?? Number.NEGATIVE_INFINITY;
+            };
+
+            const applyLocalFilters = () => {
+                const baseItems = getSearchFilteredSelections();
+                updateBotTabs(baseItems);
+                filteredSelections = activeBotTab
+                    ? baseItems.filter(item => getBotInfo(item).key === activeBotTab)
+                    : baseItems;
+
+                filteredSelections.sort((left, right) => {
+                    const leftValue = sortValue(left);
+                    const rightValue = sortValue(right);
+                    return sortDirection === 'asc'
+                        ? leftValue - rightValue
+                        : rightValue - leftValue;
+                });
+            };
+
+            const renderRows = () => {
+                selectionsById.clear();
+                tableBody.innerHTML = filteredSelections.map(item => {
+                    const id = getValue(item, 'AutomatedCornerBetSelectionId');
+                    selectionsById.set(String(id), item);
+                    const side = getValue(item, 'SelectedSide') ?? '-';
+                    const line = getValue(item, 'LineValue');
+                    const marketType = getValue(item, 'MarketType') ?? 'TotalCorners';
+	                    const confidence = getValue(item, 'ConfidenceLevel');
+	                    const status = getValue(item, 'Status') ?? '-';
+	                    const profitLoss = getValue(item, 'ProfitLoss');
+	                    const botInfo = getBotInfo(item);
+	                    const neutralBadge = hasNeutralAdjustment(item)
+	                        ? '<span class="badge text-bg-info bot-neutral-badge">Neutral</span>'
+	                        : '';
+	                    const sideBadge = sideBadgeClass(side);
+                    const statusBadge = statusBadgeClass(status);
+	                    const confidenceBadge = confidenceBadgeClass(confidence);
+	                    const edgeClass = highValueClass(getValue(item, 'ProbabilityEdge'));
+	                    const evClass = highValueClass(getValue(item, 'ExpectedValue'));
+	                    const kellyStakeUnits = confidenceStakeUnits(confidence);
+	                    const quarterKellyStakeUnits = kellyStakeUnits / 4;
+
+		                    const yieldPct = getValue(item, 'YieldPct');
+	                    const isWon = String(status).toLowerCase() === 'won';
+	                    const isPending = String(status).toLowerCase() === 'pending';
+	                    const isVoid = String(status).toLowerCase() === 'void';
+
+	                    const resultActions = canUpdateResults
+	                        ? `
+	                                <div class="bot-picks-result-actions">
+	                                    <label class="form-check form-switch bot-picks-win-toggle">
+	                                        <input class="form-check-input" type="checkbox" data-result-toggle="${escapeHtml(id)}" ${isWon ? 'checked' : ''} />
+	                                        <span class="form-check-label">Ganada</span>
+	                                    </label>
+	                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-status-action="Pending" data-selection-id="${escapeHtml(id)}" ${isPending ? 'disabled' : ''}>Reset</button>
+	                                    <button class="btn btn-sm btn-outline-dark" type="button" data-status-action="Void" data-selection-id="${escapeHtml(id)}" ${isVoid ? 'disabled' : ''}>Void</button>
+	                                </div>
+	                            `
+	                        : '<span class="badge text-bg-light">Solo admin</span>';
+
+	                    return `
+	                        <tr class="${statusRowClass(status)}" data-selection-row="${escapeHtml(id)}">
+	                            <td class="text-nowrap">${escapeHtml(formatDate(getValue(item, 'MatchDate')))}</td>
+                            <td>
+                                <div class="fw-semibold">${escapeHtml(getLeague(item))}</div>
+                                <div class="text-muted small">${escapeHtml(getValue(item, 'Source') ?? '')}</div>
+                            </td>
+	                            <td>
+	                                <div class="fw-semibold">${escapeHtml(getHomeTeam(item))}</div>
+	                                <div class="text-muted small">vs ${escapeHtml(getAwayTeam(item))}</div>
+	                            </td>
+	                            <td>
+	                                <span class="bot-badge ${botInfo.badgeClass}">${escapeHtml(botInfo.label)}</span>
+	                                <div class="text-muted small mt-1">${escapeHtml(botInfo.description)}</div>
+	                                <div class="mt-1">${neutralBadge}</div>
+	                            </td>
+	                            <td>
+	                                <div class="fw-semibold">${escapeHtml(marketLabel(marketType))}</div>
+                                <div class="text-muted small">${escapeHtml(getValue(item, 'SourceMarketType') ?? '')}</div>
+                            </td>
+                            <td>
+                                <span class="badge ${sideBadge}">${escapeHtml(side)} ${escapeHtml(formatCompact(line))}</span>
+                                <div class="small mt-1">${escapeHtml(formatRecommendation(item))}</div>
+                                <div class="mt-1"><span class="badge ${confidenceBadge}">${escapeHtml(confidence ?? 'No conf')}</span></div>
+                            </td>
+                            <td class="text-end">${escapeHtml(formatDecimal(getValue(item, 'Odds')))}</td>
+		                            <td class="text-end">
+		                                <div class="fw-semibold">${escapeHtml(formatDecimal(getValue(item, 'Stake')))}</div>
+		                                <div class="text-muted small">Flat ${escapeHtml(formatDecimal(getValue(item, 'FlatStake')))}</div>
+	                                    <div class="text-muted small">Kelly ${escapeHtml(formatCompact(kellyStakeUnits))}u · 1/4 ${escapeHtml(formatCompact(quarterKellyStakeUnits))}u</div>
+	                                    <div class="text-muted small">Kelly frac ${escapeHtml(formatPercent(getValue(item, 'KellyFraction')))}</div>
+		                            </td>
+                            <td class="text-end ${edgeClass}">${escapeHtml(formatPercent(getValue(item, 'ProbabilityEdge')))}</td>
+                            <td class="text-end ${evClass}">${escapeHtml(formatPercent(getValue(item, 'ExpectedValue')))}</td>
+	                            <td class="text-end">${escapeHtml(formatCompact(getValue(item, 'SelectionScore')))}</td>
+	                            <td><span class="badge ${statusBadge}">${escapeHtml(status)}</span></td>
+	                            <td class="text-end ${signedClass(profitLoss)}">${escapeHtml(formatDecimal(profitLoss))}</td>
+	                            <td class="text-end ${signedClass(yieldPct)}">${escapeHtml(formatPercent(yieldPct))}</td>
+	                            <td>
+	                                ${resultActions}
+	                            </td>
+	                            <td class="text-end">
+                                    <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                        <a class="btn btn-sm btn-success" href="${escapeHtml(buildBettingCreateUrl(item))}">Crear apuesta</a>
+	                                    <button class="btn btn-sm btn-outline-primary" type="button" data-detail-id="${escapeHtml(id)}">View</button>
+                                    </div>
+	                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                visibleCount.textContent = `${filteredSelections.length} recomendaciones visibles`;
+                sortState.textContent = `${sortField === 'matchDate' ? 'Fecha' : sortField} ${sortDirection}`;
+                tableWrap.classList.toggle('d-none', filteredSelections.length === 0);
+                emptyState.classList.toggle('d-none', filteredSelections.length > 0);
+            };
+
+            const render = () => {
+                applyLocalFilters();
+                summarize(filteredSelections, getSearchFilteredSelections());
+	                renderRows();
+	            };
+
+	            const replaceSelection = updatedSelection => {
+	                const updatedId = String(getValue(updatedSelection, 'AutomatedCornerBetSelectionId'));
+	                selections = selections.map(item =>
+	                    String(getValue(item, 'AutomatedCornerBetSelectionId')) === updatedId
+	                        ? updatedSelection
+	                        : item);
+	            };
+
+	            const setRowControlsDisabled = (id, isDisabled) => {
+	                const row = tableBody.querySelector(`[data-selection-row="${String(id)}"]`);
+	                row?.querySelectorAll('button, input').forEach(control => {
+	                    control.disabled = isDisabled;
+	                });
+	            };
+
+	            const updateSelectionStatus = async (id, status) => {
+	                if (!canUpdateResults) {
+	                    setError('Solo usuarios Admin pueden cambiar el resultado.');
+	                    render();
+	                    return;
+	                }
+
+	                const previousSelection = selectionsById.get(String(id));
+	                if (!previousSelection) {
+	                    return;
+	                }
+
+	                setError('');
+	                setRowControlsDisabled(id, true);
+
+	                try {
+	                    const payload = {
+	                        status,
+	                        actualHomeCorners: getValue(previousSelection, 'ActualHomeCorners') ?? null,
+	                        actualAwayCorners: getValue(previousSelection, 'ActualAwayCorners') ?? null,
+	                        actualTotalCorners: getValue(previousSelection, 'ActualTotalCorners') ?? null
+	                    };
+	                    const response = await fetch(`${statusEndpointUrl}?id=${encodeURIComponent(id)}`, {
+	                        method: 'PUT',
+	                        headers: {
+	                            'Content-Type': 'application/json'
+	                        },
+	                        body: JSON.stringify(payload)
+	                    });
+
+	                    if (!response.ok) {
+	                        const error = await response.json().catch(() => ({ error: 'No se pudo actualizar el resultado.' }));
+	                        throw new Error(error.error ?? 'No se pudo actualizar el resultado.');
+	                    }
+
+	                    const updatedSelection = await response.json();
+	                    replaceSelection(updatedSelection);
+	                    render();
+	                } catch (error) {
+	                    if (error.name === 'AbortError') {
+	                        return;
+	                    }
+
+	                    render();
+	                    setError(error.message);
+	                }
+	            };
+
+            const loadSelections = async () => {
+                requestController?.abort();
+                requestController = new AbortController();
+                setError('');
+                filteredSelections = [];
+                setLoading(true);
+                visibleCount.textContent = 'Loading...';
+
+                try {
+                    const response = await fetch(`${endpointUrl}${buildQuery()}`, {
+                        signal: requestController.signal
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({ error: 'Bot picks could not be loaded.' }));
+                        throw new Error(error.error ?? 'Bot picks could not be loaded.');
+                    }
+
+                    selections = await response.json();
+                    render();
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    selections = [];
+                    filteredSelections = [];
+                    summarize(filteredSelections);
+                    tableWrap.classList.add('d-none');
+                    emptyState.classList.add('d-none');
+                    visibleCount.textContent = '0 recomendaciones visibles';
+                    setError(error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const renderReason = raw => {
+                if (!raw) {
+                    return '<div class="text-muted">Sin decisionReason.</div>';
+                }
+
+                const parsed = parseDecisionReason(raw);
+                if (parsed) {
+                    return renderJsonValue(parsed);
+                }
+
+                return `<details open><summary>Raw decisionReason</summary><pre class="bot-picks-reason-raw">${escapeHtml(raw)}</pre></details>`;
+            };
+
+            const renderThresholds = thresholds => {
+                const thresholdEntries = [
+                    ['MinEdge', thresholds?.MinEdge ?? thresholds?.minEdge],
+                    ['MinExpectedValue', thresholds?.MinExpectedValue ?? thresholds?.minExpectedValue],
+                    ['MinDistanceToLine', thresholds?.MinDistanceToLine ?? thresholds?.minDistanceToLine],
+                    ['MaxContextDifference', thresholds?.MaxContextDifference ?? thresholds?.maxContextDifference],
+                    ['MinOddsExclusive', thresholds?.MinOddsExclusive ?? thresholds?.minOddsExclusive],
+                    ['StakeMultiplier', thresholds?.StakeMultiplier ?? thresholds?.stakeMultiplier]
+                ];
+
+                return `
+                    <div class="bot-threshold-grid">
+                        ${thresholdEntries.map(([label, value]) => `
+                            <div class="bot-threshold-item">
+                                <div class="small text-muted">${escapeHtml(label)}</div>
+                                <div class="fw-semibold">${escapeHtml(formatCompact(value))}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            };
+
+            const renderJsonValue = value => {
+                if (value === null || value === undefined) {
+                    return '<span class="text-muted">null</span>';
+                }
+
+                if (Array.isArray(value)) {
+                    return `<ol class="mb-0">${value.map(item => `<li>${renderJsonValue(item)}</li>`).join('')}</ol>`;
+                }
+
+                if (typeof value === 'object') {
+                    return `
+                        <div class="bot-picks-reason-grid">
+                            ${Object.entries(value).map(([key, val]) => `
+                                <div class="text-muted small">${escapeHtml(key)}</div>
+                                <div>${renderJsonValue(val)}</div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+
+                return escapeHtml(String(value));
+            };
+
+            const openDetail = id => {
+                const item = selectionsById.get(String(id));
+                if (!item) {
+                    return;
+                }
+
+	                const sourceUrl = getValue(item, 'SourceUrl');
+	                const botInfo = getBotInfo(item);
+	                const decisionReason = getDecisionReason(item);
+	                detailSubtitle.textContent = `${getHomeTeam(item)} vs ${getAwayTeam(item)} · ${getLeague(item)} · ${botInfo.label}`;
+	                sourceLink.classList.toggle('d-none', !sourceUrl);
+	                sourceLink.href = sourceUrl || '#';
+
+                detailBody.innerHTML = `
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="small text-muted">Prediccion total corners</div>
+                            <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'PredictedTotalCorners')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Distancia contra linea</div>
+                            <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'DistanceToLine')))}</div>
+                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Recommended side</div>
+	                            <div class="fw-semibold">${escapeHtml(getValue(item, 'RecommendedSide') ?? '-')}</div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Bot</div>
+	                            <div><span class="bot-badge ${botInfo.badgeClass}">${escapeHtml(botInfo.label)}</span></div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Automation version</div>
+	                            <div class="fw-semibold">${escapeHtml(getValue(item, 'AutomationVersion') ?? 'Legacy')}</div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Neutral adjustment</div>
+	                            <div>${hasNeutralAdjustment(item) ? '<span class="badge text-bg-info">Neutral</span>' : '<span class="text-muted">No</span>'}</div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Direct / Home / Away</div>
+	                            <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'PredTotalDirect')))} / ${escapeHtml(formatCompact(getValue(item, 'PredHomeCorners')))} / ${escapeHtml(formatCompact(getValue(item, 'PredAwayCorners')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Context total</div>
+                            <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'ContextTotalCorners')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Context difference</div>
+                            <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'ContextDifference')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Created</div>
+                            <div class="fw-semibold">${escapeHtml(formatDate(getValue(item, 'CreatedAtUtc')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Updated</div>
+                            <div class="fw-semibold">${escapeHtml(formatDate(getValue(item, 'UpdatedAtUtc')))}</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">Settled</div>
+                            <div class="fw-semibold">${escapeHtml(formatDateOnly(getValue(item, 'SettledAtUtc')))}</div>
+                        </div>
+	                    </div>
+	                    <hr />
+	                    <h3 class="h6">Thresholds usados</h3>
+	                    ${renderThresholds(decisionReason?.thresholds)}
+	                    <hr />
+	                    <h3 class="h6">Decision reason</h3>
+                    ${renderReason(getValue(item, 'DecisionReason'))}
+                `;
+
+                detailModal.show();
+            };
+
+            filtersForm.addEventListener('submit', event => {
+                event.preventDefault();
+                loadSelections();
+            });
+
+		            refreshButton.addEventListener('click', loadSelections);
+		            searchInput.addEventListener('input', render);
+            botTabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    activeBotTab = button.dataset.botTab ?? '';
+                    localStorage.setItem('bot-picks-active-tab', activeBotTab);
+                    render();
+                });
+            });
+		            initialBankrollInput.addEventListener('input', () => {
+	                localStorage.setItem('bot-picks-initial-bankroll', initialBankrollInput.value);
+	                render();
+	            });
+	            tableBody.addEventListener('click', event => {
+	                const statusButton = event.target.closest('button[data-status-action]');
+	                if (statusButton) {
+	                    updateSelectionStatus(statusButton.dataset.selectionId, statusButton.dataset.statusAction);
+	                    return;
+	                }
+
+	                const button = event.target.closest('button[data-detail-id]');
+	                if (button) {
+	                    openDetail(button.dataset.detailId);
+	                }
+	            });
+
+	            tableBody.addEventListener('change', event => {
+	                const checkbox = event.target.closest('input[data-result-toggle]');
+	                if (!checkbox) {
+	                    return;
+	                }
+
+	                updateSelectionStatus(checkbox.dataset.resultToggle, checkbox.checked ? 'Won' : 'Lost');
+	            });
+
+            document.querySelectorAll('[data-sort]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const nextField = button.dataset.sort;
+                    if (sortField === nextField) {
+                        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sortField = nextField;
+                        sortDirection = nextField === 'matchDate' ? 'asc' : 'desc';
+                    }
+
+                    render();
+                });
+            });
+
+            loadSelections();
+        })();
+    </script>
+}

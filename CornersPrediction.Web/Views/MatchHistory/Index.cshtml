@@ -9,6 +9,10 @@
         .OrderBy(team => team.League)
         .ThenBy(team => team.Team)
         .ToArray();
+    var bulkTeamOptions = Model.BulkTeamOptions
+        .OrderBy(team => team.League)
+        .ThenBy(team => team.Team)
+        .ToArray();
     var formationOptions = Model.FormationOptions
         .OrderBy(formation => formation)
         .ToArray();
@@ -21,16 +25,53 @@
         .ToArray();
     var initialHistoryJson = System.Text.Json.JsonSerializer.Serialize(records);
     var hasSelectedLeague = !string.IsNullOrWhiteSpace(Model.Form.League);
+    var hasSelectedBulkLeague = !string.IsNullOrWhiteSpace(Model.BulkForm.League);
     var language = UiText.GetLanguage(Context);
+    var distinctLeaguesCount = records
+        .Select(match => match.League)
+        .Where(league => !string.IsNullOrWhiteSpace(league))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+    var distinctTeamsCount = records
+        .SelectMany(match => new[] { match.HomeTeam, match.AwayTeam })
+        .Where(team => !string.IsNullOrWhiteSpace(team))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+    var averageCorners = records.Length == 0
+        ? 0
+        : records.Average(match => match.TotalCorners);
+    var latestRecordDate = records.Length == 0
+        ? "-"
+        : records.Max(match => match.MatchDate).ToString("yyyy-MM-dd");
 }
 
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+<div class="betting-hero match-history-hero mb-4">
     <div>
+        <div class="text-muted small text-uppercase fw-semibold">Data operations</div>
         <h1 class="h3 mb-1">@UiText.T(language, "MatchHistory.Title")</h1>
         <p class="text-muted mb-0">@UiText.T(language, "MatchHistory.Description")</p>
     </div>
-    <span id="recentMatchesCount" class="badge text-bg-secondary">@records.Length @UiText.T(language, "MatchHistory.RecordCount")</span>
+    <span id="recentMatchesCount" class="badge text-bg-primary match-history-count">@records.Length @UiText.T(language, "MatchHistory.RecordCount")</span>
 </div>
+
+<section class="metric-grid match-history-metrics mb-4" aria-label="Match history summary">
+    <div class="metric-tile compact">
+        <div class="metric-label">Registros visibles</div>
+        <div class="metric-value">@records.Length</div>
+    </div>
+    <div class="metric-tile compact">
+        <div class="metric-label">Ligas</div>
+        <div class="metric-value">@distinctLeaguesCount</div>
+    </div>
+    <div class="metric-tile compact">
+        <div class="metric-label">Equipos</div>
+        <div class="metric-value">@distinctTeamsCount</div>
+    </div>
+    <div class="metric-tile compact">
+        <div class="metric-label">Prom. corners / ultimo</div>
+        <div class="metric-value">@averageCorners.ToString("0.0") · @latestRecordDate</div>
+    </div>
+</section>
 
 @if (TempData["SuccessMessage"] is string successMessage)
 {
@@ -42,11 +83,14 @@
 
 <div class="row g-4">
     <div class="col-12 col-xl-5">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
-                <h2 class="h5 mb-0">@UiText.T(language, "MatchHistory.AddMatch")</h2>
+        <div class="surface-panel match-history-panel">
+            <div class="match-history-panel-header">
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold">Single entry</div>
+                    <h2 class="h5 mb-0">@UiText.T(language, "MatchHistory.AddMatch")</h2>
+                </div>
             </div>
-            <div class="card-body">
+            <div>
                 <form asp-action="Create" method="post">
                     @Html.AntiForgeryToken()
                     <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
@@ -199,20 +243,236 @@
                 </form>
             </div>
         </div>
+
+        <div class="surface-panel match-history-panel mt-4">
+            <div class="match-history-panel-header">
+                <div>
+                    <div class="text-muted small text-uppercase fw-semibold">Bulk loader</div>
+                    <h2 class="h5 mb-0">Bulk JSON import</h2>
+                </div>
+                <span class="badge text-bg-light">JSON</span>
+            </div>
+            <div>
+                <form asp-action="BulkCreate" method="post">
+                    @Html.AntiForgeryToken()
+                    <div asp-validation-summary="ModelOnly" class="alert alert-danger"></div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label asp-for="BulkForm.League" class="form-label"></label>
+                            <select asp-for="BulkForm.League" class="form-select">
+                                <option value="">Select league</option>
+                                @foreach (var league in leagueOptions)
+                                {
+                                    <option value="@league">@league</option>
+                                }
+                            </select>
+                            <span asp-validation-for="BulkForm.League" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="BulkForm.Season" class="form-label"></label>
+                            <input asp-for="BulkForm.Season" class="form-control" />
+                            <span asp-validation-for="BulkForm.Season" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="BulkForm.TeamGender" class="form-label"></label>
+                            <select asp-for="BulkForm.TeamGender" class="form-select">
+                                <option value="M">Masculino</option>
+                                <option value="F">Femenino</option>
+                                <option value="U">Unknown</option>
+                            </select>
+                            <span asp-validation-for="BulkForm.TeamGender" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="BulkForm.FocusTeam" class="form-label"></label>
+                            <select asp-for="BulkForm.FocusTeam" class="form-select" disabled="@(!hasSelectedBulkLeague)">
+                                <option value="">@(hasSelectedBulkLeague ? "Select team" : "Select league first")</option>
+                                @foreach (var team in bulkTeamOptions)
+                                {
+                                    var teamContext = string.Join(" - ", new[] { team.League, team.Season }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                                    <option value="@team.Team">
+                                        @team.Team@(string.IsNullOrWhiteSpace(teamContext) ? "" : $" ({teamContext})")@(team.IsBig3 ? " - Big3" : "")
+                                    </option>
+                                }
+                            </select>
+                            <span asp-validation-for="BulkForm.FocusTeam" class="text-danger"></span>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input asp-for="BulkForm.IsKnockout" class="form-check-input" />
+                                <label asp-for="BulkForm.IsKnockout" class="form-check-label"></label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="bulk-json-builder mb-3">
+                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                    <div>
+                                        <div class="text-muted small text-uppercase fw-semibold">JSON builder</div>
+                                        <h3 class="h6 mb-0">Armar partido sin escribir JSON</h3>
+                                    </div>
+                                    <span id="BulkJsonCount" class="badge text-bg-light">0 partidos</span>
+                                </div>
+
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="BulkBuilder_MatchDate">Fecha</label>
+                                        <input id="BulkBuilder_MatchDate" class="form-control" type="date" />
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="BulkBuilder_HomeTeam">Local</label>
+                                        <input id="BulkBuilder_HomeTeam" class="form-control" list="BulkBuilderTeamOptions" autocomplete="off" />
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="BulkBuilder_AwayTeam">Visita</label>
+                                        <input id="BulkBuilder_AwayTeam" class="form-control" list="BulkBuilderTeamOptions" autocomplete="off" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomeGoals">Goles local</label>
+                                        <input id="BulkBuilder_HomeGoals" class="form-control" type="number" min="0" max="30" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayGoals">Goles visita</label>
+                                        <input id="BulkBuilder_AwayGoals" class="form-control" type="number" min="0" max="30" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomeCorners">Corners local</label>
+                                        <input id="BulkBuilder_HomeCorners" class="form-control" type="number" min="0" max="50" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayCorners">Corners visita</label>
+                                        <input id="BulkBuilder_AwayCorners" class="form-control" type="number" min="0" max="50" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomeShots">Tiros local</label>
+                                        <input id="BulkBuilder_HomeShots" class="form-control" type="number" min="0" max="80" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayShots">Tiros visita</label>
+                                        <input id="BulkBuilder_AwayShots" class="form-control" type="number" min="0" max="80" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomeShotsOnGoal">SOG local</label>
+                                        <input id="BulkBuilder_HomeShotsOnGoal" class="form-control" type="number" min="0" max="80" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayShotsOnGoal">SOG visita</label>
+                                        <input id="BulkBuilder_AwayShotsOnGoal" class="form-control" type="number" min="0" max="80" value="0" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomePossession">Pos. local</label>
+                                        <div class="input-group">
+                                            <input id="BulkBuilder_HomePossession" class="form-control" type="number" min="0" max="100" step="0.01" value="50" />
+                                            <span class="input-group-text">%</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayPossession">Pos. visita</label>
+                                        <div class="input-group">
+                                            <input id="BulkBuilder_AwayPossession" class="form-control" type="number" min="0" max="100" step="0.01" value="50" />
+                                            <span class="input-group-text">%</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_HomeFormation">Form. local</label>
+                                        <input id="BulkBuilder_HomeFormation" class="form-control" list="FormationOptions" placeholder="4-3-3" autocomplete="off" />
+                                    </div>
+                                    <div class="col-md-3 col-6">
+                                        <label class="form-label" for="BulkBuilder_AwayFormation">Form. visita</label>
+                                        <input id="BulkBuilder_AwayFormation" class="form-control" list="FormationOptions" placeholder="4-2-3-1" autocomplete="off" />
+                                    </div>
+                                </div>
+
+                                <datalist id="BulkBuilderTeamOptions">
+                                    @foreach (var team in bulkTeamOptions)
+                                    {
+                                        <option value="@team.Team"></option>
+                                    }
+                                </datalist>
+
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    <button id="BulkJsonAddMatch" type="button" class="btn btn-sm btn-primary">Agregar al JSON</button>
+                                    <button id="BulkJsonUseSingle" type="button" class="btn btn-sm btn-outline-primary">Reemplazar JSON con este partido</button>
+                                    <button id="BulkJsonFormat" type="button" class="btn btn-sm btn-outline-secondary">Formatear / validar</button>
+                                    <button id="BulkJsonClear" type="button" class="btn btn-sm btn-outline-danger">Vaciar JSON</button>
+                                </div>
+                                <div id="BulkJsonBuilderStatus" class="small text-muted mt-2">Listo para armar el primer partido.</div>
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                <label asp-for="BulkForm.MatchesJson" class="form-label mb-0"></label>
+                                <span class="text-muted small">Puedes editarlo manualmente si necesitas.</span>
+                            </div>
+                            <textarea asp-for="BulkForm.MatchesJson"
+                                      class="form-control font-monospace"
+                                      rows="12"
+                                      spellcheck="false"
+                                      placeholder='[{"matchDate":"2026-06-07","homeTeam":"Colombia","awayTeam":"Jordan","homeCorners":3,"awayCorners":1}]'></textarea>
+                            <span asp-validation-for="BulkForm.MatchesJson" class="text-danger"></span>
+                        </div>
+                    </div>
+
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-outline-primary">Import matches JSON</button>
+                    </div>
+                </form>
+
+                @if (Model.BulkResult is not null)
+                {
+                    <div class="border-top mt-4 pt-4">
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge text-bg-primary">@Model.BulkResult.InsertedCount inserted</span>
+                            <span class="badge text-bg-warning">@Model.BulkResult.DuplicateCount duplicates</span>
+                            <span class="badge text-bg-danger">@Model.BulkResult.ErrorCount errors</span>
+                        </div>
+                        <div class="table-responsive" style="max-height: 320px;">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Date</th>
+                                        <th>Match</th>
+                                        <th>Status</th>
+                                        <th>Message</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in Model.BulkResult.Rows)
+                                    {
+                                        var badgeClass = row.Status.Equals("Inserted", StringComparison.OrdinalIgnoreCase)
+                                            ? "text-bg-success"
+                                            : row.Status.Equals("Duplicate", StringComparison.OrdinalIgnoreCase)
+                                                ? "text-bg-warning"
+                                                : "text-bg-danger";
+                                        <tr>
+                                            <td>@row.RowNumber</td>
+                                            <td class="text-nowrap">@row.MatchDate?.ToString("yyyy-MM-dd")</td>
+                                            <td>@row.HomeTeam vs @row.AwayTeam</td>
+                                            <td><span class="badge @badgeClass">@row.Status</span></td>
+                                            <td class="small">@row.Message</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
     </div>
 
     <div class="col-12 col-xl-7">
-        <div class="card shadow-sm">
-            <div class="card-header bg-white">
+        <div class="surface-panel match-history-panel match-history-records-panel">
+            <div class="match-history-panel-header">
                 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                     <div>
+                        <div class="text-muted small text-uppercase fw-semibold">Recent dataset</div>
                         <h2 class="h5 mb-1">@UiText.T(language, "MatchHistory.SavedRecords")</h2>
                         <div class="text-muted small">Last records entered manually in the system.</div>
                     </div>
                     <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Clear</a>
                 </div>
             </div>
-            <div class="card-body border-bottom">
+            <div class="match-history-filter-bar">
                 <form method="get" class="row g-3 align-items-end">
                     <div class="col-md-5">
                         <label class="form-label" for="FilterLeague">League</label>
@@ -244,12 +504,13 @@
                     </div>
                 </form>
             </div>
-            <div class="card-body p-0">
-                <div id="recordsEmpty" class="p-4 text-muted @(records.Length == 0 ? "" : "d-none")">
-                    No match records found for the selected filters.
+            <div class="match-history-table-shell">
+                <div id="recordsEmpty" class="empty-state @(records.Length == 0 ? "" : "d-none")">
+                    <div class="fw-semibold">No match records found</div>
+                    <div class="text-muted small">Try changing the filters or importing a JSON batch.</div>
                 </div>
-                <div id="recordsTableWrap" class="table-responsive @(records.Length == 0 ? "d-none" : "")" style="max-height: 640px;">
-                    <table class="table table-sm align-middle mb-0 table-sticky-head">
+                <div id="recordsTableWrap" class="table-responsive @(records.Length == 0 ? "d-none" : "")">
+                    <table class="table table-sm align-middle mb-0 table-sticky-head match-history-table">
                         <thead>
                             <tr>
                                 <th>Date</th>
@@ -405,6 +666,18 @@
             const leagueInput = document.getElementById('Form_League');
             const homeTeamSelect = document.getElementById('Form_HomeTeam');
             const awayTeamSelect = document.getElementById('Form_AwayTeam');
+            const bulkLeagueInput = document.getElementById('BulkForm_League');
+            const bulkTeamSelect = document.getElementById('BulkForm_FocusTeam');
+            const bulkTeamGenderSelect = document.getElementById('BulkForm_TeamGender');
+            const bulkMatchesJson = document.getElementById('BulkForm_MatchesJson');
+            const bulkImportForm = bulkMatchesJson?.closest('form');
+            const bulkBuilderTeamOptions = document.getElementById('BulkBuilderTeamOptions');
+            const bulkJsonCount = document.getElementById('BulkJsonCount');
+            const bulkJsonBuilderStatus = document.getElementById('BulkJsonBuilderStatus');
+            const bulkJsonAddMatch = document.getElementById('BulkJsonAddMatch');
+            const bulkJsonUseSingle = document.getElementById('BulkJsonUseSingle');
+            const bulkJsonFormat = document.getElementById('BulkJsonFormat');
+            const bulkJsonClear = document.getElementById('BulkJsonClear');
             const formHomePossession = document.getElementById('Form_HomePossession');
             const formAwayPossession = document.getElementById('Form_AwayPossession');
             const recordsBody = document.getElementById('recordsBody');
@@ -434,8 +707,27 @@
                 HomePossession: document.getElementById('Edit_HomePossession'),
                 AwayPossession: document.getElementById('Edit_AwayPossession')
             };
+            const bulkBuilderFields = {
+                MatchDate: document.getElementById('BulkBuilder_MatchDate'),
+                HomeTeam: document.getElementById('BulkBuilder_HomeTeam'),
+                AwayTeam: document.getElementById('BulkBuilder_AwayTeam'),
+                HomeFormation: document.getElementById('BulkBuilder_HomeFormation'),
+                AwayFormation: document.getElementById('BulkBuilder_AwayFormation'),
+                HomeGoals: document.getElementById('BulkBuilder_HomeGoals'),
+                AwayGoals: document.getElementById('BulkBuilder_AwayGoals'),
+                HomeCorners: document.getElementById('BulkBuilder_HomeCorners'),
+                AwayCorners: document.getElementById('BulkBuilder_AwayCorners'),
+                HomeShots: document.getElementById('BulkBuilder_HomeShots'),
+                AwayShots: document.getElementById('BulkBuilder_AwayShots'),
+                HomeShotsOnGoal: document.getElementById('BulkBuilder_HomeShotsOnGoal'),
+                AwayShotsOnGoal: document.getElementById('BulkBuilder_AwayShotsOnGoal'),
+                HomePossession: document.getElementById('BulkBuilder_HomePossession'),
+                AwayPossession: document.getElementById('BulkBuilder_AwayPossession')
+            };
             let debounceHandle;
             let requestController;
+            let bulkDebounceHandle;
+            let bulkRequestController;
 
             const getTeamName = team => team.team ?? team.Team ?? '';
             const getLeagueName = team => team.league ?? team.League ?? '';
@@ -456,6 +748,7 @@
             };
 
             const clampPossession = value => Math.min(100, Math.max(0, Number(value)));
+            const todayInputValue = () => new Date().toISOString().slice(0, 10);
 
             const syncPossessionPair = (source, target) => {
                 if (source.value === '') {
@@ -522,6 +815,148 @@
 
             wirePossessionPair(formHomePossession, formAwayPossession);
             wirePossessionPair(editFields.HomePossession, editFields.AwayPossession);
+            wirePossessionPair(bulkBuilderFields.HomePossession, bulkBuilderFields.AwayPossession);
+
+            const setBulkBuilderStatus = (message, type = 'muted') => {
+                bulkJsonBuilderStatus.textContent = message;
+                bulkJsonBuilderStatus.className = `small mt-2 text-${type}`;
+            };
+
+            const readBulkJson = () => {
+                const raw = bulkMatchesJson.value.trim();
+                if (!raw) {
+                    return [];
+                }
+
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    throw new Error('El JSON debe ser un array de partidos.');
+                }
+
+                return parsed;
+            };
+
+            const writeBulkJson = matches => {
+                bulkMatchesJson.value = JSON.stringify(matches, null, 2);
+                updateBulkJsonCount();
+            };
+
+            const updateBulkJsonCount = () => {
+                try {
+                    const matches = readBulkJson();
+                    bulkJsonCount.textContent = `${matches.length} partido${matches.length === 1 ? '' : 's'}`;
+                    bulkJsonCount.className = 'badge text-bg-light';
+                    return matches.length;
+                } catch {
+                    bulkJsonCount.textContent = 'JSON invalido';
+                    bulkJsonCount.className = 'badge text-bg-danger';
+                    return null;
+                }
+            };
+
+            const getBuilderNumber = name => {
+                const value = Number(bulkBuilderFields[name].value);
+                return Number.isFinite(value) ? value : 0;
+            };
+
+            const getBuilderText = name => bulkBuilderFields[name].value.trim();
+
+            const buildBulkMatchFromFields = () => {
+                const matchDate = getBuilderText('MatchDate');
+                const homeTeam = getBuilderText('HomeTeam');
+                const awayTeam = getBuilderText('AwayTeam');
+
+                if (!matchDate) {
+                    throw new Error('Ingresa la fecha del partido.');
+                }
+
+                if (!homeTeam || !awayTeam) {
+                    throw new Error('Ingresa local y visita.');
+                }
+
+                if (homeTeam.toLocaleLowerCase() === awayTeam.toLocaleLowerCase()) {
+                    throw new Error('Local y visita deben ser equipos distintos.');
+                }
+
+                return {
+                    matchDate,
+                    homeTeam,
+                    awayTeam,
+                    homeFormation: getBuilderText('HomeFormation') || null,
+                    awayFormation: getBuilderText('AwayFormation') || null,
+                    homeGoals: getBuilderNumber('HomeGoals'),
+                    awayGoals: getBuilderNumber('AwayGoals'),
+                    homeCorners: getBuilderNumber('HomeCorners'),
+                    awayCorners: getBuilderNumber('AwayCorners'),
+                    homeShots: getBuilderNumber('HomeShots'),
+                    awayShots: getBuilderNumber('AwayShots'),
+                    homeShotsOnGoal: getBuilderNumber('HomeShotsOnGoal'),
+                    awayShotsOnGoal: getBuilderNumber('AwayShotsOnGoal'),
+                    homePossession: getBuilderNumber('HomePossession'),
+                    awayPossession: getBuilderNumber('AwayPossession')
+                };
+            };
+
+            const ensureBulkFocusTeam = match => {
+                if (bulkTeamSelect.value) {
+                    return;
+                }
+
+                const preferredTeam = match.homeTeam || match.awayTeam;
+                if (!preferredTeam) {
+                    return;
+                }
+
+                if (![...bulkTeamSelect.options].some(option => option.value === preferredTeam)) {
+                    bulkTeamSelect.appendChild(new Option(preferredTeam, preferredTeam));
+                }
+
+                bulkTeamSelect.disabled = false;
+                bulkTeamSelect.value = preferredTeam;
+            };
+
+            const addBulkBuilderMatch = replaceExisting => {
+                try {
+                    const match = buildBulkMatchFromFields();
+                    const matches = replaceExisting ? [] : readBulkJson();
+                    matches.push(match);
+                    writeBulkJson(matches);
+                    ensureBulkFocusTeam(match);
+                    setBulkBuilderStatus(replaceExisting ? 'JSON reemplazado con este partido.' : 'Partido agregado al JSON.', 'success');
+                } catch (error) {
+                    setBulkBuilderStatus(error.message, 'danger');
+                }
+            };
+
+            const formatBulkJson = () => {
+                try {
+                    const matches = readBulkJson();
+                    writeBulkJson(matches);
+                    setBulkBuilderStatus(`JSON valido: ${matches.length} partido${matches.length === 1 ? '' : 's'}.`, 'success');
+                } catch (error) {
+                    setBulkBuilderStatus(error.message, 'danger');
+                }
+            };
+
+            const clearBulkJson = () => {
+                bulkMatchesJson.value = '';
+                updateBulkJsonCount();
+                setBulkBuilderStatus('JSON vaciado.', 'muted');
+            };
+
+            const setBulkTeamDatalist = teams => {
+                if (!bulkBuilderTeamOptions) {
+                    return;
+                }
+
+                bulkBuilderTeamOptions.replaceChildren();
+                for (const team of teams) {
+                    const name = getTeamName(team);
+                    if (name) {
+                        bulkBuilderTeamOptions.appendChild(new Option('', name));
+                    }
+                }
+            };
 
             const openEditModal = id => {
                 const match = historyItemsById.get(String(id));
@@ -694,13 +1129,79 @@
                 }
             };
 
+            const loadBulkTeams = async () => {
+                const league = bulkLeagueInput.value.trim();
+                const teamGender = bulkTeamGenderSelect.value.trim();
+                if (!league) {
+                    setOptions(bulkTeamSelect, 'Select league first', []);
+                    setBulkTeamDatalist([]);
+                    bulkTeamSelect.disabled = true;
+                    return;
+                }
+
+                bulkRequestController?.abort();
+                bulkRequestController = new AbortController();
+                setOptions(bulkTeamSelect, 'Loading teams...', []);
+                bulkTeamSelect.disabled = true;
+
+                try {
+                    const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league)}&teamGender=${encodeURIComponent(teamGender)}`, {
+                        signal: bulkRequestController.signal
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Team options request failed with ${response.status}`);
+                    }
+
+                    const teams = await response.json();
+                    setOptions(bulkTeamSelect, 'Select team', teams);
+                    setBulkTeamDatalist(teams);
+                    bulkTeamSelect.disabled = false;
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        return;
+                    }
+
+                    setOptions(bulkTeamSelect, 'Teams unavailable', []);
+                    setBulkTeamDatalist([]);
+                    bulkTeamSelect.disabled = true;
+                }
+            };
+
             const scheduleLoadTeams = () => {
                 window.clearTimeout(debounceHandle);
                 debounceHandle = window.setTimeout(loadTeams, 300);
             };
 
+            const scheduleLoadBulkTeams = () => {
+                window.clearTimeout(bulkDebounceHandle);
+                bulkDebounceHandle = window.setTimeout(loadBulkTeams, 300);
+            };
+
             leagueInput.addEventListener('input', scheduleLoadTeams);
             leagueInput.addEventListener('change', loadTeams);
+            bulkLeagueInput.addEventListener('input', scheduleLoadBulkTeams);
+            bulkLeagueInput.addEventListener('change', loadBulkTeams);
+            bulkTeamGenderSelect.addEventListener('change', loadBulkTeams);
+            bulkMatchesJson?.addEventListener('input', updateBulkJsonCount);
+            bulkJsonAddMatch?.addEventListener('click', () => addBulkBuilderMatch(false));
+            bulkJsonUseSingle?.addEventListener('click', () => addBulkBuilderMatch(true));
+            bulkJsonFormat?.addEventListener('click', formatBulkJson);
+            bulkJsonClear?.addEventListener('click', clearBulkJson);
+            bulkImportForm?.addEventListener('submit', event => {
+                try {
+                    const matches = readBulkJson();
+                    if (matches.length === 0) {
+                        throw new Error('Agrega al menos un partido al JSON antes de importar.');
+                    }
+
+                    writeBulkJson(matches);
+                } catch (error) {
+                    event.preventDefault();
+                    setBulkBuilderStatus(error.message, 'danger');
+                    bulkMatchesJson.focus();
+                }
+            });
             recordsBody?.addEventListener('click', handleHistoryAction);
             editMatchForm.addEventListener('submit', async event => {
                 event.preventDefault();
@@ -725,6 +1226,11 @@
                     historyItemsById.set(String(getValue(match, 'Id')), match);
                 }
             }
+
+            if (!bulkBuilderFields.MatchDate.value) {
+                bulkBuilderFields.MatchDate.value = todayInputValue();
+            }
+            updateBulkJsonCount();
         })();
     </script>
 }

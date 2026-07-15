@@ -372,7 +372,14 @@ public sealed class SqlServerBettingRepository : IBettingRepository
                             'AwayCorners',
                             'FirstHalfCorners',
                             'TotalShots',
+                            'HomeShots',
+                            'AwayShots',
                             'TotalShotsOnGoal',
+                            'HomeShotsOnGoal',
+                            'AwayShotsOnGoal',
+                            'TotalGoals',
+                            'HomeGoals',
+                            'AwayGoals',
                             'Other'
                         )
                     );
@@ -396,8 +403,28 @@ public sealed class SqlServerBettingRepository : IBettingRepository
                             'Manual',
                             'TotalCornersModel',
                             'OverUnderLineModel',
-                            'ShotsOnGoalModel'
+                            'ShotsOnGoalModel',
+                            'GoalsModel',
+                            'AutomatedCornersBot'
                         )
+                    );
+
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM sys.check_constraints
+                    WHERE name = 'CK_BettingRecords_ConfidenceLevel'
+                      AND parent_object_id = OBJECT_ID('dbo.BettingRecords')
+                )
+                BEGIN
+                    ALTER TABLE dbo.BettingRecords DROP CONSTRAINT CK_BettingRecords_ConfidenceLevel;
+                END;
+
+                ALTER TABLE dbo.BettingRecords
+                    ADD CONSTRAINT CK_BettingRecords_ConfidenceLevel CHECK
+                    (
+                        ConfidenceLevel IS NULL
+                        OR ConfidenceLevel IN ('Low', 'Medium', 'High', 'VeryHigh')
                     );
                 """,
                 cancellationToken: cancellationToken);

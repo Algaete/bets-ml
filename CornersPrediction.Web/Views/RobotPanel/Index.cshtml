@@ -1,0 +1,446 @@
+@using System.Text.Json
+@model CornersPrediction.Web.Models.RobotPanel.RobotPanelIndexViewModel
+
+@{
+    var language = UiText.GetLanguage(Context);
+    ViewData["Title"] = UiText.T(language, "RobotPanel.Title");
+    var dayOptionsJson = JsonSerializer.Serialize(Model.DayOptions);
+    var labelsJson = JsonSerializer.Serialize(new
+    {
+        ready = language == UiText.Spanish ? "Listo para ejecutar." : "Ready to run.",
+        running = language == UiText.Spanish ? "Ejecutando" : "Running",
+        success = language == UiText.Spanish ? "Exitoso" : "Successful",
+        partial = language == UiText.Spanish ? "Parcial" : "Partial",
+        failed = language == UiText.Spanish ? "Error" : "Failed",
+        skipped = language == UiText.Spanish ? "Omitido" : "Skipped",
+        summaryWaiting = language == UiText.Spanish ? "Aun no hay ejecuciones. Usa cualquier boton para iniciar el robot." : "No executions yet. Use any button to start the robot.",
+        jsonWaiting = language == UiText.Spanish ? "Esperando ejecucion..." : "Waiting for execution...",
+        actionMatchHistory = "MatchHistory",
+        actionWorldCup = "World Cup",
+        actionUpcoming = language == UiText.Spanish ? "Proximos partidos" : "Upcoming matches",
+        actionPinnacle = "Pinnacle",
+        actionBetano = "Betano",
+        actionBots = language == UiText.Spanish ? "Bot A + Bot B" : "Bot A + Bot B",
+        actionFull = language == UiText.Spanish ? "Flujo completo" : "Full pipeline"
+    });
+}
+
+<div class="betting-hero mb-4">
+    <div>
+        <div class="text-muted small text-uppercase fw-semibold">@UiText.T(language, "RobotPanel.Eyebrow")</div>
+        <h1 class="h3 mb-1">@UiText.T(language, "RobotPanel.Title")</h1>
+        <p class="text-muted mb-0">@UiText.T(language, "RobotPanel.Description")</p>
+    </div>
+    <div class="robot-panel-badge">
+        <span>API</span>
+        <span>UNIFICADA</span>
+    </div>
+</div>
+
+<section class="surface-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+            <h2 class="h6 mb-1">Parametros</h2>
+            <div class="text-muted small">El flujo completo usa el rango elegido para MatchHistory y 7 dias para Upcoming Matches.</div>
+        </div>
+        <div class="robot-panel-controls">
+            <label class="robot-panel-select">
+                <span>@UiText.T(language, "RobotPanel.DaysLabel")</span>
+                <select id="RobotPanelDays" class="form-select form-select-sm">
+                    @foreach (var dayOption in Model.DayOptions)
+                    {
+                        if (dayOption == Model.SelectedDays)
+                        {
+                            <option value="@dayOption" selected>@dayOption</option>
+                        }
+                        else
+                        {
+                            <option value="@dayOption">@dayOption</option>
+                        }
+                    }
+                </select>
+            </label>
+            <label class="robot-panel-select">
+                <span>Upcoming</span>
+                <select id="RobotPanelUpcomingDays" class="form-select form-select-sm">
+                    <option value="7" selected>7</option>
+                </select>
+            </label>
+            <label class="form-check robot-panel-checkbox mb-0">
+                <input id="RobotPanelExcludeExisting" class="form-check-input" type="checkbox" checked>
+                <span class="form-check-label">Omitir selecciones existentes</span>
+            </label>
+        </div>
+    </div>
+
+    <div class="robot-panel-actions">
+        <button type="button" class="btn btn-outline-primary" data-action="match-history">1. MatchHistory</button>
+        <button type="button" class="btn btn-outline-primary" data-action="world-cup-match-history">2. MatchHistory World Cup</button>
+        <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">3. Upcoming matches</button>
+        <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">4. Pinnacle odds</button>
+        <button type="button" class="btn btn-outline-primary" data-action="betano-odds">5. Betano odds</button>
+        <button type="button" class="btn btn-outline-secondary" data-action="run-bots">6. Bot A + Bot B</button>
+        <button type="button" class="btn btn-primary" data-action="full-run">Ejecutar flujo completo</button>
+    </div>
+</section>
+
+<div id="RobotPanelStatus" class="alert alert-light border mb-4" role="status">
+    @UiText.T(language, "RobotPanel.ReadyStatus")
+</div>
+
+<section class="robot-panel-step-grid mb-4" id="RobotPanelStepGrid" aria-label="Robot execution states"></section>
+
+<section class="surface-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h6 mb-1">@UiText.T(language, "RobotPanel.ResultsTitle")</h2>
+            <div class="text-muted small">Insertados, actualizados, omitidos, errores y recomendaciones generadas.</div>
+        </div>
+        <span id="RobotPanelSummaryBadge" class="badge text-bg-light">Sin ejecucion</span>
+    </div>
+
+    <div id="RobotPanelEmpty" class="alert alert-light border mb-0">
+        @UiText.T(language, "RobotPanel.EmptyState")
+    </div>
+
+    <div id="RobotPanelSummaryWrap" class="table-responsive d-none">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Paso</th>
+                    <th>Estado</th>
+                    <th class="text-end">Procesados</th>
+                    <th class="text-end">Insertados</th>
+                    <th class="text-end">Actualizados</th>
+                    <th class="text-end">Upserted</th>
+                    <th class="text-end">Omitidos</th>
+                    <th class="text-end">Errores</th>
+                    <th class="text-end">Recomendaciones</th>
+                </tr>
+            </thead>
+            <tbody id="RobotPanelSummaryBody"></tbody>
+        </table>
+    </div>
+</section>
+
+<section id="RobotPanelMissingHistory" class="surface-panel mb-4 d-none">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h6 mb-1">Partidos sin historial suficiente</h2>
+            <div class="text-muted small">Usa este JSON para identificar los equipos cuyos partidos historicos necesitas cargar.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span id="RobotPanelMissingHistoryCount" class="badge text-bg-warning">0 partidos</span>
+            <button id="RobotPanelDownloadMissingHistory" type="button" class="btn btn-sm btn-outline-primary">Descargar JSON</button>
+        </div>
+    </div>
+    <pre id="RobotPanelMissingHistoryJson" class="robot-panel-json"></pre>
+</section>
+
+<section class="surface-panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h2 class="h6 mb-1">@UiText.T(language, "RobotPanel.JsonTitle")</h2>
+            <div class="text-muted small">Payload normalizado para revisar detalles de cada corrida.</div>
+        </div>
+    </div>
+    <pre id="RobotPanelJson" class="robot-panel-json">@UiText.T(language, "RobotPanel.JsonWaiting")</pre>
+</section>
+
+@section Scripts {
+    <script>
+        (() => {
+            const urls = {
+                matchHistory: '@Url.Action("RunMatchHistory", "RobotPanel")',
+                worldCupMatchHistory: '@Url.Action("RunWorldCupMatchHistory", "RobotPanel")',
+                upcomingMatches: '@Url.Action("RunUpcomingMatches", "RobotPanel")',
+                pinnacleOdds: '@Url.Action("RunPinnacleOdds", "RobotPanel")',
+                betanoOdds: '@Url.Action("RunBetanoOdds", "RobotPanel")',
+                runBots: '@Url.Action("RunBots", "RobotPanel")',
+                fullRun: '@Url.Action("RunFullPipeline", "RobotPanel")'
+            };
+
+            const dayOptions = @Html.Raw(dayOptionsJson);
+            const labels = @Html.Raw(labelsJson);
+            const stepDefinitions = [
+                { key: 'match-history', title: 'MatchHistory', subtitle: 'Rango de fechas reciente' },
+                { key: 'world-cup-match-history', title: 'World Cup', subtitle: 'Liga fifa.world / Copa del Mundo' },
+                { key: 'upcoming-matches', title: 'Upcoming', subtitle: 'Sincroniza proximos 7 dias' },
+                { key: 'pinnacle-odds', title: 'Pinnacle', subtitle: 'Busqueda de cuotas con persistencia' },
+                { key: 'betano-odds', title: 'Betano', subtitle: 'Busqueda de cuotas con timeout extendido' },
+                { key: 'run-bots', title: 'Bot A + Bot B', subtitle: 'Generacion de recomendaciones' }
+            ];
+
+            const state = {
+                activeAction: null,
+                latestPayload: null,
+                latestSteps: []
+            };
+
+            const statusElement = document.getElementById('RobotPanelStatus');
+            const stepGrid = document.getElementById('RobotPanelStepGrid');
+            const summaryWrap = document.getElementById('RobotPanelSummaryWrap');
+            const summaryBody = document.getElementById('RobotPanelSummaryBody');
+            const emptyState = document.getElementById('RobotPanelEmpty');
+            const summaryBadge = document.getElementById('RobotPanelSummaryBadge');
+            const jsonElement = document.getElementById('RobotPanelJson');
+            const missingHistorySection = document.getElementById('RobotPanelMissingHistory');
+            const missingHistoryCount = document.getElementById('RobotPanelMissingHistoryCount');
+            const missingHistoryJson = document.getElementById('RobotPanelMissingHistoryJson');
+            const downloadMissingHistoryButton = document.getElementById('RobotPanelDownloadMissingHistory');
+            const daysSelect = document.getElementById('RobotPanelDays');
+            const upcomingDaysSelect = document.getElementById('RobotPanelUpcomingDays');
+            const excludeExistingCheckbox = document.getElementById('RobotPanelExcludeExisting');
+            const buttons = Array.from(document.querySelectorAll('[data-action]'));
+
+            const getValue = (item, name) => item?.[name.charAt(0).toLowerCase() + name.slice(1)] ?? item?.[name];
+            const numberOrDash = value => Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '-';
+            const escapeHtml = value => String(value ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+
+            const getMissingHistoryMatches = steps => steps
+                .flatMap(step => getValue(step, 'MissingHistoryMatches') || []);
+
+            const buildMissingHistoryReport = matches => ({
+                generatedAtUtc: new Date().toISOString(),
+                totalMatches: matches.length,
+                matches: matches.map(match => ({
+                    league: getValue(match, 'League'),
+                    homeTeam: getValue(match, 'HomeTeam'),
+                    awayTeam: getValue(match, 'AwayTeam'),
+                    matchDate: getValue(match, 'MatchDate'),
+                    reason: getValue(match, 'Reason')
+                }))
+            });
+
+            const renderMissingHistory = steps => {
+                const matches = getMissingHistoryMatches(steps);
+                const report = buildMissingHistoryReport(matches);
+                missingHistorySection.classList.toggle('d-none', matches.length === 0);
+                missingHistoryCount.textContent = `${matches.length} ${matches.length === 1 ? 'partido' : 'partidos'}`;
+                missingHistoryJson.textContent = JSON.stringify(report, null, 2);
+                downloadMissingHistoryButton.disabled = matches.length === 0;
+            };
+
+            const stepsByKey = () => {
+                const map = new Map();
+                for (const item of state.latestSteps) {
+                    map.set(getValue(item, 'StepKey'), item);
+                }
+                return map;
+            };
+
+            const statusClass = status => {
+                switch (status) {
+                    case 'Success': return 'text-bg-success';
+                    case 'PartialSuccess': return 'text-bg-warning';
+                    case 'Skipped': return 'text-bg-secondary';
+                    case 'Failed': return 'text-bg-danger';
+                    default: return 'text-bg-light';
+                }
+            };
+
+            const statusText = status => {
+                switch (status) {
+                    case 'Success': return labels.success;
+                    case 'PartialSuccess': return labels.partial;
+                    case 'Skipped': return labels.skipped;
+                    case 'Failed': return labels.failed;
+                    default: return labels.ready;
+                }
+            };
+
+            const setBusyState = actionKey => {
+                state.activeAction = actionKey;
+                buttons.forEach(button => {
+                    button.disabled = Boolean(actionKey);
+                });
+                if (actionKey) {
+                    statusElement.className = 'alert alert-info mb-4';
+                    statusElement.textContent = `${labels.running} ${actionKey}...`;
+                }
+                renderCards();
+            };
+
+            const renderCards = () => {
+                const map = stepsByKey();
+                stepGrid.innerHTML = stepDefinitions.map(step => {
+                    const result = map.get(step.key);
+                    const isRunning = state.activeAction === step.key || (state.activeAction === 'full-run' && step.key !== 'run-bots' && !result);
+                    const status = isRunning ? labels.running : statusText(getValue(result, 'Status'));
+                    const badgeClass = isRunning ? 'text-bg-primary' : statusClass(getValue(result, 'Status'));
+                    const message = getValue(result, 'ErrorMessage') || getValue(result, 'Message') || (isRunning ? 'Proceso en curso...' : 'Sin ejecutar todavia.');
+
+                    return `
+                        <article class="robot-step-card">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <div class="robot-step-title">${escapeHtml(step.title)}</div>
+                                    <div class="robot-step-subtitle">${escapeHtml(step.subtitle)}</div>
+                                </div>
+                                <span class="badge ${badgeClass}">${escapeHtml(status)}</span>
+                            </div>
+                            <div class="robot-step-metrics">
+                                <span>Proc: ${numberOrDash(getValue(result, 'Processed'))}</span>
+                                <span>Ins: ${numberOrDash(getValue(result, 'Inserted'))}</span>
+                                <span>Upd: ${numberOrDash(getValue(result, 'Updated'))}</span>
+                                <span>Err: ${numberOrDash(getValue(result, 'Errors'))}</span>
+                            </div>
+                            <div class="robot-step-message">${escapeHtml(message)}</div>
+                        </article>
+                    `;
+                }).join('');
+            };
+
+            const renderSummary = payload => {
+                const steps = Array.isArray(getValue(payload, 'Steps'))
+                    ? getValue(payload, 'Steps')
+                    : [payload];
+
+                state.latestSteps = steps;
+                state.latestPayload = payload;
+
+                if (!steps.length) {
+                    emptyState.classList.remove('d-none');
+                    summaryWrap.classList.add('d-none');
+                    summaryBadge.textContent = 'Sin ejecucion';
+                    jsonElement.textContent = labels.jsonWaiting;
+                    renderCards();
+                    return;
+                }
+
+                emptyState.classList.add('d-none');
+                summaryWrap.classList.remove('d-none');
+                summaryBadge.textContent = getValue(payload, 'Status') || getValue(steps[0], 'Status') || 'Ready';
+
+                summaryBody.innerHTML = steps.map(step => `
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">${escapeHtml(getValue(step, 'StepName') || getValue(step, 'StepKey'))}</div>
+                            <div class="text-muted small">${escapeHtml(getValue(step, 'Message') || getValue(step, 'ErrorMessage') || '')}</div>
+                        </td>
+                        <td><span class="badge ${statusClass(getValue(step, 'Status'))}">${escapeHtml(statusText(getValue(step, 'Status')))}</span></td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Processed'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Inserted'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Updated'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Upserted'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Skipped'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'Errors'))}</td>
+                        <td class="text-end">${numberOrDash(getValue(step, 'RecommendationsGenerated'))}</td>
+                    </tr>
+                `).join('');
+
+                jsonElement.textContent = JSON.stringify(payload, null, 2);
+                renderMissingHistory(steps);
+                renderCards();
+            };
+
+            const showError = message => {
+                statusElement.className = 'alert alert-danger mb-4';
+                statusElement.textContent = message;
+            };
+
+            const showSuccess = payload => {
+                const status = getValue(payload, 'Status') || (getValue(payload, 'IsSuccess') ? 'Success' : 'Failed');
+                const message = getValue(payload, 'PipelineName')
+                    ? `${getValue(payload, 'PipelineName')}: ${status}`
+                    : `${getValue(payload, 'StepName') || 'Step'}: ${status}`;
+
+                statusElement.className = status === 'Failed'
+                    ? 'alert alert-danger mb-4'
+                    : status === 'PartialSuccess'
+                        ? 'alert alert-warning mb-4'
+                        : 'alert alert-success mb-4';
+                statusElement.textContent = message;
+            };
+
+            const requestPayload = actionKey => {
+                const days = Number(daysSelect.value || 7);
+                const upcomingDays = Number(upcomingDaysSelect.value || 7);
+                const excludeExistingSelections = Boolean(excludeExistingCheckbox?.checked);
+
+                switch (actionKey) {
+                    case 'match-history':
+                    case 'world-cup-match-history':
+                    case 'upcoming-matches':
+                        return { days };
+                    case 'run-bots':
+                        return { excludeExistingSelections };
+                    case 'full-run':
+                        return { matchHistoryDays: days, upcomingDays, excludeExistingSelections };
+                    default:
+                        return null;
+                }
+            };
+
+            const endpointFor = actionKey => {
+                switch (actionKey) {
+                    case 'match-history': return urls.matchHistory;
+                    case 'world-cup-match-history': return urls.worldCupMatchHistory;
+                    case 'upcoming-matches': return urls.upcomingMatches;
+                    case 'pinnacle-odds': return urls.pinnacleOdds;
+                    case 'betano-odds': return urls.betanoOdds;
+                    case 'run-bots': return urls.runBots;
+                    case 'full-run': return urls.fullRun;
+                    default: return null;
+                }
+            };
+
+            const invokeAction = async actionKey => {
+                const endpoint = endpointFor(actionKey);
+                if (!endpoint) {
+                    return;
+                }
+
+                setBusyState(actionKey);
+
+                try {
+                    const payload = requestPayload(actionKey);
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: payload ? JSON.stringify(payload) : null
+                    });
+
+                    const json = await response.json();
+                    if (!response.ok) {
+                        throw new Error(getValue(json, 'error') || 'No se pudo ejecutar la accion.');
+                    }
+
+                    showSuccess(json);
+                    renderSummary(json);
+                } catch (error) {
+                    showError(error instanceof Error ? error.message : 'Ocurrio un error inesperado.');
+                } finally {
+                    setBusyState(null);
+                }
+            };
+
+            buttons.forEach(button => {
+                button.addEventListener('click', () => {
+                    invokeAction(button.dataset.action);
+                });
+            });
+
+            downloadMissingHistoryButton.addEventListener('click', () => {
+                const report = buildMissingHistoryReport(getMissingHistoryMatches(state.latestSteps));
+                const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `partidos-sin-historial-${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            });
+
+            renderCards();
+            jsonElement.textContent = labels.jsonWaiting;
+        })();
+    </script>
+}

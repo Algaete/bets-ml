@@ -95,6 +95,16 @@ public sealed class PredictTotalCornersRequest
     public int? HomeHasFormation { get; init; }
     public int? AwayHasFormation { get; init; }
 
+    public int? HomeRankingPosition { get; init; }
+
+    public int? AwayRankingPosition { get; init; }
+
+    public int? RankingTotalTeams { get; init; }
+
+    public string? RankingSource { get; init; }
+
+    public string? RankingSeason { get; init; }
+
     /// <summary>
     /// Keeps unknown future features instead of dropping them during JSON binding.
     /// </summary>
@@ -106,8 +116,36 @@ public sealed class PredictTotalCornersRequest
     /// </summary>
     public JsonElement ToJsonElement()
     {
-        return JsonSerializer.SerializeToElement(this, JsonOptions);
+        var serialized = JsonSerializer.SerializeToElement(this, JsonOptions);
+        using var document = JsonDocument.Parse(serialized.GetRawText());
+        var filtered = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (RankingFeatureNames.Contains(property.Name))
+            {
+                continue;
+            }
+
+            filtered[property.Name] = property.Value.Clone();
+        }
+
+        return JsonSerializer.SerializeToElement(filtered, JsonOptions);
     }
+
+    private static readonly HashSet<string> RankingFeatureNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(HomeRankingPosition),
+        nameof(AwayRankingPosition),
+        nameof(RankingTotalTeams),
+        nameof(RankingSource),
+        nameof(RankingSeason),
+        "PosicionRankingLocal",
+        "PosicionRankingVisita",
+        "TotalEquiposRanking",
+        "FuenteRanking",
+        "TemporadaRanking"
+    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

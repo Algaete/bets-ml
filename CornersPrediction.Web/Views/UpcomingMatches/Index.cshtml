@@ -133,8 +133,10 @@
                         @foreach (var match in leagueMatches)
                         {
                             var searchText = $"{match.Liga} {match.Genero} {match.EquipoLocal} {match.EquipoVisita}";
-                            <article class="upcoming-match-card"
+                            <article id="upcoming-match-@match.PartidoID"
+                                     class="upcoming-match-card"
                                      data-league-accent="@leagueAccent"
+                                     data-match-id="@match.PartidoID"
                                      data-gender="@match.TeamGenderForPrediction"
                                      data-league="@match.Liga"
                                      data-search="@searchText">
@@ -163,7 +165,6 @@
                                 </div>
 
                                 <div class="upcoming-card-footer">
-                                    <span class="text-muted small">ID @match.PartidoID</span>
                                     <a class="btn btn-sm btn-primary"
                                        asp-controller="Predictions"
                                        asp-action="Index"

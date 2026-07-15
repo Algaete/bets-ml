@@ -9,6 +9,10 @@ public interface IMatchHistoryRepository
 {
     Task<MatchHistoryItem> AddAsync(MatchHistoryItem item, CancellationToken cancellationToken);
 
+    Task<MatchHistoryBulkImportResult> BulkImportAsync(
+        MatchHistoryBulkImportRequest request,
+        CancellationToken cancellationToken);
+
     Task<int> UpdateAsync(int id, MatchHistoryItem item, CancellationToken cancellationToken);
 
     Task<int> DeleteAsync(int id, CancellationToken cancellationToken);

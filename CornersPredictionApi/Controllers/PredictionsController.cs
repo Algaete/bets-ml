@@ -1,7 +1,9 @@
 using CornersPrediction.Application.Predictions;
+using CornersPrediction.Infrastructure.Options;
 using CornersPredictionApi.Requests;
 using CornersPrediction.Domain.Predictions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace CornersPredictionApi.Controllers;
 
@@ -16,6 +18,7 @@ public sealed class PredictionsController : ControllerBase
     private readonly IOverUnderPredictionUseCase _overUnderPredictionUseCase;
     private readonly IShotsOnGoalPredictionUseCase _shotsOnGoalPredictionUseCase;
     private readonly IModelDebugPredictionUseCase _modelDebugPredictionUseCase;
+    private readonly PredictionAdjustmentOptions _predictionAdjustmentOptions;
     private readonly ILogger<PredictionsController> _logger;
 
     public PredictionsController(
@@ -23,12 +26,14 @@ public sealed class PredictionsController : ControllerBase
         IOverUnderPredictionUseCase overUnderPredictionUseCase,
         IShotsOnGoalPredictionUseCase shotsOnGoalPredictionUseCase,
         IModelDebugPredictionUseCase modelDebugPredictionUseCase,
+        IOptions<PredictionAdjustmentOptions> predictionAdjustmentOptions,
         ILogger<PredictionsController> logger)
     {
         _predictTotalCornersUseCase = predictTotalCornersUseCase;
         _overUnderPredictionUseCase = overUnderPredictionUseCase;
         _shotsOnGoalPredictionUseCase = shotsOnGoalPredictionUseCase;
         _modelDebugPredictionUseCase = modelDebugPredictionUseCase;
+        _predictionAdjustmentOptions = predictionAdjustmentOptions.Value;
         _logger = logger;
     }
 
@@ -54,7 +59,8 @@ public sealed class PredictionsController : ControllerBase
             // Convert the typed request back to JSON so the Application layer stays model-agnostic.
             var features = request.ToJsonElement();
             var result = await _predictTotalCornersUseCase.PredictAsync(features, cancellationToken);
-            return Ok(result);
+            var adjustedResult = ApplyRankingAdjustment(result, request);
+            return Ok(adjustedResult);
         }
         catch (ArgumentException exception)
         {
@@ -79,6 +85,179 @@ public sealed class PredictionsController : ControllerBase
                 statusCode: statusCode,
                 title: "Prediction failed");
         }
+    }
+
+    private PredictionResult ApplyRankingAdjustment(PredictionResult baseResult, PredictTotalCornersRequest request)
+    {
+        var baseHomeCorners = baseResult.PredHomeCorners ?? baseResult.LegacyHomeCorners;
+        var baseAwayCorners = baseResult.PredAwayCorners ?? baseResult.LegacyAwayCorners;
+        var baseTotalCorners = baseResult.PredFinal ?? baseResult.PredictedTotalCorners;
+
+        if (!_predictionAdjustmentOptions.EnableRankingAdjustment)
+        {
+            return BuildRankingAdjustedResult(
+                baseResult,
+                baseHomeCorners,
+                baseAwayCorners,
+                baseTotalCorners,
+                baseHomeCorners,
+                baseAwayCorners,
+                baseTotalCorners,
+                new RankingAdjustmentResult
+                {
+                    Enabled = false,
+                    Applied = false,
+                    Reason = "Ranking adjustment disabled by configuration"
+                });
+        }
+
+        var validationError = ValidateRankingRequest(request);
+        if (validationError is not null || baseHomeCorners is null || baseAwayCorners is null)
+        {
+            return BuildRankingAdjustedResult(
+                baseResult,
+                baseHomeCorners,
+                baseAwayCorners,
+                baseTotalCorners,
+                baseHomeCorners,
+                baseAwayCorners,
+                baseTotalCorners,
+                new RankingAdjustmentResult
+                {
+                    Enabled = true,
+                    Applied = false,
+                    Reason = validationError ?? "Base home/away ML prediction not available"
+                });
+        }
+
+        var totalTeams = request.RankingTotalTeams!.Value;
+        var homeStrength = 1 - ((request.HomeRankingPosition!.Value - 1d) / (totalTeams - 1d));
+        var awayStrength = 1 - ((request.AwayRankingPosition!.Value - 1d) / (totalTeams - 1d));
+        var strengthDiff = homeStrength - awayStrength;
+        var homeMaxImpact = Math.Abs(_predictionAdjustmentOptions.HomeRankingMaxImpactPct);
+        var awayMaxImpact = Math.Abs(_predictionAdjustmentOptions.AwayRankingMaxImpactPct);
+        var homeAdjustmentPct = Math.Clamp(strengthDiff * homeMaxImpact, -homeMaxImpact, homeMaxImpact);
+        var awayAdjustmentPct = Math.Clamp(-strengthDiff * awayMaxImpact, -awayMaxImpact, awayMaxImpact);
+        var finalHomeCorners = Math.Max(0, baseHomeCorners.Value * (1 + homeAdjustmentPct));
+        var finalAwayCorners = Math.Max(0, baseAwayCorners.Value * (1 + awayAdjustmentPct));
+        var finalTotalCorners = finalHomeCorners + finalAwayCorners;
+
+        return BuildRankingAdjustedResult(
+            baseResult,
+            baseHomeCorners,
+            baseAwayCorners,
+            baseTotalCorners,
+            finalHomeCorners,
+            finalAwayCorners,
+            finalTotalCorners,
+            new RankingAdjustmentResult
+            {
+                Enabled = true,
+                Applied = true,
+                HomeRankingPosition = request.HomeRankingPosition,
+                AwayRankingPosition = request.AwayRankingPosition,
+                RankingTotalTeams = request.RankingTotalTeams,
+                RankingSource = NormalizeOptional(request.RankingSource),
+                RankingSeason = NormalizeOptional(request.RankingSeason),
+                HomeRankingStrength = homeStrength,
+                AwayRankingStrength = awayStrength,
+                RankingStrengthDiff = strengthDiff,
+                HomeAdjustmentPct = homeAdjustmentPct,
+                AwayAdjustmentPct = awayAdjustmentPct
+            });
+    }
+
+    private static PredictionResult BuildRankingAdjustedResult(
+        PredictionResult baseResult,
+        double? baseHomeCorners,
+        double? baseAwayCorners,
+        double baseTotalCorners,
+        double? finalHomeCorners,
+        double? finalAwayCorners,
+        double finalTotalCorners,
+        RankingAdjustmentResult rankingAdjustment)
+    {
+        return new PredictionResult(finalTotalCorners)
+        {
+            PredTotalDirect = baseResult.PredTotalDirect,
+            PredHomeCorners = finalHomeCorners,
+            PredAwayCorners = finalAwayCorners,
+            PredTotalCombined = finalHomeCorners is null || finalAwayCorners is null
+                ? baseResult.PredTotalCombined
+                : finalHomeCorners + finalAwayCorners,
+            PredFinal = finalTotalCorners,
+            PredFinalRounded = Math.Round(finalTotalCorners, 2),
+            ProbableRangeLow = baseResult.ProbableRangeLow,
+            ProbableRangeHigh = baseResult.ProbableRangeHigh,
+            WideRangeLow = baseResult.WideRangeLow,
+            WideRangeHigh = baseResult.WideRangeHigh,
+            BettingLine = baseResult.BettingLine,
+            RecommendedSide = baseResult.RecommendedSide,
+            DistanceToLine = baseResult.BettingLine is null
+                ? baseResult.DistanceToLine
+                : Math.Abs(finalTotalCorners - baseResult.BettingLine.Value),
+            Confidence = baseResult.Confidence,
+            Message = baseResult.Message,
+            LegacyHomeCorners = baseResult.LegacyHomeCorners,
+            LegacyAwayCorners = baseResult.LegacyAwayCorners,
+            LegacyTotalCorners = baseResult.LegacyTotalCorners,
+            ModelDifference = baseResult.ModelDifference,
+            ModelConsensus = baseResult.ModelConsensus,
+            BaseHomeCorners = baseHomeCorners,
+            BaseAwayCorners = baseAwayCorners,
+            BaseTotalCorners = baseTotalCorners,
+            RankingAdjustment = rankingAdjustment,
+            FinalHomeCorners = finalHomeCorners,
+            FinalAwayCorners = finalAwayCorners,
+            FinalTotalCorners = finalTotalCorners
+        };
+    }
+
+    private static string? ValidateRankingRequest(PredictTotalCornersRequest request)
+    {
+        if (request.HomeRankingPosition is null && request.AwayRankingPosition is null)
+        {
+            return "Ranking data not provided or incomplete";
+        }
+
+        if (request.HomeRankingPosition is null ||
+            request.AwayRankingPosition is null ||
+            request.RankingTotalTeams is null)
+        {
+            return "Ranking data not provided or incomplete";
+        }
+
+        if (request.HomeRankingPosition < 1)
+        {
+            return "HomeRankingPosition must be greater than or equal to 1";
+        }
+
+        if (request.AwayRankingPosition < 1)
+        {
+            return "AwayRankingPosition must be greater than or equal to 1";
+        }
+
+        if (request.RankingTotalTeams < 2)
+        {
+            return "RankingTotalTeams must be greater than or equal to 2";
+        }
+
+        if (request.HomeRankingPosition > request.RankingTotalTeams)
+        {
+            return "HomeRankingPosition cannot be greater than RankingTotalTeams";
+        }
+
+        if (request.AwayRankingPosition > request.RankingTotalTeams)
+        {
+            return "AwayRankingPosition cannot be greater than RankingTotalTeams";
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     /// <summary>

@@ -39,200 +39,180 @@ BEGIN
             tm.StandardizedTeam
     );
 
-    SET @HomeStandard = COALESCE(@HomeStandard, @HomeTeam);
-    SET @AwayStandard = COALESCE(@AwayStandard, @AwayTeam);
+    SET @HomeStandard = dbo.fn_CanonicalTeamName(COALESCE(@HomeStandard, @HomeTeam));
+    SET @AwayStandard = dbo.fn_CanonicalTeamName(COALESCE(@AwayStandard, @AwayTeam));
 
-    ;WITH HomeAliases AS
+    ;WITH NormalizedMatches AS
     (
-        SELECT TeamName = @HomeTeam
-        UNION
-        SELECT TeamName = @HomeStandard
-        UNION
-        SELECT tm.SourceTeam
-        FROM dbo.TeamMapping tm
-        WHERE tm.StandardizedTeam = @HomeStandard
-           OR tm.SourceTeam = @HomeTeam
-           OR tm.StandardizedTeam = @HomeTeam
-        UNION
-        SELECT tm.StandardizedTeam
-        FROM dbo.TeamMapping tm
-        WHERE tm.StandardizedTeam = @HomeStandard
-           OR tm.SourceTeam = @HomeTeam
-           OR tm.StandardizedTeam = @HomeTeam
-    ),
-    AwayAliases AS
-    (
-        SELECT TeamName = @AwayTeam
-        UNION
-        SELECT TeamName = @AwayStandard
-        UNION
-        SELECT tm.SourceTeam
-        FROM dbo.TeamMapping tm
-        WHERE tm.StandardizedTeam = @AwayStandard
-           OR tm.SourceTeam = @AwayTeam
-           OR tm.StandardizedTeam = @AwayTeam
-        UNION
-        SELECT tm.StandardizedTeam
-        FROM dbo.TeamMapping tm
-        WHERE tm.StandardizedTeam = @AwayStandard
-           OR tm.SourceTeam = @AwayTeam
-           OR tm.StandardizedTeam = @AwayTeam
+        SELECT
+            mh.Id,
+            League = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedLeague)), ''), mh.League),
+            mh.Season,
+            mh.MatchDate,
+            HomeTeam = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedHomeTeam)), ''), mh.HomeTeam),
+            AwayTeam = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedAwayTeam)), ''), mh.AwayTeam),
+            mh.HomeGoals,
+            mh.AwayGoals,
+            mh.HomeCorners,
+            mh.AwayCorners,
+            mh.HomeShots,
+            mh.AwayShots,
+            mh.HomeShotsOnGoal,
+            mh.AwayShotsOnGoal,
+            mh.HomePossession,
+            mh.AwayPossession,
+            mh.IsKnockout,
+            mh.HomeFormation,
+            mh.AwayFormation,
+            mh.CreatedAtUtc,
+            mh.UpdatedAtUtc
+        FROM dbo.MatchHistory mh
+        WHERE mh.HomeTeamGender = @TeamGender
+          AND mh.AwayTeamGender = @TeamGender
     ),
     CandidateMatches AS
     (
         SELECT
             EquipoCondicion = CAST('HOME' AS NVARCHAR(10)),
             CondicionReal = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN CAST('LOCAL' AS NVARCHAR(10))
+                WHEN nm.HomeTeam = @HomeStandard THEN CAST('LOCAL' AS NVARCHAR(10))
                 ELSE CAST('VISITA' AS NVARCHAR(10))
             END,
-            mh.Id,
-            mh.League,
-            mh.Season,
-            mh.MatchDate,
+            nm.Id,
+            nm.League,
+            nm.Season,
+            nm.MatchDate,
             Equipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeTeam
-                ELSE mh.AwayTeam
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomeTeam
+                ELSE nm.AwayTeam
             END,
             Rival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayTeam
-                ELSE mh.HomeTeam
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayTeam
+                ELSE nm.HomeTeam
             END,
             GolesEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeGoals
-                ELSE mh.AwayGoals
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomeGoals
+                ELSE nm.AwayGoals
             END,
             GolesRival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayGoals
-                ELSE mh.HomeGoals
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayGoals
+                ELSE nm.HomeGoals
             END,
             CornersEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeCorners
-                ELSE mh.AwayCorners
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomeCorners
+                ELSE nm.AwayCorners
             END,
             CornersRival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayCorners
-                ELSE mh.HomeCorners
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayCorners
+                ELSE nm.HomeCorners
             END,
             TirosEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeShots
-                ELSE mh.AwayShots
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomeShots
+                ELSE nm.AwayShots
             END,
             TirosRival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayShots
-                ELSE mh.HomeShots
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayShots
+                ELSE nm.HomeShots
             END,
             TirosPuertaEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeShotsOnGoal
-                ELSE mh.AwayShotsOnGoal
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomeShotsOnGoal
+                ELSE nm.AwayShotsOnGoal
             END,
             TirosPuertaRival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayShotsOnGoal
-                ELSE mh.HomeShotsOnGoal
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayShotsOnGoal
+                ELSE nm.HomeShotsOnGoal
             END,
             PosesionEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomePossession
-                ELSE mh.AwayPossession
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.HomePossession
+                ELSE nm.AwayPossession
             END,
             PosesionRival = CASE
-                WHEN EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayPossession
-                ELSE mh.HomePossession
+                WHEN nm.HomeTeam = @HomeStandard THEN nm.AwayPossession
+                ELSE nm.HomePossession
             END,
-            mh.IsKnockout,
-            mh.HomeFormation,
-            mh.AwayFormation,
-            mh.CreatedAtUtc,
-            mh.UpdatedAtUtc
-        FROM dbo.MatchHistory mh
-        WHERE mh.HomeTeamGender = @TeamGender
-          AND mh.AwayTeamGender = @TeamGender
-          AND
-          (
-              EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.HomeTeam)
-              OR EXISTS (SELECT 1 FROM HomeAliases a WHERE a.TeamName = mh.AwayTeam)
-          )
+            nm.IsKnockout,
+            nm.HomeFormation,
+            nm.AwayFormation,
+            nm.CreatedAtUtc,
+            nm.UpdatedAtUtc
+        FROM NormalizedMatches nm
+        WHERE nm.HomeTeam = @HomeStandard
+           OR nm.AwayTeam = @HomeStandard
 
         UNION ALL
 
         SELECT
             EquipoCondicion = CAST('AWAY' AS NVARCHAR(10)),
             CondicionReal = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN CAST('LOCAL' AS NVARCHAR(10))
+                WHEN nm.HomeTeam = @AwayStandard THEN CAST('LOCAL' AS NVARCHAR(10))
                 ELSE CAST('VISITA' AS NVARCHAR(10))
             END,
-            mh.Id,
-            mh.League,
-            mh.Season,
-            mh.MatchDate,
+            nm.Id,
+            nm.League,
+            nm.Season,
+            nm.MatchDate,
             Equipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeTeam
-                ELSE mh.AwayTeam
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomeTeam
+                ELSE nm.AwayTeam
             END,
             Rival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayTeam
-                ELSE mh.HomeTeam
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayTeam
+                ELSE nm.HomeTeam
             END,
             GolesEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeGoals
-                ELSE mh.AwayGoals
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomeGoals
+                ELSE nm.AwayGoals
             END,
             GolesRival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayGoals
-                ELSE mh.HomeGoals
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayGoals
+                ELSE nm.HomeGoals
             END,
             CornersEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeCorners
-                ELSE mh.AwayCorners
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomeCorners
+                ELSE nm.AwayCorners
             END,
             CornersRival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayCorners
-                ELSE mh.HomeCorners
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayCorners
+                ELSE nm.HomeCorners
             END,
             TirosEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeShots
-                ELSE mh.AwayShots
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomeShots
+                ELSE nm.AwayShots
             END,
             TirosRival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayShots
-                ELSE mh.HomeShots
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayShots
+                ELSE nm.HomeShots
             END,
             TirosPuertaEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomeShotsOnGoal
-                ELSE mh.AwayShotsOnGoal
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomeShotsOnGoal
+                ELSE nm.AwayShotsOnGoal
             END,
             TirosPuertaRival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayShotsOnGoal
-                ELSE mh.HomeShotsOnGoal
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayShotsOnGoal
+                ELSE nm.HomeShotsOnGoal
             END,
             PosesionEquipo = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.HomePossession
-                ELSE mh.AwayPossession
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.HomePossession
+                ELSE nm.AwayPossession
             END,
             PosesionRival = CASE
-                WHEN EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam) THEN mh.AwayPossession
-                ELSE mh.HomePossession
+                WHEN nm.HomeTeam = @AwayStandard THEN nm.AwayPossession
+                ELSE nm.HomePossession
             END,
-            mh.IsKnockout,
-            mh.HomeFormation,
-            mh.AwayFormation,
-            mh.CreatedAtUtc,
-            mh.UpdatedAtUtc
-        FROM dbo.MatchHistory mh
-        WHERE mh.HomeTeamGender = @TeamGender
-          AND mh.AwayTeamGender = @TeamGender
-          AND
-          (
-              EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.HomeTeam)
-              OR EXISTS (SELECT 1 FROM AwayAliases a WHERE a.TeamName = mh.AwayTeam)
-          )
+            nm.IsKnockout,
+            nm.HomeFormation,
+            nm.AwayFormation,
+            nm.CreatedAtUtc,
+            nm.UpdatedAtUtc
+        FROM NormalizedMatches nm
+        WHERE nm.HomeTeam = @AwayStandard
+           OR nm.AwayTeam = @AwayStandard
     ),
     HistoryBuckets AS
     (
         SELECT
             TipoHistorial = CAST('ULTIMOS_10_GENERAL' AS NVARCHAR(30)),
-            RnHistorial = ROW_NUMBER() OVER (
-                PARTITION BY EquipoCondicion
-                ORDER BY MatchDate DESC, Id DESC),
+            RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
         FROM CandidateMatches
 
@@ -240,9 +220,7 @@ BEGIN
 
         SELECT
             TipoHistorial = CAST('ULTIMOS_10_LOCAL' AS NVARCHAR(30)),
-            RnHistorial = ROW_NUMBER() OVER (
-                PARTITION BY EquipoCondicion
-                ORDER BY MatchDate DESC, Id DESC),
+            RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
         FROM CandidateMatches
         WHERE CondicionReal = 'LOCAL'
@@ -251,9 +229,7 @@ BEGIN
 
         SELECT
             TipoHistorial = CAST('ULTIMOS_10_VISITA' AS NVARCHAR(30)),
-            RnHistorial = ROW_NUMBER() OVER (
-                PARTITION BY EquipoCondicion
-                ORDER BY MatchDate DESC, Id DESC),
+            RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
         FROM CandidateMatches
         WHERE CondicionReal = 'VISITA'

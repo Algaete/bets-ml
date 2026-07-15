@@ -41,6 +41,12 @@ public sealed record PredictionComparisonDto(
     double HomeShotsOnGoalAttackVsAwayDefense,
     double AwayShotsOnGoalAttackVsHomeDefense,
     double EnrichedShotsOnGoalPrediction,
+    double HomeExpectedGoals,
+    double AwayExpectedGoals,
+    double TotalExpectedGoals,
+    double HomeGoalsAttackVsAwayDefense,
+    double AwayGoalsAttackVsHomeDefense,
+    double EnrichedGoalsPrediction,
     double? BaseLocalAwayPrediction,
     double? Difference,
     string Recommendation);

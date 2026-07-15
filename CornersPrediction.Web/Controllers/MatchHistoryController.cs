@@ -127,6 +127,7 @@ public sealed class MatchHistoryController : Controller
             return View("Index", new MatchHistoryIndexViewModel
             {
                 Form = form,
+                BulkForm = new BulkMatchHistoryImportViewModel(),
                 Filters = filters,
                 Records = records,
                 LeagueOptions = leagueOptions,
@@ -149,11 +150,79 @@ public sealed class MatchHistoryController : Controller
             return View("Index", new MatchHistoryIndexViewModel
             {
                 Form = form,
+                BulkForm = new BulkMatchHistoryImportViewModel(),
                 Filters = filters,
                 Records = records,
                 LeagueOptions = leagueOptions,
                 FormationOptions = formationOptions,
                 TeamOptions = teamOptions
+            });
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> BulkCreate(
+        [Bind(Prefix = "BulkForm")] BulkMatchHistoryImportViewModel form,
+        CancellationToken cancellationToken)
+    {
+        var filters = new MatchHistoryFiltersViewModel
+        {
+            League = form.League,
+            Team = form.FocusTeam,
+            Take = 50
+        };
+        var records = await LoadManualEntriesAsync(filters, cancellationToken);
+        var leagueOptions = await LoadLeagueOptionsAsync(cancellationToken);
+        var formationOptions = await LoadFormationOptionsAsync(cancellationToken);
+        var bulkTeamOptions = await LoadTeamOptionsAsync(form.League, form.TeamGender, cancellationToken);
+
+        if (!ModelState.IsValid)
+        {
+            return View("Index", new MatchHistoryIndexViewModel
+            {
+                Form = new CreateMatchHistoryViewModel(),
+                BulkForm = form,
+                Filters = filters,
+                Records = records,
+                LeagueOptions = leagueOptions,
+                FormationOptions = formationOptions,
+                BulkTeamOptions = bulkTeamOptions
+            });
+        }
+
+        try
+        {
+            var result = await _matchHistoryApiClient.BulkCreateAsync(form, cancellationToken);
+            TempData["SuccessMessage"] = $"Bulk import processed: {result.InsertedCount} inserted, {result.DuplicateCount} duplicates, {result.ErrorCount} errors.";
+
+            records = await LoadManualEntriesAsync(filters, cancellationToken);
+            return View("Index", new MatchHistoryIndexViewModel
+            {
+                Form = new CreateMatchHistoryViewModel(),
+                BulkForm = form,
+                BulkResult = result,
+                Filters = filters,
+                Records = records,
+                LeagueOptions = leagueOptions,
+                FormationOptions = formationOptions,
+                BulkTeamOptions = bulkTeamOptions
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to bulk import match history items");
+            ModelState.AddModelError("BulkForm.MatchesJson", "The bulk import could not be processed. Check that the API is running and the bulk stored procedure exists.");
+
+            return View("Index", new MatchHistoryIndexViewModel
+            {
+                Form = new CreateMatchHistoryViewModel(),
+                BulkForm = form,
+                Filters = filters,
+                Records = records,
+                LeagueOptions = leagueOptions,
+                FormationOptions = formationOptions,
+                BulkTeamOptions = bulkTeamOptions
             });
         }
     }

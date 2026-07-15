@@ -182,6 +182,28 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
 
         var enrichedShotsOnGoalPrediction = homeShotsOnGoalAttackVsAwayDefense + awayShotsOnGoalAttackVsHomeDefense;
 
+        var homeExpectedGoals =
+            summary.HomeGeneral.AvgGoalsFor * GeneralWeight +
+            summary.HomeAsHome.AvgGoalsFor * ConditionWeight;
+
+        var awayExpectedGoals =
+            summary.AwayGeneral.AvgGoalsFor * GeneralWeight +
+            summary.AwayAsAway.AvgGoalsFor * ConditionWeight;
+
+        var totalExpectedGoals = homeExpectedGoals + awayExpectedGoals;
+
+        var homeGoalsAttackVsAwayDefense = (
+            homeExpectedGoals +
+            summary.AwayGeneral.AvgGoalsAgainst +
+            summary.AwayAsAway.AvgGoalsAgainst) / 3;
+
+        var awayGoalsAttackVsHomeDefense = (
+            awayExpectedGoals +
+            summary.HomeGeneral.AvgGoalsAgainst +
+            summary.HomeAsHome.AvgGoalsAgainst) / 3;
+
+        var enrichedGoalsPrediction = homeGoalsAttackVsAwayDefense + awayGoalsAttackVsHomeDefense;
+
         double? difference = baseLocalAwayPrediction is null
             ? null
             : Math.Abs(enrichedPrediction - baseLocalAwayPrediction.Value);
@@ -213,6 +235,12 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             Round(homeShotsOnGoalAttackVsAwayDefense),
             Round(awayShotsOnGoalAttackVsHomeDefense),
             Round(enrichedShotsOnGoalPrediction),
+            Round(homeExpectedGoals),
+            Round(awayExpectedGoals),
+            Round(totalExpectedGoals),
+            Round(homeGoalsAttackVsAwayDefense),
+            Round(awayGoalsAttackVsHomeDefense),
+            Round(enrichedGoalsPrediction),
             baseLocalAwayPrediction is null ? null : Round(baseLocalAwayPrediction.Value),
             difference is null ? null : Round(difference.Value),
             recommendation);

@@ -161,6 +161,33 @@ public sealed class MatchHistoryApiClient
         return created ?? throw new InvalidOperationException("Backend API returned an empty response.");
     }
 
+    public async Task<BulkMatchHistoryImportResultViewModel> BulkCreateAsync(
+        BulkMatchHistoryImportViewModel form,
+        CancellationToken cancellationToken)
+    {
+        var payload = new
+        {
+            form.League,
+            form.Season,
+            form.FocusTeam,
+            form.TeamGender,
+            form.IsKnockout,
+            form.MatchesJson
+        };
+
+        var response = await _httpClient.PostAsJsonAsync("/api/matches/bulk", payload, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"Backend API rejected the bulk import: {error}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<BulkMatchHistoryImportResultViewModel>(
+            cancellationToken: cancellationToken);
+
+        return result ?? throw new InvalidOperationException("Backend API returned an empty bulk import response.");
+    }
+
     public async Task UpdateAsync(
         UpdateMatchHistoryViewModel form,
         CancellationToken cancellationToken)

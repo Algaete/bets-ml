@@ -4,6 +4,8 @@ using CornersPrediction.Domain.MatchHistory;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace CornersPrediction.Infrastructure.SqlServer;
 
@@ -22,6 +24,8 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
     public async Task<MatchHistoryItem> AddAsync(MatchHistoryItem item, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await NormalizeItemAsync(connection, item, cancellationToken);
         var parameters = new DynamicParameters();
         parameters.Add("League", item.League, DbType.String, size: 100);
         parameters.Add("Season", item.Season, DbType.String, size: 20);
@@ -58,12 +62,55 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
         return item;
     }
 
+    public async Task<MatchHistoryBulkImportResult> BulkImportAsync(
+        MatchHistoryBulkImportRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        request = await NormalizeBulkRequestAsync(connection, request, cancellationToken);
+        var parameters = new DynamicParameters();
+        parameters.Add("League", request.League, DbType.String, size: 200);
+        parameters.Add("Season", request.Season, DbType.String, size: 50);
+        parameters.Add("FocusTeam", request.FocusTeam, DbType.String, size: 150);
+        parameters.Add("TeamGender", request.TeamGender, DbType.String, size: 1);
+        parameters.Add("IsKnockout", request.IsKnockout, DbType.Boolean);
+        parameters.Add("MatchesJson", request.MatchesJson, DbType.String);
+
+        var command = new CommandDefinition(
+            "dbo.sp_BulkInsertMatchHistoryJson",
+            parameters,
+            commandType: CommandType.StoredProcedure,
+            commandTimeout: 300,
+            cancellationToken: cancellationToken);
+
+        var rows = (await connection.QueryAsync<BulkImportRowRecord>(command))
+            .Select(row => new MatchHistoryBulkImportRow(
+                row.RowNumber,
+                row.MatchDate is null ? null : DateOnly.FromDateTime(row.MatchDate.Value),
+                row.HomeTeam,
+                row.AwayTeam,
+                row.Status,
+                row.Message,
+                row.InsertedId))
+            .ToArray();
+
+        return new MatchHistoryBulkImportResult(
+            rows.Length,
+            rows.Count(row => row.Status.Equals("Inserted", StringComparison.OrdinalIgnoreCase)),
+            rows.Count(row => row.Status.Equals("Duplicate", StringComparison.OrdinalIgnoreCase)),
+            rows.Count(row => row.Status.Equals("Error", StringComparison.OrdinalIgnoreCase)),
+            rows);
+    }
+
     public async Task<int> UpdateAsync(
         int id,
         MatchHistoryItem item,
         CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await NormalizeItemAsync(connection, item, cancellationToken);
         var parameters = new DynamicParameters();
         parameters.Add("Id", id, DbType.Int64);
         parameters.Add("League", item.League, DbType.String, size: 100);
@@ -139,6 +186,9 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
 
         var command = new CommandDefinition(
             """
+            DECLARE @CanonicalLeague NVARCHAR(200) = dbo.fn_CanonicalLeagueName(@League);
+            DECLARE @CanonicalTeam NVARCHAR(150) = dbo.fn_CanonicalTeamName(@Team);
+
             SELECT TOP (@Take)
                 mh.Id,
                 CAST(NULL AS NVARCHAR(10)) AS TeamCondition,
@@ -162,13 +212,17 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
                 mh.AwayPossession,
                 mh.CreatedAtUtc
             FROM dbo.MatchHistory mh
-            WHERE (@League IS NULL OR COALESCE(mh.StandardizedLeague, mh.League) = @League)
+            WHERE (
+                    @CanonicalLeague IS NULL
+                    OR mh.StandardizedLeague = @CanonicalLeague
+                    OR (mh.StandardizedLeague IS NULL AND mh.League = @CanonicalLeague)
+                  )
               AND (
-                    @Team IS NULL
-                    OR COALESCE(mh.StandardizedHomeTeam, mh.HomeTeam) = @Team
-                    OR COALESCE(mh.StandardizedAwayTeam, mh.AwayTeam) = @Team
-                    OR COALESCE(mh.StandardizedHomeTeam, mh.HomeTeam) LIKE '%' + @Team + '%'
-                    OR COALESCE(mh.StandardizedAwayTeam, mh.AwayTeam) LIKE '%' + @Team + '%'
+                    @CanonicalTeam IS NULL
+                    OR mh.StandardizedHomeTeam = @CanonicalTeam
+                    OR mh.StandardizedAwayTeam = @CanonicalTeam
+                    OR (mh.StandardizedHomeTeam IS NULL AND mh.HomeTeam = @CanonicalTeam)
+                    OR (mh.StandardizedAwayTeam IS NULL AND mh.AwayTeam = @CanonicalTeam)
                   )
             ORDER BY mh.CreatedAtUtc DESC, mh.MatchDate DESC, mh.Id DESC;
             """,
@@ -258,6 +312,97 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
 
         var rows = await connection.QueryAsync<TeamMatchHistoryRow>(command);
         return rows.Select(ToDomain).ToArray();
+    }
+
+    private static async Task NormalizeItemAsync(
+        SqlConnection connection,
+        MatchHistoryItem item,
+        CancellationToken cancellationToken)
+    {
+        var identity = await NormalizeIdentityAsync(
+            connection,
+            item.League,
+            item.HomeTeam,
+            item.AwayTeam,
+            cancellationToken);
+
+        item.League = identity.League;
+        item.HomeTeam = identity.HomeTeam;
+        item.AwayTeam = identity.AwayTeam;
+    }
+
+    private static async Task<MatchHistoryBulkImportRequest> NormalizeBulkRequestAsync(
+        SqlConnection connection,
+        MatchHistoryBulkImportRequest request,
+        CancellationToken cancellationToken)
+    {
+        var focusIdentity = await NormalizeIdentityAsync(
+            connection,
+            request.League,
+            request.FocusTeam,
+            request.FocusTeam,
+            cancellationToken);
+
+        var root = JsonNode.Parse(request.MatchesJson) as JsonArray
+            ?? throw new ArgumentException("Matches JSON must be an array.");
+
+        foreach (var item in root.OfType<JsonObject>())
+        {
+            var homeTeam = GetJsonString(item, "homeTeam");
+            var awayTeam = GetJsonString(item, "awayTeam");
+            if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
+                continue;
+
+            var identity = await NormalizeIdentityAsync(
+                connection,
+                focusIdentity.League,
+                homeTeam,
+                awayTeam,
+                cancellationToken);
+
+            SetJsonString(item, "homeTeam", identity.HomeTeam);
+            SetJsonString(item, "awayTeam", identity.AwayTeam);
+        }
+
+        return request with
+        {
+            League = focusIdentity.League,
+            FocusTeam = focusIdentity.HomeTeam,
+            MatchesJson = root.ToJsonString(new JsonSerializerOptions { PropertyNamingPolicy = null })
+        };
+    }
+
+    private static async Task<NormalizedIdentity> NormalizeIdentityAsync(
+        SqlConnection connection,
+        string league,
+        string homeTeam,
+        string awayTeam,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+SELECT
+    League = dbo.fn_CanonicalLeagueName(@League),
+    HomeTeam = dbo.fn_CanonicalTeamName(@HomeTeam),
+    AwayTeam = dbo.fn_CanonicalTeamName(@AwayTeam);
+""";
+
+        return await connection.QuerySingleAsync<NormalizedIdentity>(new CommandDefinition(
+            sql,
+            new { League = league, HomeTeam = homeTeam, AwayTeam = awayTeam },
+            commandType: CommandType.Text,
+            cancellationToken: cancellationToken));
+    }
+
+    private static string? GetJsonString(JsonObject item, string propertyName)
+    {
+        var property = item.FirstOrDefault(pair => pair.Key.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
+        return property.Value?.GetValue<string>();
+    }
+
+    private static void SetJsonString(JsonObject item, string propertyName, string value)
+    {
+        var existingProperty = item.FirstOrDefault(pair => pair.Key.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
+        item[existingProperty.Key ?? propertyName] = value;
     }
 
     private static IEnumerable<MatchHistoryItem> FilterByLeague(
@@ -385,6 +530,13 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
         public DateTime CreatedAtUtc { get; init; }
     }
 
+    private sealed class NormalizedIdentity
+    {
+        public string League { get; init; } = string.Empty;
+        public string HomeTeam { get; init; } = string.Empty;
+        public string AwayTeam { get; init; } = string.Empty;
+    }
+
     private sealed class MatchHistoryRecordRow
     {
         public int Id { get; init; }
@@ -408,5 +560,16 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
         public decimal HomePossession { get; init; }
         public decimal AwayPossession { get; init; }
         public DateTime CreatedAtUtc { get; init; }
+    }
+
+    private sealed class BulkImportRowRecord
+    {
+        public int RowNumber { get; init; }
+        public DateTime? MatchDate { get; init; }
+        public string? HomeTeam { get; init; }
+        public string? AwayTeam { get; init; }
+        public string Status { get; init; } = string.Empty;
+        public string Message { get; init; } = string.Empty;
+        public long? InsertedId { get; init; }
     }
 }

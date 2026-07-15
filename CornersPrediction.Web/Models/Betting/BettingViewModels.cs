@@ -173,10 +173,34 @@ public sealed class BankrollTransactionViewModel
 public static class BettingOptions
 {
     public static readonly string[] Statuses = ["Pending", "Won", "Lost", "Void", "Cashout"];
-    public static readonly string[] MarketTypes = ["TotalCorners", "HomeCorners", "AwayCorners", "FirstHalfCorners", "TotalShots", "TotalShotsOnGoal", "Other"];
+    public static readonly string[] MarketTypes =
+    [
+        "TotalCorners",
+        "HomeCorners",
+        "AwayCorners",
+        "FirstHalfCorners",
+        "TotalShots",
+        "HomeShots",
+        "AwayShots",
+        "TotalShotsOnGoal",
+        "HomeShotsOnGoal",
+        "AwayShotsOnGoal",
+        "TotalGoals",
+        "HomeGoals",
+        "AwayGoals",
+        "Other"
+    ];
     public static readonly string[] BetSelections = ["Over", "Under", "Home", "Away", "Other"];
-    public static readonly string[] ConfidenceLevels = ["Low", "Medium", "High"];
-    public static readonly string[] PredictionModels = ["Manual", "TotalCornersModel", "ShotsOnGoalModel"];
+    public static readonly string[] ConfidenceLevels = ["Low", "Medium", "High", "VeryHigh"];
+    public static readonly string[] PredictionModels =
+    [
+        "Manual",
+        "TotalCornersModel",
+        "OverUnderLineModel",
+        "ShotsOnGoalModel",
+        "GoalsModel",
+        "AutomatedCornersBot"
+    ];
     public static readonly string[] BankrollTransactionTypes = ["Deposit", "Withdrawal", "BetSettlement", "ManualAdjustment"];
     public static readonly string[] CurrencyCodes = ["CLP", "USD", "AUD"];
     public static readonly string[] KellyStrategies = ["None", "Kelly", "HalfKelly", "QuarterKelly"];
@@ -188,7 +212,14 @@ public static class BettingOptions
         "AwayCorners" => "Away corners",
         "FirstHalfCorners" => "First half corners",
         "TotalShots" => "Total shots",
+        "HomeShots" => "Home shots",
+        "AwayShots" => "Away shots",
         "TotalShotsOnGoal" => "Total shots on goal (SOG)",
+        "HomeShotsOnGoal" => "Home shots on goal (SOG)",
+        "AwayShotsOnGoal" => "Away shots on goal (SOG)",
+        "TotalGoals" => "Total goals",
+        "HomeGoals" => "Home goals",
+        "AwayGoals" => "Away goals",
         "Other" => "Other",
         _ => marketType
     };

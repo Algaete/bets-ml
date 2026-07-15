@@ -108,6 +108,27 @@ public sealed class PredictionResult
     [JsonPropertyName("modelConsensus")]
     public string? ModelConsensus { get; init; }
 
+    [JsonPropertyName("baseHomeCorners")]
+    public double? BaseHomeCorners { get; init; }
+
+    [JsonPropertyName("baseAwayCorners")]
+    public double? BaseAwayCorners { get; init; }
+
+    [JsonPropertyName("baseTotalCorners")]
+    public double? BaseTotalCorners { get; init; }
+
+    [JsonPropertyName("rankingAdjustment")]
+    public RankingAdjustmentResult? RankingAdjustment { get; init; }
+
+    [JsonPropertyName("finalHomeCorners")]
+    public double? FinalHomeCorners { get; init; }
+
+    [JsonPropertyName("finalAwayCorners")]
+    public double? FinalAwayCorners { get; init; }
+
+    [JsonPropertyName("finalTotalCorners")]
+    public double? FinalTotalCorners { get; init; }
+
     public static PredictionResult Create(
         double predictedTotalCorners,
         double? legacyHomeCorners = null,
@@ -184,4 +205,46 @@ public sealed class PredictionResult
             Message = message
         };
     }
+}
+
+public sealed class RankingAdjustmentResult
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; init; }
+
+    [JsonPropertyName("applied")]
+    public bool Applied { get; init; }
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+
+    [JsonPropertyName("homeRankingPosition")]
+    public int? HomeRankingPosition { get; init; }
+
+    [JsonPropertyName("awayRankingPosition")]
+    public int? AwayRankingPosition { get; init; }
+
+    [JsonPropertyName("rankingTotalTeams")]
+    public int? RankingTotalTeams { get; init; }
+
+    [JsonPropertyName("rankingSource")]
+    public string? RankingSource { get; init; }
+
+    [JsonPropertyName("rankingSeason")]
+    public string? RankingSeason { get; init; }
+
+    [JsonPropertyName("homeRankingStrength")]
+    public double? HomeRankingStrength { get; init; }
+
+    [JsonPropertyName("awayRankingStrength")]
+    public double? AwayRankingStrength { get; init; }
+
+    [JsonPropertyName("rankingStrengthDiff")]
+    public double? RankingStrengthDiff { get; init; }
+
+    [JsonPropertyName("homeAdjustmentPct")]
+    public double? HomeAdjustmentPct { get; init; }
+
+    [JsonPropertyName("awayAdjustmentPct")]
+    public double? AwayAdjustmentPct { get; init; }
 }
