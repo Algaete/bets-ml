@@ -16,6 +16,13 @@
     <a class="btn btn-outline-secondary" asp-controller="Betting" asp-action="Index" asp-route-currencyCode="@Model.CurrencyCode">@T("Common.Back")</a>
 </div>
 
+@if (!string.Equals(Model.KellyStrategy, "None", StringComparison.OrdinalIgnoreCase) && Model.Stake <= 0)
+{
+    <div class="alert alert-warning">
+        No se pudo calcular un stake Kelly positivo. Revisa que la banca tenga saldo y que la probabilidad estimada supere la probabilidad implícita de la cuota.
+    </div>
+}
+
 <form method="post" class="card shadow-sm">
     <div class="card-body">
         <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>

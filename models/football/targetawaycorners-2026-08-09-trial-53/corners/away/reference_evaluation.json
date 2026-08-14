@@ -1,0 +1,53 @@
+{
+  "status": "complete",
+  "run_directory": "/Users/alfonsogaeterodriguez/Desktop/RepoML/artefactos/2026-08-09/corners/resultados/targetawaycorners/targetawaycorners_search",
+  "mode": "search",
+  "target": "TargetAwayCorners",
+  "market": "corners",
+  "dataset_rows": 134941,
+  "dataset_sha256": "a9e8310f81818121e4b28c0469302cfbe778ccd5cf9436b5369cefc995d65d58",
+  "split": {
+    "train_years": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "validation_year": 2025,
+    "test_year": 2026,
+    "test_status": "evaluated_after_freeze"
+  },
+  "best_trial": 53,
+  "best_cv_score": 1.9765858502700422,
+  "trials_goal": 60,
+  "trials_attempted": 62,
+  "trial_counts": {
+    "COMPLETE": 39,
+    "PRUNED": 23,
+    "FAIL": 0,
+    "RUNNING": 0,
+    "WAITING": 0
+  },
+  "family": "CatBoost",
+  "feature_set": "all",
+  "feature_count": 60,
+  "temporal_decay": 0.3,
+  "validation_metrics": {
+    "mae": 1.9633662253305146,
+    "rmse": 2.535980061380881,
+    "r2": 0.06533969783095095,
+    "median_ae": 1.6325985468930968,
+    "mean_poisson_deviance": 1.5361908421964867
+  },
+  "test_metrics": {
+    "mae": 1.9562113304584245,
+    "rmse": 2.500861805508499,
+    "r2": 0.07534655366952814,
+    "median_ae": 1.666866431181031,
+    "mean_poisson_deviance": 1.514034865308507
+  },
+  "elapsed_seconds": 1538.66
+}

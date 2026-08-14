@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using CornersPrediction.Application.Automation.BotC;
 
 namespace AutomatedCornersBot.Api;
 
@@ -15,9 +16,14 @@ public sealed class AutomatedBotOptions
     public double MaxContextDifference { get; set; } = 1.75;
     public bool AllowModelDisagreement { get; set; }
     public bool EnableBotVariants { get; set; } = true;
+    public bool EnableNewGenerationBot { get; set; } = true;
+    public string NewGenerationBotSuffix { get; set; } = "C2026";
     public double ConservativeMinOdds { get; set; } = 1.60;
     public double ConservativeProbabilityLift { get; set; } = 0.10;
     public double ConservativeStakeMultiplier { get; set; } = 0.50;
+    public int MinimumLeadTimeMinutes { get; set; } = 10;
+    public bool EnableOverUnderPrediction { get; set; }
+    public int ProgressLogEveryMatches { get; set; } = 10;
 
     public string ResolveSqlConnectionString()
     {
@@ -31,7 +37,7 @@ public sealed class AutomatedBotOptions
 public sealed class PredictionApiOptions
 {
     public string BaseUrl { get; set; } = "http://localhost:5070";
-    public string? InternalApiKey { get; set; } = "una-key-local-larga";
+    public string? InternalApiKey { get; set; }
 }
 
 public sealed record RunAutomatedCornersRequest(
@@ -45,16 +51,34 @@ public sealed record RunAutomatedCornersRequest(
     bool DryRun = false,
     bool? AllowModelDisagreement = null,
     string? League = null,
-    bool ExcludeExistingSelections = true);
+    bool ExcludeExistingSelections = false,
+    int BatchNumber = 1,
+    int BatchSize = 100,
+    bool? RunBotC = null,
+    bool HistoricalBacktest = false,
+    bool OnlyBotC = false,
+    string? MarketFamilies = null,
+    bool HistoricalBackfill = false,
+    string? BotKeys = null);
 
-public sealed record SettleAutomatedCornersRequest(
-    DateOnly? MatchDateTo,
-    bool DryRun = false);
+public sealed record AutomatedOddsAvailabilityResponse(
+    DateOnly DateFrom,
+    DateOnly DateTo,
+    int TotalOddsRows,
+    int TotalMatches,
+    int BatchSize,
+    int TotalBatches);
 
 public sealed record AutomatedRunResponse(
     Guid RunId,
     DateOnly DateFrom,
     DateOnly DateTo,
+    int AvailableOddsRows,
+    int BatchNumber,
+    int BatchSize,
+    int BatchStart,
+    int BatchEnd,
+    int TotalBatches,
     int TotalOddsRows,
     int TotalMatches,
     int SelectedMatches,
@@ -66,18 +90,12 @@ public sealed record AutomatedRunResponse(
     IReadOnlyList<SkippedMatchResult> Skipped,
     IReadOnlyList<ErrorMatchResult> Errors);
 
-public sealed record SettleAutomatedCornersResponse(
-    DateOnly? MatchDateTo,
-    bool DryRun,
-    int CandidateRows,
-    int SettledRows,
-    IReadOnlyList<PersistedAutomatedSelection> PreviewRows);
-
 public sealed record UpcomingOddsRecord
 {
     public long PartidoProximoCuotaId { get; init; }
     public string Source { get; init; } = "Betano";
     public string? SourceMatchId { get; init; }
+    public long? ApiFootballFixtureId { get; init; }
     public string? SourceUrl { get; init; }
     public DateTime MatchDate { get; init; }
     public string League { get; init; } = string.Empty;
@@ -124,7 +142,16 @@ public sealed record MatchHistoryItemDto(
 public sealed record PredictionComparisonDto(
     double EnrichedPrediction,
     double? Difference,
-    string Recommendation);
+    string Recommendation,
+    double EnrichedShotsOnGoalPrediction = 0,
+    double EnrichedGoalsPrediction = 0,
+    double HomeExpectedShotsOnGoal = 0,
+    double AwayExpectedShotsOnGoal = 0,
+    double HomeExpectedGoals = 0,
+    double AwayExpectedGoals = 0,
+    double EnrichedShotsPrediction = 0,
+    double HomeExpectedShots = 0,
+    double AwayExpectedShots = 0);
 
 public sealed record PredictionContextDto(
     PredictionComparisonDto Comparison,
@@ -186,6 +213,18 @@ public sealed class PredictionResultDto
 
     [JsonPropertyName("rmse")]
     public double Rmse { get; init; }
+
+    public double? ProbabilitySigma { get; init; }
+
+    public string? ModelGeneration { get; init; }
+
+    public string? ModelVersion { get; init; }
+
+    public string? TrainedThrough { get; init; }
+
+    public string? FeatureSet { get; init; }
+
+    public IReadOnlyList<string> ModelWarnings { get; init; } = Array.Empty<string>();
 }
 
 public sealed class OverUnderPredictionResultDto
@@ -210,6 +249,54 @@ public sealed class OverUnderPredictionResultDto
 
     [JsonPropertyName("distanceToLine")]
     public double DistanceToLine { get; init; }
+}
+
+public sealed class MultiMarketPredictionDto
+{
+    [JsonPropertyName("shots")]
+    public MarketPredictionDto? Shots { get; init; }
+
+    [JsonPropertyName("sog")]
+    public MarketPredictionDto? ShotsOnGoal { get; init; }
+
+    [JsonPropertyName("goals")]
+    public MarketPredictionDto? Goals { get; init; }
+}
+
+public sealed class MarketPredictionDto
+{
+    [JsonPropertyName("line")]
+    public double? Line { get; init; }
+
+    [JsonPropertyName("prediction")]
+    public double Prediction { get; init; }
+
+    [JsonPropertyName("recommendation")]
+    public string? Recommendation { get; init; }
+
+    [JsonPropertyName("confidence")]
+    public string? Confidence { get; init; }
+
+    [JsonPropertyName("distance")]
+    public double? Distance { get; init; }
+
+    [JsonPropertyName("historicalAccuracy")]
+    public double? HistoricalAccuracy { get; init; }
+
+    [JsonPropertyName("homePrediction")]
+    public double? HomePrediction { get; init; }
+
+    [JsonPropertyName("awayPrediction")]
+    public double? AwayPrediction { get; init; }
+
+    [JsonPropertyName("totalDirectPrediction")]
+    public double? TotalDirectPrediction { get; init; }
+
+    [JsonPropertyName("combinedHomeAwayPrediction")]
+    public double? CombinedHomeAwayPrediction { get; init; }
+
+    [JsonPropertyName("finalPrediction")]
+    public double FinalPrediction { get; init; }
 }
 
 public sealed class AutomatedSelectionCandidate
@@ -262,6 +349,8 @@ public sealed record PersistedAutomatedSelection
     public string AutomationVersion { get; init; } = string.Empty;
     public string Source { get; init; } = "Betano";
     public string? SourceMatchId { get; init; }
+    public long? ApiFootballFixtureId { get; init; }
+    public long? MatchHistoryId { get; init; }
     public string? SourceUrl { get; init; }
     public DateTime MatchDate { get; init; }
     public string League { get; init; } = string.Empty;
@@ -301,6 +390,13 @@ public sealed record PersistedAutomatedSelection
     public int? ActualHomeCorners { get; init; }
     public int? ActualAwayCorners { get; init; }
     public int? ActualTotalCorners { get; init; }
+    public int? SettlementActualValue { get; init; }
+    public decimal? SettlementFactor { get; init; }
+    public string? SettlementReason { get; init; }
+    public string? SettlementSource { get; init; }
+    public string? SettlementMatchStatus { get; init; }
+    public string? LastSettlementCheckReason { get; init; }
+    public DateTime? LastSettlementCheckAtUtc { get; init; }
     public decimal? ProfitLoss { get; init; }
     public decimal? YieldPct { get; init; }
     public string? DecisionReason { get; init; }
@@ -313,6 +409,9 @@ public sealed record BotVariantProfile(
     string Key,
     string AutomationVersion,
     string DisplayName,
+    bool UsesPickSelector,
+    bool UsesNewGenerationModels,
+    IReadOnlySet<string> MarketFamilies,
     double MinEdge,
     double MinExpectedValue,
     double MinDistanceToLine,
@@ -320,7 +419,20 @@ public sealed record BotVariantProfile(
     bool AllowModelDisagreement,
     double? MinOddsExclusive,
     double MinProbabilityLiftOverImplied,
-    decimal StakeMultiplier);
+    decimal StakeMultiplier,
+    BotCStrategyConfiguration? SelectorConfiguration);
+
+public sealed record PersistBotCEvaluationCommand(
+    Guid RunId,
+    string BotKey,
+    string AutomationVersion,
+    UpcomingOddsRecord Odds,
+    string MarketType,
+    string BaseModelName,
+    string BaseModelVersion,
+    BotCPickDecision Decision,
+    DateTime? BaseModelTrainedThroughUtc = null,
+    long? PublishedSelectionId = null);
 
 public sealed class PersistSelectionCommand
 {

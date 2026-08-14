@@ -1,6 +1,6 @@
 using CornersMLData.Data;
 using CornersMLData.Models;
-using CornersMLData.Services;
+using CornersPredictionApi.ApiFootball;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System;
@@ -20,16 +20,16 @@ namespace CornersMLData.Controllers
     public class PartidosController : ControllerBase
     {
         private readonly PartidosProximosRepository _partidosProximosRepository;
-        private readonly EspnPartidosProximosScraper _espnPartidosProximosScraper;
+        private readonly ApiFootballUpcomingMatchesSyncService _upcomingMatchesService;
         private readonly ILogger<PartidosController> _logger;
 
         public PartidosController(
             PartidosProximosRepository partidosProximosRepository,
-            EspnPartidosProximosScraper espnPartidosProximosScraper,
+            ApiFootballUpcomingMatchesSyncService upcomingMatchesService,
             ILogger<PartidosController> logger)
         {
             _partidosProximosRepository = partidosProximosRepository;
-            _espnPartidosProximosScraper = espnPartidosProximosScraper;
+            _upcomingMatchesService = upcomingMatchesService;
             _logger = logger;
         }
 
@@ -107,7 +107,9 @@ namespace CornersMLData.Controllers
                     .Select(NormalizeAndValidate)
                     .ToList();
 
-                var totalProcesados = await _partidosProximosRepository.SincronizarAsync(normalized, cancellationToken);
+                var totalProcesados = await _partidosProximosRepository.SincronizarAsync(
+                    normalized,
+                    cancellationToken: cancellationToken);
 
                 return StatusCode(StatusCodes.Status201Created, new PartidosProximosSyncResponse
                 {
@@ -145,7 +147,7 @@ namespace CornersMLData.Controllers
         }
 
         /// <summary>
-        /// Descubre partidos proximos desde ESPN dentro de un rango de fechas y los guarda en base de datos.
+        /// Descubre partidos proximos desde API-Football dentro de un rango de fechas y los guarda en base de datos.
         /// </summary>
         /// <remarks>
         /// Recibe <c>fromDate</c> y <c>toDate</c> por <c>query string</c> como valores <c>date-time</c>. El rango se normaliza,
@@ -187,37 +189,17 @@ namespace CornersMLData.Controllers
 
             try
             {
-                await _partidosProximosRepository.EnsureDatabaseObjectsAsync(cancellationToken);
+                var result = await _upcomingMatchesService.SyncAsync(
+                    new ApiFootballUpcomingSyncRequest(
+                        DateOnly.FromDateTime(start),
+                        DateOnly.FromDateTime(end)),
+                    cancellationToken);
 
-                var partidos = await _espnPartidosProximosScraper.FetchUpcomingMatchesAsync(start, end, cancellationToken);
-                var filtered = partidos
-                    .Where(x => !IsWomenMatch(x.Liga, x.Genero))
-                    .ToList();
-
-                var totalProcesados = await _partidosProximosRepository.SincronizarAsync(filtered, cancellationToken);
-
-                return StatusCode(StatusCodes.Status201Created, new PartidosProximosAutoSyncResponse
-                {
-                    Message = "Proximos partidos sincronizados desde ESPN correctamente.",
-                    FechaDesde = start,
-                    FechaHasta = end,
-                    Dias = totalDays,
-                    TotalDescubiertos = filtered.Count,
-                    TotalProcesados = totalProcesados,
-                    Diario = filtered
-                        .GroupBy(x => x.FechaPartido.Date)
-                        .OrderBy(x => x.Key)
-                        .Select(x => new PartidoProximoResumenDiario
-                        {
-                            Fecha = x.Key,
-                            TotalPartidos = x.Count()
-                        })
-                        .ToList()
-                });
+                return StatusCode(StatusCodes.Status201Created, ToLegacyResponse(result));
             }
             catch (SqlException ex)
             {
-                _logger.LogError(ex, "Error SQL al sincronizar proximos partidos por rango de fechas desde ESPN.");
+                _logger.LogError(ex, "Error SQL al sincronizar proximos partidos por rango de fechas desde API-Football.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "Ocurrio un error SQL al sincronizar los proximos partidos.",
@@ -227,7 +209,7 @@ namespace CornersMLData.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error interno al sincronizar proximos partidos por rango de fechas desde ESPN.");
+                _logger.LogError(ex, "Error interno al sincronizar proximos partidos por rango de fechas desde API-Football.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "Ocurrio un error interno al sincronizar los proximos partidos."
@@ -262,33 +244,17 @@ namespace CornersMLData.Controllers
                 var fromDate = today;
                 var toDate = today.AddDays(days - 1);
 
-                await _partidosProximosRepository.EnsureDatabaseObjectsAsync(cancellationToken);
+                var result = await _upcomingMatchesService.SyncAsync(
+                    new ApiFootballUpcomingSyncRequest(
+                        DateOnly.FromDateTime(fromDate),
+                        DateOnly.FromDateTime(toDate)),
+                    cancellationToken);
 
-                var partidos = await _espnPartidosProximosScraper.FetchUpcomingMatchesAsync(fromDate, toDate, cancellationToken);
-                var totalProcesados = await _partidosProximosRepository.SincronizarAsync(partidos, cancellationToken);
-
-                return StatusCode(StatusCodes.Status201Created, new PartidosProximosAutoSyncResponse
-                {
-                    Message = "Proximos partidos sincronizados desde ESPN correctamente.",
-                    FechaDesde = fromDate,
-                    FechaHasta = toDate,
-                    Dias = days,
-                    TotalDescubiertos = partidos.Count,
-                    TotalProcesados = totalProcesados,
-                    Diario = partidos
-                        .GroupBy(x => x.FechaPartido.Date)
-                        .OrderBy(x => x.Key)
-                        .Select(x => new PartidoProximoResumenDiario
-                        {
-                            Fecha = x.Key,
-                            TotalPartidos = x.Count()
-                        })
-                        .ToList()
-                });
+                return StatusCode(StatusCodes.Status201Created, ToLegacyResponse(result));
             }
             catch (SqlException ex)
             {
-                _logger.LogError(ex, "Error SQL al sincronizar proximos partidos desde ESPN.");
+                _logger.LogError(ex, "Error SQL al sincronizar proximos partidos desde API-Football.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "Ocurrio un error SQL al sincronizar los proximos partidos.",
@@ -301,7 +267,7 @@ namespace CornersMLData.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error interno al sincronizar proximos partidos desde ESPN.");
+                _logger.LogError(ex, "Error interno al sincronizar proximos partidos desde API-Football.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "Ocurrio un error interno al sincronizar los proximos partidos."
@@ -318,7 +284,11 @@ namespace CornersMLData.Controllers
                 EquipoVisita = NormalizeRequired(request.EquipoVisita, nameof(request.EquipoVisita)),
                 Liga = NormalizeRequired(request.Liga, nameof(request.Liga)),
                 Genero = NormalizeRequired(request.Genero, nameof(request.Genero)),
-                EsKnockout = request.EsKnockout
+                EsKnockout = request.EsKnockout,
+                TotalTeams = request.TotalTeams,
+                HomeTeamPosition = request.HomeTeamPosition,
+                AwayTeamPosition = request.AwayTeamPosition,
+                DataSource = "Manual"
             };
 
             if (dto.FechaPartido == default)
@@ -348,18 +318,29 @@ namespace CornersMLData.Controllers
             return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
         }
 
-        private static bool IsWomenMatch(string? league, string? genero)
+        private static PartidosProximosAutoSyncResponse ToLegacyResponse(
+            ApiFootballUpcomingSyncResult result)
         {
-            if (string.Equals(genero, "Femenino", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            var normalizedLeague = NormalizeNullable(league)?.ToLowerInvariant() ?? string.Empty;
-            return normalizedLeague.Contains("women")
-                || normalizedLeague.Contains("femen")
-                || normalizedLeague.Contains("liga f")
-                || normalizedLeague.Contains("premiere ligue")
-                || normalizedLeague.Contains("nwsl")
-                || normalizedLeague.Contains("northern super league");
+            return new PartidosProximosAutoSyncResponse
+            {
+                Message = "Proximos partidos sincronizados desde API-Football correctamente.",
+                Source = "API-Football",
+                FechaDesde = result.DateFrom.ToDateTime(TimeOnly.MinValue),
+                FechaHasta = result.DateTo.ToDateTime(TimeOnly.MinValue),
+                Dias = result.DateTo.DayNumber - result.DateFrom.DayNumber + 1,
+                TotalDescubiertos = result.DiscoveredFixtures,
+                TotalProcesados = result.PersistedFixtures,
+                TotalExcluidos = result.ExcludedFixtures,
+                DailyRemaining = result.DailyRemaining,
+                MinuteRemaining = result.MinuteRemaining,
+                Diario = result.Daily
+                    .Select(row => new PartidoProximoResumenDiario
+                    {
+                        Fecha = row.Date.ToDateTime(TimeOnly.MinValue),
+                        TotalPartidos = row.Fixtures
+                    })
+                    .ToList()
+            };
         }
     }
 }

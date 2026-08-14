@@ -22,6 +22,7 @@ public interface IMatchHistoryRepository
         string awayTeam,
         string? league,
         string teamGender,
+        DateOnly? beforeDate,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<MatchHistoryItem>> GetManualEntriesAsync(

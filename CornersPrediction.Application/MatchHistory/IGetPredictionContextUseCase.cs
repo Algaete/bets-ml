@@ -8,5 +8,6 @@ public interface IGetPredictionContextUseCase
         string? league,
         string? teamGender,
         double? baseLocalAwayPrediction,
+        DateOnly? beforeDate,
         CancellationToken cancellationToken);
 }

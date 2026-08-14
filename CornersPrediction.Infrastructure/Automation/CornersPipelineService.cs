@@ -40,89 +40,61 @@ public sealed class CornersPipelineService : ICornersPipelineService
     {
         var effectiveDays = NormalizeDays(days);
         var (fromDate, toDate) = BuildDateRange(effectiveDays);
-        var query = BuildQueryString(
-            ("fromDate", fromDate),
-            ("toDate", toDate));
 
         return ExecuteStepAsync(
             stepKey: "match-history",
-            stepName: "MatchHistory",
+            stepName: "MatchHistory API-Football",
             days: effectiveDays,
-            timeout: TimeSpan.FromSeconds(_options.DefaultTimeoutSeconds),
-            operation: async token =>
-            {
-                var response = await PostAsync<EspnMultiLeagueBatchResponse>(
-                    CornersDataClientName,
-                    $"/api/EspnMatchHistoryScrapping/sincronizar/rango-fechas{query}",
-                    body: null,
-                    token);
-
-                return new CornersPipelineStepResult
-                {
-                    Message = response.Model.Message,
-                    Discovered = response.Model.TotalDiscovered,
-                    Processed = response.Model.TotalProcessed,
-                    Inserted = response.Model.Inserted,
-                    Updated = response.Model.Updated,
-                    Duplicates = response.Model.Duplicates,
-                    Skipped = response.Model.Skipped,
-                    Errors = response.Model.Errors,
-                    RawResponse = response.Raw
-                };
-            },
+            timeout: TimeSpan.FromSeconds(_options.ApiFootballTimeoutSeconds),
+            operation: token => RunApiFootballMatchHistoryAsync(fromDate, toDate, token),
             cancellationToken);
     }
 
-    public Task<CornersPipelineStepResult> RunWorldCupMatchHistoryAsync(int days, CancellationToken cancellationToken)
+    private async Task<CornersPipelineStepResult> RunApiFootballMatchHistoryAsync(
+        DateOnly fromDate,
+        DateOnly toDate,
+        CancellationToken cancellationToken)
     {
-        var effectiveDays = NormalizeDays(days);
-        var (fromDate, toDate) = BuildDateRange(effectiveDays);
-        var query = BuildQueryString(
-            ("league", "fifa.world"),
-            ("fromDate", fromDate),
-            ("toDate", toDate),
-            ("take", _options.MatchHistoryTake),
-            ("parallelism", _options.MatchHistoryParallelism),
-            ("dryRun", false),
-            ("onlyCompleted", true),
-            ("backwards", true),
-            ("dbLeague", "Copa del Mundo"),
-            ("isKnockout", true),
-            ("unknownFormationIfMissing", false));
+        var request = new ApiFootballBulkSyncRequest(
+            DateFrom: fromDate,
+            DateTo: toDate,
+            CompetitionOffset: 0,
+            MaxCompetitions: _options.ApiFootballMaxCompetitions,
+            MaxFixturesPerCompetition: _options.ApiFootballMaxFixturesPerCompetition,
+            MaxTotalFixtures: _options.ApiFootballMaxTotalFixtures,
+            MinimumDailyRemaining: _options.ApiFootballMinimumDailyRemaining,
+            DryRun: false,
+            UpdateExisting: true,
+            SyncStandings: true,
+            SyncLineups: false,
+            SeniorMenOnly: true);
 
-        return ExecuteStepAsync(
-            stepKey: "world-cup-match-history",
-            stepName: "WorldCupMatchHistory",
-            days: effectiveDays,
-            timeout: TimeSpan.FromSeconds(_options.DefaultTimeoutSeconds),
-            operation: async token =>
-            {
-                var response = await PostAsync<EspnHistoryBatchResponse>(
-                    CornersDataClientName,
-                    $"/api/EspnMatchHistoryScrapping/scrape-date-range{query}",
-                    body: null,
-                    token);
-
-                return new CornersPipelineStepResult
-                {
-                    Message = response.Model.Message,
-                    Discovered = response.Model.TotalDiscovered,
-                    Processed = response.Model.TotalProcessed,
-                    Inserted = response.Model.Inserted,
-                    Updated = response.Model.Updated,
-                    Duplicates = response.Model.Duplicates,
-                    Skipped = response.Model.Skipped,
-                    Errors = response.Model.Errors,
-                    RawResponse = response.Raw
-                };
-            },
+        var response = await PostAsync<ApiFootballBulkSyncResponse>(
+            CornersDataClientName,
+            "/api/api-football/bulk-sync",
+            request,
             cancellationToken);
+
+        return new CornersPipelineStepResult
+        {
+            Message = response.Model.StoppedByQuota
+                ? $"API-Football stopped by quota. Daily remaining: {response.Model.DailyRemaining ?? "unknown"}."
+                : $"API-Football recent history synced. Daily remaining: {response.Model.DailyRemaining ?? "unknown"}.",
+            Discovered = response.Model.DiscoveredFixtures,
+            Processed = response.Model.ProcessedFixtures,
+            Inserted = response.Model.Inserted,
+            Updated = response.Model.Updated,
+            Skipped = response.Model.Skipped,
+            Errors = response.Model.Errors,
+            RawResponse = response.Raw
+        };
     }
 
     public Task<CornersPipelineStepResult> RunUpcomingMatchesAsync(int days, CancellationToken cancellationToken)
     {
         var effectiveDays = NormalizeDays(days, _options.DefaultUpcomingDays);
-        var query = BuildQueryString(("days", effectiveDays));
+        var dateFrom = DateOnly.FromDateTime(DateTime.Today);
+        var dateTo = dateFrom.AddDays(effectiveDays - 1);
 
         return ExecuteStepAsync(
             stepKey: "upcoming-matches",
@@ -131,18 +103,20 @@ public sealed class CornersPipelineService : ICornersPipelineService
             timeout: TimeSpan.FromSeconds(_options.DefaultTimeoutSeconds),
             operation: async token =>
             {
-                var response = await PostAsync<UpcomingMatchesSyncResponse>(
+                var response = await PostAsync<ApiFootballUpcomingSyncResponse>(
                     CornersDataClientName,
-                    $"/api/partidos/sincronizar/proximos{query}",
-                    body: null,
+                    "/api/api-football/sync-upcoming",
+                    new ApiFootballUpcomingSyncRequest(dateFrom, dateTo),
                     token);
 
                 return new CornersPipelineStepResult
                 {
-                    Message = response.Model.Message,
-                    Discovered = response.Model.TotalDescubiertos,
-                    Processed = response.Model.TotalProcesados,
-                    Upserted = response.Model.TotalProcesados,
+                    Message = $"API-Football upcoming fixtures synced. " +
+                        $"Excluded: {response.Model.ExcludedFixtures}. " +
+                        $"Daily remaining: {response.Model.DailyRemaining ?? "unknown"}.",
+                    Discovered = response.Model.DiscoveredFixtures,
+                    Processed = response.Model.EligibleFixtures,
+                    Upserted = response.Model.PersistedFixtures,
                     RawResponse = response.Raw
                 };
             },
@@ -202,20 +176,51 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 return new CornersPipelineStepResult
                 {
                     Message = response.Model.Message,
+                    Status = response.Model.PersistenceFailedMatches > 0
+                        ? CornersPipelineStatuses.PartialSuccess
+                        : CornersPipelineStatuses.Success,
                     Discovered = response.Model.TotalDiscovered,
                     Processed = response.Model.TotalProcessed,
                     Upserted = response.Model.PersistedCount,
+                    Skipped = response.Model.PersistenceSkippedMatches,
+                    Errors = response.Model.PersistenceFailedMatches,
                     RawResponse = response.Raw
                 };
             },
             cancellationToken);
     }
 
-    public Task<CornersPipelineStepResult> RunBotsAsync(bool excludeExistingSelections, CancellationToken cancellationToken)
+    public async Task<BotOddsAvailability> GetBotOddsAvailabilityAsync(
+        int batchSize,
+        CancellationToken cancellationToken)
     {
+        var effectiveBatchSize = NormalizeBotBatchSize(batchSize);
+        var response = await GetAsync<AutomatedOddsAvailabilityResponse>(
+            CornersBotClientName,
+            $"/api/automated-corners/availability?batchSize={effectiveBatchSize}",
+            cancellationToken);
+
+        return new BotOddsAvailability(
+            response.Model.DateFrom,
+            response.Model.DateTo,
+            response.Model.TotalOddsRows,
+            response.Model.TotalMatches,
+            response.Model.BatchSize,
+            response.Model.TotalBatches);
+    }
+
+    public Task<CornersPipelineStepResult> RunBotsAsync(
+        RunBotsCommand command,
+        CancellationToken cancellationToken)
+    {
+        var batchNumber = Math.Max(1, command.BatchNumber);
+        var batchSize = NormalizeBotBatchSize(command.BatchSize);
         var request = new
         {
-            ExcludeExistingSelections = excludeExistingSelections
+            command.ExcludeExistingSelections,
+            BatchNumber = batchNumber,
+            BatchSize = batchSize,
+            command.RunBotC
         };
 
         return ExecuteStepAsync(
@@ -235,6 +240,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
                     selection.Selection.AutomationVersion.EndsWith("-A", StringComparison.OrdinalIgnoreCase));
                 var botBCount = response.Model.Selections.Count(selection =>
                     selection.Selection.AutomationVersion.EndsWith("-B", StringComparison.OrdinalIgnoreCase));
+                var botCCount = Math.Max(0, response.Model.Selections.Count - botACount - botBCount);
                 var missingHistoryMatches = response.Model.Skipped
                     .Where(item => IsMissingHistoryReason(item.Reason))
                     .Select(item => new MissingHistoryMatch(
@@ -247,8 +253,10 @@ public sealed class CornersPipelineService : ICornersPipelineService
 
                 return new CornersPipelineStepResult
                 {
-                    Message = $"RunId: {response.Model.RunId}",
-                    Discovered = response.Model.TotalOddsRows,
+                    Message = response.Model.TotalOddsRows == 0
+                        ? $"Lote {batchNumber} sin cuotas. Disponibles: {response.Model.AvailableOddsRows}."
+                        : $"Lote {response.Model.BatchNumber}/{response.Model.TotalBatches}: cuotas {response.Model.BatchStart}-{response.Model.BatchEnd} de {response.Model.AvailableOddsRows}. Bots A/B/C: {botACount}/{botBCount}/{botCCount}. RunId: {response.Model.RunId}",
+                    Discovered = response.Model.AvailableOddsRows,
                     Processed = response.Model.TotalMatches,
                     Inserted = response.Model.InsertedRows,
                     Updated = response.Model.UpdatedRows,
@@ -257,6 +265,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
                     RecommendationsGenerated = response.Model.SelectedMatches,
                     BotACount = botACount,
                     BotBCount = botBCount,
+                    BotCCount = botCCount,
                     MissingHistoryMatches = missingHistoryMatches,
                     RawResponse = response.Raw
                 };
@@ -276,9 +285,6 @@ public sealed class CornersPipelineService : ICornersPipelineService
         var matchHistory = await RunMatchHistoryAsync(matchHistoryDays, cancellationToken);
         steps.Add(matchHistory);
 
-        var worldCup = await RunWorldCupMatchHistoryAsync(matchHistoryDays, cancellationToken);
-        steps.Add(worldCup);
-
         var upcoming = await RunUpcomingMatchesAsync(upcomingDays, cancellationToken);
         steps.Add(upcoming);
 
@@ -288,7 +294,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
         var betano = await RunBetanoOddsAsync(cancellationToken);
         steps.Add(betano);
 
-        var hasCriticalDataFailure = !matchHistory.IsSuccess || !worldCup.IsSuccess || !upcoming.IsSuccess;
+        var hasCriticalDataFailure = !matchHistory.IsSuccess || !upcoming.IsSuccess;
         var hasOddsSource = pinnacle.IsSuccess || betano.IsSuccess;
 
         if (hasCriticalDataFailure || !hasOddsSource)
@@ -301,7 +307,13 @@ public sealed class CornersPipelineService : ICornersPipelineService
             return BuildPipelineResult(startedAtUtc, matchHistoryDays, upcomingDays, steps);
         }
 
-        steps.Add(await RunBotsAsync(command.ExcludeExistingSelections, cancellationToken));
+        steps.Add(await RunBotsAsync(
+            new RunBotsCommand(
+                command.ExcludeExistingSelections,
+                command.BotBatchNumber,
+                command.BotBatchSize,
+                command.RunBotC),
+            cancellationToken));
         return BuildPipelineResult(startedAtUtc, matchHistoryDays, upcomingDays, steps);
     }
 
@@ -322,12 +334,16 @@ public sealed class CornersPipelineService : ICornersPipelineService
             var result = await operation(timeoutSource.Token);
             var completedAtUtc = DateTime.UtcNow;
 
+            var reportedStatus = result.Status == CornersPipelineStatuses.PartialSuccess
+                ? CornersPipelineStatuses.PartialSuccess
+                : CornersPipelineStatuses.Success;
+
             return result with
             {
                 StepKey = stepKey,
                 StepName = stepName,
                 Days = days,
-                Status = CornersPipelineStatuses.Success,
+                Status = reportedStatus,
                 IsSuccess = true,
                 TimedOut = false,
                 StartedAtUtc = startedAtUtc,
@@ -345,6 +361,10 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 startedAtUtc,
                 timedOut: true,
                 message: "The request timed out while waiting for the external API.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -378,6 +398,32 @@ public sealed class CornersPipelineService : ICornersPipelineService
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
 
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(BuildHttpErrorMessage(relativeUrl, response.StatusCode, content));
+        }
+
+        var safeContent = string.IsNullOrWhiteSpace(content) ? "{}" : content;
+        using var document = JsonDocument.Parse(safeContent);
+        var raw = document.RootElement.Clone();
+        var model = JsonSerializer.Deserialize<T>(safeContent, SerializerOptions);
+
+        return model is null
+            ? throw new InvalidOperationException($"External API returned an empty payload for '{relativeUrl}'.")
+            : (model, raw);
+    }
+
+    private async Task<(T Model, JsonElement Raw)> GetAsync<T>(
+        string clientName,
+        string relativeUrl,
+        CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient(clientName);
+        using var response = await client.GetAsync(
+            relativeUrl,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -500,6 +546,9 @@ public sealed class CornersPipelineService : ICornersPipelineService
         return Math.Min(days, 30);
     }
 
+    private static int NormalizeBotBatchSize(int batchSize) =>
+        Math.Clamp(batchSize <= 0 ? 100 : batchSize, 1, 100);
+
     private static (DateOnly FromDate, DateOnly ToDate) BuildDateRange(int days)
     {
         var end = DateOnly.FromDateTime(DateTime.Today);
@@ -532,39 +581,65 @@ public sealed class CornersPipelineService : ICornersPipelineService
         && (reason.Contains("history", StringComparison.OrdinalIgnoreCase)
             || reason.Contains("context was empty", StringComparison.OrdinalIgnoreCase));
 
-    private sealed record EspnHistoryBatchResponse(
-        string? Message,
-        int TotalDiscovered,
-        int TotalProcessed,
+    private sealed record ApiFootballBulkSyncRequest(
+        DateOnly DateFrom,
+        DateOnly DateTo,
+        int CompetitionOffset,
+        int MaxCompetitions,
+        int MaxFixturesPerCompetition,
+        int MaxTotalFixtures,
+        int MinimumDailyRemaining,
+        bool DryRun,
+        bool UpdateExisting,
+        bool SyncStandings,
+        bool SyncLineups,
+        bool SeniorMenOnly);
+
+    private sealed record ApiFootballBulkSyncResponse(
+        DateOnly DateFrom,
+        DateOnly DateTo,
+        bool DryRun,
+        int DiscoveredFixtures,
+        int DiscoveredCompetitions,
+        int EligibleCompetitions,
+        int ProcessedCompetitions,
+        int ProcessedFixtures,
         int Inserted,
         int Updated,
-        int Duplicates,
         int Skipped,
-        int Errors);
+        int Errors,
+        bool StoppedByQuota,
+        string? DailyRemaining,
+        string? MinuteRemaining);
 
-    private sealed record EspnMultiLeagueBatchResponse(
-        string? Message,
-        int TotalDiscovered,
-        int TotalProcessed,
-        int Inserted,
-        int Updated,
-        int Duplicates,
-        int Skipped,
-        int Errors);
+    private sealed record ApiFootballUpcomingSyncRequest(
+        DateOnly DateFrom,
+        DateOnly DateTo);
 
-    private sealed record UpcomingMatchesSyncResponse(
-        string? Message,
-        int TotalDescubiertos,
-        int TotalProcesados);
+    private sealed record ApiFootballUpcomingSyncResponse(
+        int DiscoveredFixtures,
+        int EligibleFixtures,
+        int ExcludedFixtures,
+        int PersistedFixtures,
+        string? DailyRemaining,
+        string? MinuteRemaining);
 
     private sealed record UpcomingOddsResponse(
         string? Message,
         int TotalDiscovered,
         int TotalProcessed,
-        int PersistedCount);
+        int PersistedCount,
+        int PersistenceSkippedMatches = 0,
+        int PersistenceFailedMatches = 0);
 
     private sealed record AutomatedRunResponse(
         Guid RunId,
+        int AvailableOddsRows,
+        int BatchNumber,
+        int BatchSize,
+        int BatchStart,
+        int BatchEnd,
+        int TotalBatches,
         int TotalOddsRows,
         int TotalMatches,
         int SelectedMatches,
@@ -574,6 +649,14 @@ public sealed class CornersPipelineService : ICornersPipelineService
         int ErrorMatches,
         IReadOnlyList<AutomatedSelectionResult> Selections,
         IReadOnlyList<SkippedMatchResult> Skipped);
+
+    private sealed record AutomatedOddsAvailabilityResponse(
+        DateOnly DateFrom,
+        DateOnly DateTo,
+        int TotalOddsRows,
+        int TotalMatches,
+        int BatchSize,
+        int TotalBatches);
 
     private sealed record SkippedMatchResult(
         string League,

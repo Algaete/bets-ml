@@ -7,6 +7,8 @@ public sealed class AutomatedCornerSelectionDto
     public string AutomationVersion { get; init; } = string.Empty;
     public string Source { get; init; } = string.Empty;
     public string? SourceMatchId { get; init; }
+    public long? ApiFootballFixtureId { get; init; }
+    public long? MatchHistoryId { get; init; }
     public string? SourceUrl { get; init; }
     public DateTime MatchDate { get; init; }
     public DateTime? MatchDay { get; init; }
@@ -46,6 +48,13 @@ public sealed class AutomatedCornerSelectionDto
     public int? ActualHomeCorners { get; init; }
     public int? ActualAwayCorners { get; init; }
     public int? ActualTotalCorners { get; init; }
+    public int? SettlementActualValue { get; init; }
+    public decimal? SettlementFactor { get; init; }
+    public string? SettlementReason { get; init; }
+    public string? SettlementSource { get; init; }
+    public string? SettlementMatchStatus { get; init; }
+    public string? LastSettlementCheckReason { get; init; }
+    public DateTime? LastSettlementCheckAtUtc { get; init; }
     public decimal? ProfitLoss { get; init; }
     public decimal? YieldPct { get; init; }
     public string? DecisionReason { get; init; }
@@ -59,6 +68,7 @@ public sealed record AutomatedCornerSelectionsFilterRequest(
     DateTime? DateTo,
     string? Status,
     string? League,
+    string? Source,
     string? MarketType,
     bool OnlyPending);
 
@@ -67,6 +77,12 @@ public sealed record UpdateAutomatedCornerSelectionStatusRequest(
     int? ActualHomeCorners,
     int? ActualAwayCorners,
     int? ActualTotalCorners);
+
+public sealed record ResolveAutomatedCornerSelectionRequest(int ActualValue);
+
+public sealed record LinkAutomatedCornerSelectionMatchRequest(
+    long MatchHistoryId,
+    long ApiFootballFixtureId);
 
 public interface IAutomatedCornerSelectionsRepository
 {
@@ -78,6 +94,19 @@ public interface IAutomatedCornerSelectionsRepository
         long id,
         UpdateAutomatedCornerSelectionStatusRequest request,
         CancellationToken cancellationToken);
+
+    Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        int actualValue,
+        CancellationToken cancellationToken);
+
+    Task<AutomatedCornerSelectionDto> LinkMatchAsync(
+        long id,
+        long matchHistoryId,
+        long apiFootballFixtureId,
+        CancellationToken cancellationToken);
+
+    Task<bool> DeleteAsync(long id, CancellationToken cancellationToken);
 }
 
 public interface IGetAutomatedCornerSelectionsUseCase
@@ -95,13 +124,43 @@ public interface IUpdateAutomatedCornerSelectionStatusUseCase
         CancellationToken cancellationToken);
 }
 
+public interface IResolveAutomatedCornerSelectionUseCase
+{
+    Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        ResolveAutomatedCornerSelectionRequest request,
+        CancellationToken cancellationToken);
+}
+
+public interface ILinkAutomatedCornerSelectionMatchUseCase
+{
+    Task<AutomatedCornerSelectionDto> LinkAsync(
+        long id,
+        LinkAutomatedCornerSelectionMatchRequest request,
+        CancellationToken cancellationToken);
+}
+
+public interface IDeleteAutomatedCornerSelectionUseCase
+{
+    Task<bool> DeleteAsync(long id, CancellationToken cancellationToken);
+}
+
 public sealed class GetAutomatedCornerSelectionsUseCase : IGetAutomatedCornerSelectionsUseCase
 {
     private static readonly HashSet<string> AllowedMarketTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "TotalCorners",
         "HomeTeamCorners",
-        "AwayTeamCorners"
+        "AwayTeamCorners",
+        "TotalGoals",
+        "HomeTeamGoals",
+        "AwayTeamGoals",
+        "TotalShots",
+        "HomeTeamShots",
+        "AwayTeamShots",
+        "TotalShotsOnGoal",
+        "HomeTeamShotsOnGoal",
+        "AwayTeamShotsOnGoal"
     };
 
     private readonly IAutomatedCornerSelectionsRepository _repository;
@@ -127,7 +186,7 @@ public sealed class GetAutomatedCornerSelectionsUseCase : IGetAutomatedCornerSel
 
         if (!string.IsNullOrWhiteSpace(status) && !AutomatedCornerSelectionStatusValidator.IsAllowed(status))
         {
-            throw new ArgumentException("Status must be Pending, Won, Lost or Void.");
+            throw new ArgumentException("Status must be Pending, Won, Lost, Push or Void.");
         }
 
         var marketType = string.IsNullOrWhiteSpace(filters.MarketType)
@@ -136,7 +195,7 @@ public sealed class GetAutomatedCornerSelectionsUseCase : IGetAutomatedCornerSel
 
         if (!string.IsNullOrWhiteSpace(marketType) && !AllowedMarketTypes.Contains(marketType))
         {
-            throw new ArgumentException("Market type must be TotalCorners, HomeTeamCorners or AwayTeamCorners.");
+            throw new ArgumentException("Market type is not supported by the automated bot.");
         }
 
         var dateFrom = filters.DateFrom?.Date;
@@ -151,6 +210,7 @@ public sealed class GetAutomatedCornerSelectionsUseCase : IGetAutomatedCornerSel
             dateTo,
             status,
             string.IsNullOrWhiteSpace(filters.League) ? null : filters.League.Trim(),
+            string.IsNullOrWhiteSpace(filters.Source) ? null : filters.Source.Trim(),
             marketType,
             filters.OnlyPending);
     }
@@ -181,7 +241,7 @@ public sealed class UpdateAutomatedCornerSelectionStatusUseCase : IUpdateAutomat
 
         if (!AutomatedCornerSelectionStatusValidator.IsAllowed(status))
         {
-            throw new ArgumentException("Status must be Pending, Won, Lost or Void.");
+            throw new ArgumentException("Status must be Pending, Won, Lost, Push or Void.");
         }
 
         var actualTotalCorners = request.ActualTotalCorners;
@@ -202,6 +262,89 @@ public sealed class UpdateAutomatedCornerSelectionStatusUseCase : IUpdateAutomat
     }
 }
 
+public sealed class ResolveAutomatedCornerSelectionUseCase : IResolveAutomatedCornerSelectionUseCase
+{
+    private readonly IAutomatedCornerSelectionsRepository _repository;
+
+    public ResolveAutomatedCornerSelectionUseCase(IAutomatedCornerSelectionsRepository repository)
+    {
+        _repository = repository;
+    }
+
+    public Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        ResolveAutomatedCornerSelectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("Selection id must be greater than zero.");
+        }
+
+        if (request.ActualValue < 0)
+        {
+            throw new ArgumentException("Actual result must be zero or greater.");
+        }
+
+        return _repository.ResolveAsync(id, request.ActualValue, cancellationToken);
+    }
+}
+
+public sealed class LinkAutomatedCornerSelectionMatchUseCase : ILinkAutomatedCornerSelectionMatchUseCase
+{
+    private readonly IAutomatedCornerSelectionsRepository _repository;
+
+    public LinkAutomatedCornerSelectionMatchUseCase(IAutomatedCornerSelectionsRepository repository)
+    {
+        _repository = repository;
+    }
+
+    public Task<AutomatedCornerSelectionDto> LinkAsync(
+        long id,
+        LinkAutomatedCornerSelectionMatchRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("Selection id must be greater than zero.");
+        }
+        if (request.MatchHistoryId <= 0)
+        {
+            throw new ArgumentException("MatchHistoryId must be greater than zero.");
+        }
+        if (request.ApiFootballFixtureId <= 0)
+        {
+            throw new ArgumentException("ApiFootballFixtureId must be greater than zero.");
+        }
+
+        return _repository.LinkMatchAsync(
+            id,
+            request.MatchHistoryId,
+            request.ApiFootballFixtureId,
+            cancellationToken);
+    }
+}
+
+public sealed class DeleteAutomatedCornerSelectionUseCase : IDeleteAutomatedCornerSelectionUseCase
+{
+    private readonly IAutomatedCornerSelectionsRepository _repository;
+
+    public DeleteAutomatedCornerSelectionUseCase(IAutomatedCornerSelectionsRepository repository)
+    {
+        _repository = repository;
+    }
+
+    public Task<bool> DeleteAsync(long id, CancellationToken cancellationToken)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("Selection id must be greater than zero.");
+        }
+
+        return _repository.DeleteAsync(id, cancellationToken);
+    }
+}
+
 internal static class AutomatedCornerSelectionStatusValidator
 {
     private static readonly HashSet<string> AllowedStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -209,6 +352,7 @@ internal static class AutomatedCornerSelectionStatusValidator
         "Pending",
         "Won",
         "Lost",
+        "Push",
         "Void"
     };
 

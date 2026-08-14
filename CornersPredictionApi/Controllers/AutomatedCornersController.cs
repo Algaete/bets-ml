@@ -10,6 +10,10 @@ public sealed class AutomatedCornersController : ControllerBase
 {
     private readonly IGetAutomatedCornerSelectionsUseCase _getSelectionsUseCase;
     private readonly IUpdateAutomatedCornerSelectionStatusUseCase _updateSelectionStatusUseCase;
+    private readonly IResolveAutomatedCornerSelectionUseCase _resolveSelectionUseCase;
+    private readonly ILinkAutomatedCornerSelectionMatchUseCase _linkSelectionMatchUseCase;
+    private readonly IDeleteAutomatedCornerSelectionUseCase _deleteSelectionUseCase;
+    private readonly IAutomatedBotPickSettlementUseCase _settlementUseCase;
     private readonly AutomatedCornersSelectionService _selectionService;
     private readonly SqlAutomationRepository _automationRepository;
     private readonly ILogger<AutomatedCornersController> _logger;
@@ -17,12 +21,20 @@ public sealed class AutomatedCornersController : ControllerBase
     public AutomatedCornersController(
         IGetAutomatedCornerSelectionsUseCase getSelectionsUseCase,
         IUpdateAutomatedCornerSelectionStatusUseCase updateSelectionStatusUseCase,
+        IResolveAutomatedCornerSelectionUseCase resolveSelectionUseCase,
+        ILinkAutomatedCornerSelectionMatchUseCase linkSelectionMatchUseCase,
+        IDeleteAutomatedCornerSelectionUseCase deleteSelectionUseCase,
+        IAutomatedBotPickSettlementUseCase settlementUseCase,
         AutomatedCornersSelectionService selectionService,
         SqlAutomationRepository automationRepository,
         ILogger<AutomatedCornersController> logger)
     {
         _getSelectionsUseCase = getSelectionsUseCase;
         _updateSelectionStatusUseCase = updateSelectionStatusUseCase;
+        _resolveSelectionUseCase = resolveSelectionUseCase;
+        _linkSelectionMatchUseCase = linkSelectionMatchUseCase;
+        _deleteSelectionUseCase = deleteSelectionUseCase;
+        _settlementUseCase = settlementUseCase;
         _selectionService = selectionService;
         _automationRepository = automationRepository;
         _logger = logger;
@@ -54,17 +66,29 @@ public sealed class AutomatedCornersController : ControllerBase
         }
     }
 
+    [HttpGet("availability")]
+    [ProducesResponseType(typeof(AutomatedOddsAvailabilityResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailability(
+        [FromQuery] int batchSize = 100,
+        CancellationToken cancellationToken = default)
+    {
+        await _automationRepository.EnsureSchemaAsync(cancellationToken);
+        return Ok(await _selectionService.GetAvailabilityAsync(batchSize, cancellationToken));
+    }
+
     [HttpPost("settle")]
-    [ProducesResponseType(typeof(SettleAutomatedCornersResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AutomatedBotPickSettlementResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Settle(
-        [FromBody] SettleAutomatedCornersRequest? request,
+        [FromBody] AutomatedBotPickSettlementRequest? request,
         CancellationToken cancellationToken = default)
     {
         try
         {
             await _automationRepository.EnsureSchemaAsync(cancellationToken);
-            return Ok(await _selectionService.SettleAsync(request, cancellationToken));
+            return Ok(await _settlementUseCase.SettleAsync(
+                request ?? new AutomatedBotPickSettlementRequest(),
+                cancellationToken));
         }
         catch (ArgumentException exception)
         {
@@ -72,9 +96,9 @@ public sealed class AutomatedCornersController : ControllerBase
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "Failed to settle automated corners selections");
+            _logger.LogError(exception, "Failed to settle automated bot picks from local MatchHistory");
             return Problem(
-                title: "Could not settle automated corners selections",
+                title: "Could not settle automated bot picks",
                 detail: exception.Message,
                 statusCode: StatusCodes.Status500InternalServerError);
         }
@@ -88,6 +112,7 @@ public sealed class AutomatedCornersController : ControllerBase
         [FromQuery] DateTime? dateTo,
         [FromQuery] string? status,
         [FromQuery] string? league,
+        [FromQuery] string? source,
         [FromQuery] string? marketType,
         [FromQuery] bool onlyPending = false,
         CancellationToken cancellationToken = default)
@@ -99,6 +124,7 @@ public sealed class AutomatedCornersController : ControllerBase
                 dateTo,
                 status,
                 league,
+                source,
                 marketType,
                 onlyPending);
             var selections = await _getSelectionsUseCase.GetAsync(filters, cancellationToken);
@@ -145,6 +171,102 @@ public sealed class AutomatedCornersController : ControllerBase
             _logger.LogError(exception, "Failed to update automated corner selection {SelectionId}", id);
             return Problem(
                 title: "Could not update automated corner selection status",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    [HttpPut("selections/{id:long}/resolve")]
+    [ProducesResponseType(typeof(AutomatedCornerSelectionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResolveSelection(
+        [FromRoute] long id,
+        [FromBody] ResolveAutomatedCornerSelectionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _automationRepository.EnsureSchemaAsync(cancellationToken);
+            var updatedSelection = await _resolveSelectionUseCase.ResolveAsync(id, request, cancellationToken);
+            return Ok(updatedSelection);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to resolve automated corner selection {SelectionId}", id);
+            return Problem(
+                title: "Could not resolve automated corner selection",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    [HttpPut("selections/{id:long}/match-history-link")]
+    [ProducesResponseType(typeof(AutomatedCornerSelectionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> LinkSelectionMatch(
+        [FromRoute] long id,
+        [FromBody] LinkAutomatedCornerSelectionMatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var updatedSelection = await _linkSelectionMatchUseCase.LinkAsync(id, request, cancellationToken);
+            return Ok(updatedSelection);
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return NotFound(new { error = exception.Message });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Conflict(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to link automated selection {SelectionId} to MatchHistory", id);
+            return Problem(
+                title: "Could not link automated selection to MatchHistory",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    [HttpDelete("selections/{id:long}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteSelection(
+        [FromRoute] long id,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var deleted = await _deleteSelectionUseCase.DeleteAsync(id, cancellationToken);
+            return deleted ? NoContent() : NotFound(new { error = $"Automated corner selection {id} was not found." });
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to delete automated corner selection {SelectionId}", id);
+            return Problem(
+                title: "Could not delete automated corner selection",
                 detail: exception.Message,
                 statusCode: StatusCodes.Status500InternalServerError);
         }

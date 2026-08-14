@@ -16,11 +16,10 @@
         summaryWaiting = language == UiText.Spanish ? "Aun no hay ejecuciones. Usa cualquier boton para iniciar el robot." : "No executions yet. Use any button to start the robot.",
         jsonWaiting = language == UiText.Spanish ? "Esperando ejecucion..." : "Waiting for execution...",
         actionMatchHistory = "MatchHistory",
-        actionWorldCup = "World Cup",
         actionUpcoming = language == UiText.Spanish ? "Proximos partidos" : "Upcoming matches",
         actionPinnacle = "Pinnacle",
         actionBetano = "Betano",
-        actionBots = language == UiText.Spanish ? "Bot A + Bot B" : "Bot A + Bot B",
+        actionBots = language == UiText.Spanish ? "Bot A + Bot B + Bot C" : "Bot A + Bot B + Bot C",
         actionFull = language == UiText.Spanish ? "Flujo completo" : "Full pipeline"
     });
 }
@@ -66,21 +65,94 @@
                     <option value="7" selected>7</option>
                 </select>
             </label>
-            <label class="form-check robot-panel-checkbox mb-0">
-                <input id="RobotPanelExcludeExisting" class="form-check-input" type="checkbox" checked>
-                <span class="form-check-label">Omitir selecciones existentes</span>
+            <label class="form-check form-switch robot-panel-bot-c-toggle">
+                <input id="RobotPanelRunBotC" class="form-check-input" type="checkbox" checked>
+                <span class="form-check-label">Incluir Bot C · Modelos 2026</span>
             </label>
         </div>
     </div>
 
+    <div class="robot-batch-console mb-3">
+        <div class="robot-batch-metric">
+            <span>Cuotas disponibles</span>
+            <strong id="RobotPanelAvailableOdds">...</strong>
+        </div>
+        <div class="robot-batch-metric">
+            <span>Partidos</span>
+            <strong id="RobotPanelAvailableMatches">...</strong>
+        </div>
+        <div class="robot-batch-metric">
+            <span>Lotes de 100</span>
+            <strong id="RobotPanelTotalBatches">...</strong>
+        </div>
+        <label class="robot-batch-picker">
+            <span>Lote a ejecutar</span>
+            <input id="RobotPanelBatchNumber" class="form-control form-control-sm" type="number" min="1" value="1">
+        </label>
+        <div class="robot-batch-range">
+            <span>Rango seleccionado</span>
+            <strong id="RobotPanelBatchRange">Consultando cuotas...</strong>
+        </div>
+        <button id="RobotPanelRefreshAvailability" type="button" class="btn btn-sm btn-outline-secondary">
+            Actualizar contador
+        </button>
+    </div>
+
     <div class="robot-panel-actions">
         <button type="button" class="btn btn-outline-primary" data-action="match-history">1. MatchHistory</button>
-        <button type="button" class="btn btn-outline-primary" data-action="world-cup-match-history">2. MatchHistory World Cup</button>
-        <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">3. Upcoming matches</button>
-        <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">4. Pinnacle odds</button>
-        <button type="button" class="btn btn-outline-primary" data-action="betano-odds">5. Betano odds</button>
-        <button type="button" class="btn btn-outline-secondary" data-action="run-bots">6. Bot A + Bot B</button>
+        <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">2. Upcoming matches</button>
+        <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">3. Pinnacle odds</button>
+        <button type="button" class="btn btn-outline-primary" data-action="betano-odds">4. Betano odds</button>
+        <button type="button" class="btn btn-outline-secondary" data-action="run-bots">5. Ejecutar Bot A + B + C</button>
         <button type="button" class="btn btn-primary" data-action="full-run">Ejecutar flujo completo</button>
+    </div>
+    <div class="text-muted small mt-2">
+        La ejecución incluye Bot A (actual), Bot B (conservador) y Bot C (Modelos 2026) sobre el lote seleccionado.
+    </div>
+</section>
+
+<section class="surface-panel api-football-history-panel mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+        <div>
+            <div class="text-muted small text-uppercase fw-semibold">Carga historica persistente</div>
+            <h2 class="h5 mb-1">Tandas API-Football</h2>
+            <div class="text-muted small">
+                Continúa automáticamente desde el mes y offset guardados. Puedes cerrar esta página mientras trabaja.
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <button id="ApiFootballHistoryRefresh" type="button" class="btn btn-sm btn-outline-secondary">Actualizar</button>
+            <button id="ApiFootballHistoryStart" type="button" class="btn btn-sm btn-primary">Ejecutar siguiente tanda</button>
+        </div>
+    </div>
+    <div class="api-football-history-grid">
+        <div class="api-football-history-metric">
+            <span>Estado</span>
+            <strong id="ApiFootballHistoryStatus">Consultando...</strong>
+        </div>
+        <div class="api-football-history-metric">
+            <span>Próxima tanda</span>
+            <strong id="ApiFootballHistoryCheckpoint">-</strong>
+        </div>
+        <div class="api-football-history-metric">
+            <span>Cuota diaria</span>
+            <strong id="ApiFootballHistoryQuota">-</strong>
+        </div>
+        <div class="api-football-history-metric">
+            <span>Competiciones</span>
+            <strong id="ApiFootballHistoryCompetitions">-</strong>
+        </div>
+        <div class="api-football-history-metric">
+            <span>Partidos procesados</span>
+            <strong id="ApiFootballHistoryProcessed">-</strong>
+        </div>
+        <div class="api-football-history-metric">
+            <span>Insertados / actualizados</span>
+            <strong id="ApiFootballHistoryWrites">-</strong>
+        </div>
+    </div>
+    <div id="ApiFootballHistoryMessage" class="api-football-history-message mt-3">
+        Cargando checkpoint histórico...
     </div>
 </section>
 
@@ -116,6 +188,7 @@
                     <th class="text-end">Omitidos</th>
                     <th class="text-end">Errores</th>
                     <th class="text-end">Recomendaciones</th>
+                    <th class="text-end">Bots A / B / C</th>
                 </tr>
             </thead>
             <tbody id="RobotPanelSummaryBody"></tbody>
@@ -152,10 +225,12 @@
         (() => {
             const urls = {
                 matchHistory: '@Url.Action("RunMatchHistory", "RobotPanel")',
-                worldCupMatchHistory: '@Url.Action("RunWorldCupMatchHistory", "RobotPanel")',
                 upcomingMatches: '@Url.Action("RunUpcomingMatches", "RobotPanel")',
                 pinnacleOdds: '@Url.Action("RunPinnacleOdds", "RobotPanel")',
                 betanoOdds: '@Url.Action("RunBetanoOdds", "RobotPanel")',
+                botAvailability: '@Url.Action("BotAvailability", "RobotPanel")',
+                apiFootballHistoricalStatus: '@Url.Action("ApiFootballHistoricalStatus", "RobotPanel")',
+                startApiFootballHistorical: '@Url.Action("StartApiFootballHistorical", "RobotPanel")',
                 runBots: '@Url.Action("RunBots", "RobotPanel")',
                 fullRun: '@Url.Action("RunFullPipeline", "RobotPanel")'
             };
@@ -164,18 +239,20 @@
             const labels = @Html.Raw(labelsJson);
             const stepDefinitions = [
                 { key: 'match-history', title: 'MatchHistory', subtitle: 'Rango de fechas reciente' },
-                { key: 'world-cup-match-history', title: 'World Cup', subtitle: 'Liga fifa.world / Copa del Mundo' },
                 { key: 'upcoming-matches', title: 'Upcoming', subtitle: 'Sincroniza proximos 7 dias' },
                 { key: 'pinnacle-odds', title: 'Pinnacle', subtitle: 'Busqueda de cuotas con persistencia' },
                 { key: 'betano-odds', title: 'Betano', subtitle: 'Busqueda de cuotas con timeout extendido' },
-                { key: 'run-bots', title: 'Bot A + Bot B', subtitle: 'Generacion de recomendaciones' }
+                { key: 'run-bots', title: 'Bot A + Bot B + Bot C', subtitle: 'Incluye Modelos 2026 · lotes de hasta 100 cuotas' }
             ];
 
             const state = {
                 activeAction: null,
                 latestPayload: null,
-                latestSteps: []
+                latestSteps: [],
+                availability: null
             };
+            const botBatchSize = 100;
+            const batchStorageKey = 'robot-panel-next-batch-v2';
 
             const statusElement = document.getElementById('RobotPanelStatus');
             const stepGrid = document.getElementById('RobotPanelStepGrid');
@@ -190,8 +267,24 @@
             const downloadMissingHistoryButton = document.getElementById('RobotPanelDownloadMissingHistory');
             const daysSelect = document.getElementById('RobotPanelDays');
             const upcomingDaysSelect = document.getElementById('RobotPanelUpcomingDays');
-            const excludeExistingCheckbox = document.getElementById('RobotPanelExcludeExisting');
+            const runBotCInput = document.getElementById('RobotPanelRunBotC');
+            const availableOddsElement = document.getElementById('RobotPanelAvailableOdds');
+            const availableMatchesElement = document.getElementById('RobotPanelAvailableMatches');
+            const totalBatchesElement = document.getElementById('RobotPanelTotalBatches');
+            const batchNumberInput = document.getElementById('RobotPanelBatchNumber');
+            const batchRangeElement = document.getElementById('RobotPanelBatchRange');
+            const refreshAvailabilityButton = document.getElementById('RobotPanelRefreshAvailability');
+            const historicalStatusElement = document.getElementById('ApiFootballHistoryStatus');
+            const historicalCheckpointElement = document.getElementById('ApiFootballHistoryCheckpoint');
+            const historicalQuotaElement = document.getElementById('ApiFootballHistoryQuota');
+            const historicalCompetitionsElement = document.getElementById('ApiFootballHistoryCompetitions');
+            const historicalProcessedElement = document.getElementById('ApiFootballHistoryProcessed');
+            const historicalWritesElement = document.getElementById('ApiFootballHistoryWrites');
+            const historicalMessageElement = document.getElementById('ApiFootballHistoryMessage');
+            const historicalRefreshButton = document.getElementById('ApiFootballHistoryRefresh');
+            const historicalStartButton = document.getElementById('ApiFootballHistoryStart');
             const buttons = Array.from(document.querySelectorAll('[data-action]'));
+            let historicalPollTimer = null;
 
             const getValue = (item, name) => item?.[name.charAt(0).toLowerCase() + name.slice(1)] ?? item?.[name];
             const numberOrDash = value => Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '-';
@@ -274,6 +367,9 @@
                     const status = isRunning ? labels.running : statusText(getValue(result, 'Status'));
                     const badgeClass = isRunning ? 'text-bg-primary' : statusClass(getValue(result, 'Status'));
                     const message = getValue(result, 'ErrorMessage') || getValue(result, 'Message') || (isRunning ? 'Proceso en curso...' : 'Sin ejecutar todavia.');
+                    const botCounts = step.key === 'run-bots' && result
+                        ? `<span>A: ${numberOrDash(getValue(result, 'BotACount'))}</span><span>B: ${numberOrDash(getValue(result, 'BotBCount'))}</span><span>C: ${numberOrDash(getValue(result, 'BotCCount'))}</span>`
+                        : '';
 
                     return `
                         <article class="robot-step-card">
@@ -289,6 +385,7 @@
                                 <span>Ins: ${numberOrDash(getValue(result, 'Inserted'))}</span>
                                 <span>Upd: ${numberOrDash(getValue(result, 'Updated'))}</span>
                                 <span>Err: ${numberOrDash(getValue(result, 'Errors'))}</span>
+                                ${botCounts}
                             </div>
                             <div class="robot-step-message">${escapeHtml(message)}</div>
                         </article>
@@ -331,6 +428,9 @@
                         <td class="text-end">${numberOrDash(getValue(step, 'Skipped'))}</td>
                         <td class="text-end">${numberOrDash(getValue(step, 'Errors'))}</td>
                         <td class="text-end">${numberOrDash(getValue(step, 'RecommendationsGenerated'))}</td>
+                        <td class="text-end">${getValue(step, 'StepKey') === 'run-bots'
+                            ? `${numberOrDash(getValue(step, 'BotACount'))} / ${numberOrDash(getValue(step, 'BotBCount'))} / ${numberOrDash(getValue(step, 'BotCCount'))}`
+                            : '-'}</td>
                     </tr>
                 `).join('');
 
@@ -342,6 +442,88 @@
             const showError = message => {
                 statusElement.className = 'alert alert-danger mb-4';
                 statusElement.textContent = message;
+            };
+
+            const formatMonth = value => {
+                const text = String(value || '');
+                return text.length >= 7 ? text.slice(0, 7) : '-';
+            };
+
+            const renderHistoricalBatch = payload => {
+                const isRunning = Boolean(getValue(payload, 'IsRunning'));
+                const status = getValue(payload, 'Status') || 'Ready';
+                const nextMonth = getValue(payload, 'NextMonth') || getValue(payload, 'Month');
+                const nextOffset = getValue(payload, 'NextCompetitionOffset') ?? getValue(payload, 'CompetitionOffset') ?? 0;
+                const dailyRemaining = getValue(payload, 'DailyRemaining');
+                const minuteRemaining = getValue(payload, 'MinuteRemaining');
+                const processedCompetitions = getValue(payload, 'ProcessedCompetitions');
+                const eligibleCompetitions = getValue(payload, 'EligibleCompetitions');
+                const inserted = getValue(payload, 'Inserted');
+                const updated = getValue(payload, 'Updated');
+
+                historicalStatusElement.textContent = isRunning ? 'Ejecutando' : status;
+                historicalCheckpointElement.textContent = `${formatMonth(nextMonth)} · offset ${numberOrDash(nextOffset)}`;
+                historicalQuotaElement.textContent = dailyRemaining == null
+                    ? '-'
+                    : `${dailyRemaining} diaria · ${minuteRemaining ?? '-'} minuto`;
+                historicalCompetitionsElement.textContent = processedCompetitions == null
+                    ? '-'
+                    : `${numberOrDash(processedCompetitions)} / ${numberOrDash(eligibleCompetitions)}`;
+                historicalProcessedElement.textContent = numberOrDash(getValue(payload, 'ProcessedFixtures'));
+                historicalWritesElement.textContent = inserted == null
+                    ? '-'
+                    : `${numberOrDash(inserted)} / ${numberOrDash(updated)}`;
+                historicalMessageElement.textContent = getValue(payload, 'Message') || 'Lista para ejecutar.';
+                historicalStartButton.disabled = isRunning;
+                historicalStartButton.textContent = isRunning ? 'Tanda en ejecución' : 'Ejecutar siguiente tanda';
+
+                if (historicalPollTimer) {
+                    clearTimeout(historicalPollTimer);
+                    historicalPollTimer = null;
+                }
+                if (isRunning) {
+                    historicalPollTimer = setTimeout(loadHistoricalBatch, 5000);
+                }
+            };
+
+            const loadHistoricalBatch = async () => {
+                historicalRefreshButton.disabled = true;
+                try {
+                    const response = await fetch(urls.apiFootballHistoricalStatus);
+                    const json = await response.json();
+                    if (!response.ok) {
+                        throw new Error(getValue(json, 'error') || 'No se pudo consultar la tanda histórica.');
+                    }
+                    renderHistoricalBatch(json);
+                } catch (error) {
+                    historicalMessageElement.textContent = error instanceof Error
+                        ? error.message
+                        : 'No se pudo consultar la tanda histórica.';
+                } finally {
+                    historicalRefreshButton.disabled = false;
+                }
+            };
+
+            const startHistoricalBatch = async () => {
+                historicalStartButton.disabled = true;
+                historicalMessageElement.textContent = 'Iniciando tanda histórica...';
+                try {
+                    const response = await fetch(urls.startApiFootballHistorical, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}'
+                    });
+                    const json = await response.json();
+                    if (!response.ok) {
+                        throw new Error(getValue(json, 'error') || 'No se pudo iniciar la tanda histórica.');
+                    }
+                    renderHistoricalBatch(json);
+                } catch (error) {
+                    historicalStartButton.disabled = false;
+                    historicalMessageElement.textContent = error instanceof Error
+                        ? error.message
+                        : 'No se pudo iniciar la tanda histórica.';
+                }
             };
 
             const showSuccess = payload => {
@@ -358,20 +540,101 @@
                 statusElement.textContent = message;
             };
 
+            const normalizeBatchNumber = value => {
+                const parsed = Number.parseInt(value, 10);
+                return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+            };
+
+            const renderBatchAvailability = () => {
+                const availability = state.availability;
+                if (!availability) {
+                    availableOddsElement.textContent = '...';
+                    availableMatchesElement.textContent = '...';
+                    totalBatchesElement.textContent = '...';
+                    batchRangeElement.textContent = 'Consultando cuotas...';
+                    return;
+                }
+
+                const totalOdds = Number(getValue(availability, 'TotalOddsRows') || 0);
+                const totalMatches = Number(getValue(availability, 'TotalMatches') || 0);
+                const totalBatches = Number(getValue(availability, 'TotalBatches') || 0);
+                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
+                const start = totalOdds === 0 || batchNumber > totalBatches
+                    ? 0
+                    : ((batchNumber - 1) * botBatchSize) + 1;
+                const end = start === 0 ? 0 : Math.min(batchNumber * botBatchSize, totalOdds);
+
+                availableOddsElement.textContent = totalOdds.toLocaleString();
+                availableMatchesElement.textContent = totalMatches.toLocaleString();
+                totalBatchesElement.textContent = totalBatches.toLocaleString();
+                batchNumberInput.max = Math.max(1, totalBatches);
+                batchRangeElement.textContent = start === 0
+                    ? `El lote ${batchNumber} no tiene cuotas`
+                    : `Cuotas ${start}-${end} de ${totalOdds}`;
+            };
+
+            const loadBotAvailability = async () => {
+                refreshAvailabilityButton.disabled = true;
+                try {
+                    const response = await fetch(urls.botAvailability);
+                    const json = await response.json();
+                    if (!response.ok) {
+                        throw new Error(getValue(json, 'error') || 'No se pudo consultar el contador de cuotas.');
+                    }
+
+                    state.availability = json;
+                    const savedBatch = normalizeBatchNumber(localStorage.getItem(batchStorageKey));
+                    const totalBatches = Number(getValue(json, 'TotalBatches') || 0);
+                    batchNumberInput.value = totalBatches > 0
+                        ? Math.min(savedBatch, totalBatches)
+                        : 1;
+                    renderBatchAvailability();
+                } catch (error) {
+                    state.availability = null;
+                    renderBatchAvailability();
+                    showError(error instanceof Error ? error.message : 'No se pudo consultar el contador de cuotas.');
+                } finally {
+                    refreshAvailabilityButton.disabled = false;
+                }
+            };
+
+            const advanceBatch = () => {
+                const currentBatch = normalizeBatchNumber(batchNumberInput.value);
+                const totalBatches = Number(getValue(state.availability, 'TotalBatches') || 0);
+                if (currentBatch < totalBatches) {
+                    batchNumberInput.value = currentBatch + 1;
+                    localStorage.setItem(batchStorageKey, String(currentBatch + 1));
+                } else {
+                    localStorage.setItem(batchStorageKey, String(currentBatch));
+                }
+                renderBatchAvailability();
+            };
+
             const requestPayload = actionKey => {
                 const days = Number(daysSelect.value || 7);
                 const upcomingDays = Number(upcomingDaysSelect.value || 7);
-                const excludeExistingSelections = Boolean(excludeExistingCheckbox?.checked);
+                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
 
                 switch (actionKey) {
                     case 'match-history':
-                    case 'world-cup-match-history':
                     case 'upcoming-matches':
                         return { days };
                     case 'run-bots':
-                        return { excludeExistingSelections };
+                        return {
+                            excludeExistingSelections: false,
+                            batchNumber,
+                            batchSize: botBatchSize,
+                            runBotC: runBotCInput.checked
+                        };
                     case 'full-run':
-                        return { matchHistoryDays: days, upcomingDays, excludeExistingSelections };
+                        return {
+                            matchHistoryDays: days,
+                            upcomingDays,
+                            excludeExistingSelections: false,
+                            botBatchNumber: batchNumber,
+                            botBatchSize,
+                            runBotC: runBotCInput.checked
+                        };
                     default:
                         return null;
                 }
@@ -380,7 +643,6 @@
             const endpointFor = actionKey => {
                 switch (actionKey) {
                     case 'match-history': return urls.matchHistory;
-                    case 'world-cup-match-history': return urls.worldCupMatchHistory;
                     case 'upcoming-matches': return urls.upcomingMatches;
                     case 'pinnacle-odds': return urls.pinnacleOdds;
                     case 'betano-odds': return urls.betanoOdds;
@@ -413,6 +675,19 @@
 
                     showSuccess(json);
                     renderSummary(json);
+                    if (actionKey === 'run-bots' && Boolean(getValue(json, 'IsSuccess'))) {
+                        advanceBatch();
+                    } else if (actionKey === 'full-run') {
+                        const steps = getValue(json, 'Steps') || [];
+                        const botStep = steps.find(step => getValue(step, 'StepKey') === 'run-bots');
+                        if (Boolean(getValue(botStep, 'IsSuccess'))) {
+                            advanceBatch();
+                        }
+                    }
+
+                    if (['upcoming-matches', 'pinnacle-odds', 'betano-odds', 'full-run'].includes(actionKey)) {
+                        await loadBotAvailability();
+                    }
                 } catch (error) {
                     showError(error instanceof Error ? error.message : 'Ocurrio un error inesperado.');
                 } finally {
@@ -425,6 +700,17 @@
                     invokeAction(button.dataset.action);
                 });
             });
+
+            batchNumberInput.addEventListener('change', () => {
+                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
+                batchNumberInput.value = batchNumber;
+                localStorage.setItem(batchStorageKey, String(batchNumber));
+                renderBatchAvailability();
+            });
+
+            refreshAvailabilityButton.addEventListener('click', loadBotAvailability);
+            historicalRefreshButton.addEventListener('click', loadHistoricalBatch);
+            historicalStartButton.addEventListener('click', startHistoricalBatch);
 
             downloadMissingHistoryButton.addEventListener('click', () => {
                 const report = buildMissingHistoryReport(getMissingHistoryMatches(state.latestSteps));
@@ -441,6 +727,8 @@
 
             renderCards();
             jsonElement.textContent = labels.jsonWaiting;
+            loadBotAvailability();
+            loadHistoricalBatch();
         })();
     </script>
 }

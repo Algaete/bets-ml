@@ -13,8 +13,21 @@ namespace CornersMLData.Models
         public int TotalWithCornersHomeTeam { get; set; }
         public int TotalWithCornersAwayTeam { get; set; }
         public int TotalWithShotsOnTargetTotal { get; set; }
+        public int TotalWithShotsOnTargetHomeTeam { get; set; }
+        public int TotalWithShotsOnTargetAwayTeam { get; set; }
+        public int TotalWithGoalsTotal { get; set; }
+        public int TotalWithGoalsHomeTeam { get; set; }
+        public int TotalWithGoalsAwayTeam { get; set; }
+        public int TotalWithShotsTotal { get; set; }
+        public int TotalWithShotsHomeTeam { get; set; }
+        public int TotalWithShotsAwayTeam { get; set; }
+        public int TotalWithCardsTotal { get; set; }
         public bool PersistedToDatabase { get; set; }
         public int PersistedCount { get; set; }
+        public int PersistenceSkippedMatches { get; set; }
+        public int PersistenceFailedMatches { get; set; }
+        public bool PersistenceCompleted => PersistedToDatabase && PersistenceFailedMatches == 0;
+        public List<string> PersistenceErrors { get; set; } = new();
         public string? StoredProcedureName { get; set; }
         public List<BetanoUpcomingFootballOddsMatch> Matches { get; set; } = new();
     }
@@ -37,6 +50,15 @@ namespace CornersMLData.Models
         public BetanoMarketOddsDto? CornersHomeTeam { get; set; }
         public BetanoMarketOddsDto? CornersAwayTeam { get; set; }
         public BetanoMarketOddsDto? ShotsOnTargetTotal { get; set; }
+        public BetanoMarketOddsDto? ShotsOnTargetHomeTeam { get; set; }
+        public BetanoMarketOddsDto? ShotsOnTargetAwayTeam { get; set; }
+        public BetanoMarketOddsDto? GoalsTotal { get; set; }
+        public BetanoMarketOddsDto? GoalsHomeTeam { get; set; }
+        public BetanoMarketOddsDto? GoalsAwayTeam { get; set; }
+        public BetanoMarketOddsDto? ShotsTotal { get; set; }
+        public BetanoMarketOddsDto? ShotsHomeTeam { get; set; }
+        public BetanoMarketOddsDto? ShotsAwayTeam { get; set; }
+        public BetanoMarketOddsDto? CardsTotal { get; set; }
         public List<string> Notes { get; set; } = new();
     }
 

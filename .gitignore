@@ -8,8 +8,10 @@ obj/
 __pycache__/
 *.pyc
 .venv/
+.venv-new-generation/
+.venv-legacy/
 venv/
-data/
+/data/
 *.db
 *.db-shm
 *.db-wal

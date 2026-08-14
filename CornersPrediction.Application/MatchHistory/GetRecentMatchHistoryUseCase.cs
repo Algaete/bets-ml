@@ -30,6 +30,7 @@ public sealed class GetRecentMatchHistoryUseCase : IGetRecentMatchHistoryUseCase
             awayTeam.Trim(),
             string.IsNullOrWhiteSpace(league) ? null : league.Trim(),
             normalizedTeamGender,
+            beforeDate: null,
             cancellationToken);
 
         return items.Select(MatchHistoryMapper.ToDto).ToArray();
@@ -47,7 +48,7 @@ public sealed class GetRecentMatchHistoryUseCase : IGetRecentMatchHistoryUseCase
             throw new ArgumentException("Away team is required.");
         }
 
-        if (homeTeam.Equals(awayTeam, StringComparison.OrdinalIgnoreCase))
+        if (TeamNameMatcher.AreEquivalent(homeTeam, awayTeam))
         {
             throw new ArgumentException("Home team and away team must be different.");
         }

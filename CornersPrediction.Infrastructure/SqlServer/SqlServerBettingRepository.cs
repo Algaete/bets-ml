@@ -405,7 +405,11 @@ public sealed class SqlServerBettingRepository : IBettingRepository
                             'OverUnderLineModel',
                             'ShotsOnGoalModel',
                             'GoalsModel',
-                            'AutomatedCornersBot'
+                            'AutomatedCornersBot',
+                            'AutomatedGoalsBot',
+                            'AutomatedSogBot',
+                            'AutomatedShotsBot',
+                            'AutomatedModels2026Bot'
                         )
                     );
 

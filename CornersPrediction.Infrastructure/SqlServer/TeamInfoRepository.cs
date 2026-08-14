@@ -4,6 +4,7 @@ using CornersPrediction.Domain.Teams;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using System.Collections.Concurrent;
 
 namespace CornersPrediction.Infrastructure.SqlServer;
 
@@ -12,6 +13,17 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
     private const string LeagueProcedureName = "sp_GetMatchHistoryLeagues";
     private const string TeamProcedureName = "sp_GetTeamsByLeague";
     private const string FormationProcedureName = "sp_GetFormationList";
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromHours(1);
+    private static readonly ConcurrentDictionary<string, StringListCacheEntry> LeagueCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> LeagueCacheLocks =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, TeamInfoCacheEntry> TeamInfoCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> TeamInfoCacheLocks =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, IReadOnlySet<string>> SupportedParametersCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _connectionString;
 
@@ -23,20 +35,42 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
 
     public async Task<IReadOnlyList<string>> GetBig3LeaguesAsync(string teamGender, CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        var parameters = await BuildSupportedParametersAsync(
-            connection,
-            LeagueProcedureName,
-            new Dictionary<string, object?> { ["TeamGender"] = teamGender },
-            cancellationToken);
-        var command = new CommandDefinition(
-            LeagueProcedureName,
-            parameters,
-            commandType: CommandType.StoredProcedure,
-            cancellationToken: cancellationToken);
+        var cacheKey = teamGender.Trim();
+        if (TryGetCachedLeagueList(cacheKey, out var cached))
+        {
+            return cached;
+        }
 
-        var leagues = await connection.QueryAsync<string>(command);
-        return leagues.ToArray();
+        var cacheLock = LeagueCacheLocks.GetOrAdd(cacheKey, static _ => new SemaphoreSlim(1, 1));
+        await cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (TryGetCachedLeagueList(cacheKey, out cached))
+            {
+                return cached;
+            }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var parameters = await BuildSupportedParametersAsync(
+                connection,
+                LeagueProcedureName,
+                new Dictionary<string, object?> { ["TeamGender"] = teamGender },
+                cancellationToken);
+            var command = new CommandDefinition(
+                LeagueProcedureName,
+                parameters,
+                commandType: CommandType.StoredProcedure,
+                commandTimeout: 120,
+                cancellationToken: cancellationToken);
+
+            var leagues = (await connection.QueryAsync<string>(command)).ToArray();
+            LeagueCache[cacheKey] = new StringListCacheEntry(leagues, DateTime.UtcNow.Add(CacheDuration));
+            return leagues;
+        }
+        finally
+        {
+            cacheLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<TeamBi3Info>> GetBi3InfoAsync(
@@ -44,34 +78,61 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
         string teamGender,
         CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        var parameters = await BuildSupportedParametersAsync(
-            connection,
-            TeamProcedureName,
-            new Dictionary<string, object?>
-            {
-                ["League"] = league,
-                ["TeamGender"] = teamGender
-            },
-            cancellationToken);
-        var command = new CommandDefinition(
-            TeamProcedureName,
-            parameters,
-            commandType: CommandType.StoredProcedure,
-            cancellationToken: cancellationToken);
+        var cacheKey = $"{teamGender}|{league.Trim()}";
+        if (TeamInfoCache.TryGetValue(cacheKey, out var cached) &&
+            cached.ExpiresAtUtc > DateTime.UtcNow)
+        {
+            return cached.Teams;
+        }
 
-        var teams = await connection.QueryAsync<TeamInfoRow>(command);
-        return teams
-            .Select(team => new TeamBi3Info
+        var cacheLock = TeamInfoCacheLocks.GetOrAdd(cacheKey, static _ => new SemaphoreSlim(1, 1));
+        await cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (TeamInfoCache.TryGetValue(cacheKey, out cached) &&
+                cached.ExpiresAtUtc > DateTime.UtcNow)
             {
-                League = string.IsNullOrWhiteSpace(team.League) ? league : team.League,
-                Season = team.Season ?? string.Empty,
-                Team = string.IsNullOrWhiteSpace(team.Team) ? team.StandardizedTeam ?? string.Empty : team.Team,
-                IsBig3 = team.IsBig3,
-                CreatedAt = team.CreatedAt
-            })
-            .Where(team => !string.IsNullOrWhiteSpace(team.Team))
-            .ToArray();
+                return cached.Teams;
+            }
+
+            await using var connection = new SqlConnection(_connectionString);
+            var parameters = await BuildSupportedParametersAsync(
+                connection,
+                TeamProcedureName,
+                new Dictionary<string, object?>
+                {
+                    ["League"] = league,
+                    ["TeamGender"] = teamGender
+                },
+                cancellationToken);
+            var command = new CommandDefinition(
+                TeamProcedureName,
+                parameters,
+                commandType: CommandType.StoredProcedure,
+                commandTimeout: 120,
+                cancellationToken: cancellationToken);
+
+            var teams = await connection.QueryAsync<TeamInfoRow>(command);
+            var result = teams
+                .Select(team => new TeamBi3Info
+                {
+                    League = string.IsNullOrWhiteSpace(team.League) ? league : team.League,
+                    Season = team.Season ?? string.Empty,
+                    Team = string.IsNullOrWhiteSpace(team.Team) ? team.StandardizedTeam ?? string.Empty : team.Team,
+                    IsBig3 = team.IsBig3,
+                    CreatedAt = team.CreatedAt
+                })
+                .Where(team => !string.IsNullOrWhiteSpace(team.Team))
+                .ToArray();
+            TeamInfoCache[cacheKey] = new TeamInfoCacheEntry(
+                result,
+                DateTime.UtcNow.Add(CacheDuration));
+            return result;
+        }
+        finally
+        {
+            cacheLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<string>> GetFormationsAsync(CancellationToken cancellationToken)
@@ -97,17 +158,21 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
         IReadOnlyDictionary<string, object?> values,
         CancellationToken cancellationToken)
     {
-        var command = new CommandDefinition(
-            """
-            SELECT ParameterName = REPLACE(p.name, '@', '')
-            FROM sys.parameters p
-            WHERE p.object_id = OBJECT_ID(@ProcedureName);
-            """,
-            new { ProcedureName = procedureName },
-            cancellationToken: cancellationToken);
+        if (!SupportedParametersCache.TryGetValue(procedureName, out var supported))
+        {
+            var command = new CommandDefinition(
+                """
+                SELECT ParameterName = REPLACE(p.name, '@', '')
+                FROM sys.parameters p
+                WHERE p.object_id = OBJECT_ID(@ProcedureName);
+                """,
+                new { ProcedureName = procedureName },
+                cancellationToken: cancellationToken);
 
-        var supported = (await connection.QueryAsync<string>(command))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            supported = (await connection.QueryAsync<string>(command))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            SupportedParametersCache[procedureName] = supported;
+        }
 
         var parameters = new DynamicParameters();
         foreach (var value in values)
@@ -130,4 +195,25 @@ public sealed class TeamInfoRepository : ITeamInfoRepository
         public bool IsBig3 { get; init; }
         public DateTime CreatedAt { get; init; }
     }
+
+    private sealed record TeamInfoCacheEntry(
+        IReadOnlyList<TeamBi3Info> Teams,
+        DateTime ExpiresAtUtc);
+
+    private static bool TryGetCachedLeagueList(string cacheKey, out IReadOnlyList<string> leagues)
+    {
+        if (LeagueCache.TryGetValue(cacheKey, out var cached) &&
+            cached.ExpiresAtUtc > DateTime.UtcNow)
+        {
+            leagues = cached.Values;
+            return true;
+        }
+
+        leagues = Array.Empty<string>();
+        return false;
+    }
+
+    private sealed record StringListCacheEntry(
+        IReadOnlyList<string> Values,
+        DateTime ExpiresAtUtc);
 }

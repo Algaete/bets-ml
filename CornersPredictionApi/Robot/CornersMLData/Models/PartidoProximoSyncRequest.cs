@@ -64,7 +64,14 @@ namespace CornersMLData.Models
         public int? TotalTeams { get; set; }
         public int? HomeTeamPosition { get; set; }
         public int? AwayTeamPosition { get; set; }
+        public string DataSource { get; set; } = "Manual";
+        public long? ExternalFixtureId { get; set; }
+        public string? FixtureStatus { get; set; }
     }
+
+    public sealed record PartidosProximosSyncOptions(
+        bool EnrichPositions = true,
+        bool NormalizeAliases = true);
 
     /// <summary>
     /// Resumen de la sincronizacion manual de partidos proximos.
@@ -83,7 +90,7 @@ namespace CornersMLData.Models
     }
 
     /// <summary>
-    /// Resumen de una sincronizacion automatica de partidos proximos obtenidos desde ESPN.
+    /// Resumen de una sincronizacion automatica de partidos proximos.
     /// </summary>
     public sealed class PartidosProximosAutoSyncResponse
     {
@@ -116,6 +123,17 @@ namespace CornersMLData.Models
         /// Cantidad de registros insertados o actualizados.
         /// </summary>
         public int TotalProcesados { get; set; }
+
+        /// <summary>
+        /// Proveedor que origino los fixtures.
+        /// </summary>
+        public string Source { get; set; } = "API-Football";
+
+        public int TotalExcluidos { get; set; }
+
+        public string? DailyRemaining { get; set; }
+
+        public string? MinuteRemaining { get; set; }
 
         /// <summary>
         /// Desglose diario de partidos encontrados.

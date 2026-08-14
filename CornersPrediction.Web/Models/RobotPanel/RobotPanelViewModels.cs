@@ -19,6 +19,12 @@ public sealed class RobotPanelStepRequestViewModel
 public sealed class RobotPanelBotsRequestViewModel
 {
     public bool ExcludeExistingSelections { get; init; }
+
+    public int BatchNumber { get; init; } = 1;
+
+    public int BatchSize { get; init; } = 100;
+
+    public bool RunBotC { get; init; } = true;
 }
 
 public sealed class RobotPanelFullRunRequestViewModel
@@ -28,6 +34,46 @@ public sealed class RobotPanelFullRunRequestViewModel
     public int UpcomingDays { get; init; } = 7;
 
     public bool ExcludeExistingSelections { get; init; }
+
+    public int BotBatchNumber { get; init; } = 1;
+
+    public int BotBatchSize { get; init; } = 100;
+
+    public bool RunBotC { get; init; } = true;
+}
+
+public sealed class RobotPanelBotAvailabilityViewModel
+{
+    public DateOnly DateFrom { get; init; }
+    public DateOnly DateTo { get; init; }
+    public int TotalOddsRows { get; init; }
+    public int TotalMatches { get; init; }
+    public int BatchSize { get; init; }
+    public int TotalBatches { get; init; }
+}
+
+public sealed class ApiFootballHistoricalBatchViewModel
+{
+    public string Status { get; init; } = string.Empty;
+    public bool IsRunning { get; init; }
+    public DateOnly Month { get; init; }
+    public int CompetitionOffset { get; init; }
+    public DateOnly NextMonth { get; init; }
+    public int NextCompetitionOffset { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? CompletedAtUtc { get; init; }
+    public int? DiscoveredFixtures { get; init; }
+    public int? EligibleCompetitions { get; init; }
+    public int? ProcessedCompetitions { get; init; }
+    public int? ProcessedFixtures { get; init; }
+    public int? Inserted { get; init; }
+    public int? Updated { get; init; }
+    public int? Skipped { get; init; }
+    public int? Errors { get; init; }
+    public bool? StoppedByQuota { get; init; }
+    public string? DailyRemaining { get; init; }
+    public string? MinuteRemaining { get; init; }
+    public string Message { get; init; } = string.Empty;
 }
 
 public sealed class RobotPanelStepResultViewModel
@@ -54,6 +100,7 @@ public sealed class RobotPanelStepResultViewModel
     public int? RecommendationsGenerated { get; init; }
     public int? BotACount { get; init; }
     public int? BotBCount { get; init; }
+    public int? BotCCount { get; init; }
     public IReadOnlyList<MissingHistoryMatchViewModel> MissingHistoryMatches { get; init; } = Array.Empty<MissingHistoryMatchViewModel>();
     public JsonElement? RawResponse { get; init; }
 }

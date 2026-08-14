@@ -612,6 +612,441 @@ label {
   --btn-close-invert: 1;
 }
 
+/* Bot Picks: the base component palette is intentionally light. Keep every
+   market readable when it is rendered inside the dark application theme. */
+:root[data-theme="dark"] .bot-market-switcher {
+  background: #0f1722;
+  border-color: #334155;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme="dark"] .bot-market-switcher-link {
+  color: #b8c2d1;
+}
+
+:root[data-theme="dark"] .bot-market-switcher-link:hover,
+:root[data-theme="dark"] .bot-market-switcher-link:focus {
+  color: #ffffff;
+  background: #1e293b;
+}
+
+:root[data-theme="dark"] .bot-market-switcher-link.is-active {
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #0f766e);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.26);
+}
+
+:root[data-theme="dark"] .bot-production-plan {
+  border-color: rgba(52, 211, 153, 0.28);
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.14), transparent 38%),
+    linear-gradient(135deg, #101b1a 0%, #101722 100%);
+}
+
+:root[data-theme="dark"] .bot-production-plan-copy > div {
+  color: #5eead4;
+}
+
+:root[data-theme="dark"] .bot-production-plan-copy h2 {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .bot-production-plan-copy p {
+  color: #c2cad6;
+}
+
+:root[data-theme="dark"] .bot-production-stat-primary {
+  color: #86efac;
+  background: rgba(22, 101, 52, 0.30);
+  border-color: rgba(74, 222, 128, 0.42);
+}
+
+:root[data-theme="dark"] .bot-production-stat-secondary {
+  color: #93c5fd;
+  background: rgba(30, 64, 175, 0.28);
+  border-color: rgba(96, 165, 250, 0.42);
+}
+
+:root[data-theme="dark"] .bot-production-stat-monitor {
+  color: #d1d5db;
+  background: #1b2431;
+  border-color: #475569;
+}
+
+:root[data-theme="dark"] .bot-picks-bankroll-control,
+:root[data-theme="dark"] .bot-picks-win-toggle {
+  color: #d8dee9;
+  background: #111827;
+  border-color: #374151;
+}
+
+:root[data-theme="dark"] .bot-period-badge {
+  color: #93c5fd;
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(96, 165, 250, 0.42);
+}
+
+:root[data-theme="dark"] .bot-picks-tabs {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .bot-picks-tab {
+  color: #dce3ec;
+  border-color: #303a48;
+  background:
+    radial-gradient(circle at top right, rgba(148, 163, 184, 0.10), transparent 34%),
+    #121821;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+:root[data-theme="dark"] .bot-picks-tab:hover,
+:root[data-theme="dark"] .bot-picks-tab:focus {
+  color: #ffffff;
+  border-color: #60a5fa;
+  background: #182233;
+}
+
+:root[data-theme="dark"] .bot-picks-tab.is-active {
+  color: #ffffff;
+  border-color: #3b82f6;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.22), transparent 38%),
+    linear-gradient(135deg, #111827, #172554);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-b.is-active {
+  border-color: #22c55e;
+  background:
+    radial-gradient(circle at top right, rgba(34, 197, 94, 0.22), transparent 38%),
+    linear-gradient(135deg, #111827, #0f2f20);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-c.is-active {
+  border-color: #a78bfa;
+  background:
+    radial-gradient(circle at top right, rgba(139, 92, 246, 0.24), transparent 38%),
+    linear-gradient(135deg, #111827, #2e1065);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-d.is-active {
+  border-color: #fbbf24;
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.24), transparent 38%),
+    linear-gradient(135deg, #111827, #451a03);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-e.is-active {
+  border-color: #22d3ee;
+  background:
+    radial-gradient(circle at top right, rgba(8, 145, 178, 0.26), transparent 38%),
+    linear-gradient(135deg, #111827, #083344);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-legacy.is-active {
+  border-color: #94a3b8;
+  background: linear-gradient(135deg, #111827, #273244);
+}
+
+:root[data-theme="dark"] .bot-picks-tab-count {
+  color: #e5e7eb;
+  background: #273244;
+}
+
+:root[data-theme="dark"] .bot-picks-tab.is-active .bot-picks-tab-count {
+  color: #08111f;
+  background: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bot-picks-table {
+  --bs-table-color: #e5e7eb;
+  --bs-table-border-color: #334155;
+}
+
+:root[data-theme="dark"] .bot-picks-table tbody tr {
+  --bs-table-color: #e5e7eb;
+  --bs-table-hover-color: #ffffff;
+}
+
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-primary {
+  --bs-table-bg: #102a20;
+  --bs-table-color: #e8f8ef;
+  --bs-table-hover-bg: #163a2b;
+  --bs-table-hover-color: #ffffff;
+  color: #e8f8ef;
+}
+
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-secondary {
+  --bs-table-bg: #13243b;
+  --bs-table-color: #e7f0ff;
+  --bs-table-hover-bg: #193250;
+  --bs-table-hover-color: #ffffff;
+  color: #e7f0ff;
+}
+
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-monitor {
+  --bs-table-bg: #181d25;
+  --bs-table-color: #cbd5e1;
+  --bs-table-hover-bg: #222a36;
+  --bs-table-hover-color: #ffffff;
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .bot-picks-table .text-muted {
+  color: #aeb8c7 !important;
+}
+
+:root[data-theme="dark"] .bot-production-action-monitor {
+  color: #d1d5db;
+  background: #334155;
+  border: 1px solid #475569;
+}
+
+:root[data-theme="dark"] .bot-badge-a {
+  color: #bfdbfe;
+  background: rgba(37, 99, 235, 0.26);
+  border-color: rgba(96, 165, 250, 0.62);
+}
+
+:root[data-theme="dark"] .bot-badge-b {
+  color: #bbf7d0;
+  background: rgba(22, 163, 74, 0.25);
+  border-color: rgba(74, 222, 128, 0.58);
+}
+
+:root[data-theme="dark"] .bot-badge-c {
+  color: #ddd6fe;
+  background: rgba(124, 58, 237, 0.27);
+  border-color: rgba(167, 139, 250, 0.62);
+}
+
+:root[data-theme="dark"] .bot-badge-d {
+  color: #fde68a;
+  background: rgba(217, 119, 6, 0.27);
+  border-color: rgba(251, 191, 36, 0.65);
+}
+
+:root[data-theme="dark"] .bot-badge-e {
+  color: #a5f3fc;
+  background: rgba(8, 145, 178, 0.27);
+  border-color: rgba(34, 211, 238, 0.65);
+}
+
+:root[data-theme="dark"] .bot-badge-f {
+  color: #fbcfe8;
+  background: rgba(219, 39, 119, 0.27);
+  border-color: rgba(244, 114, 182, 0.65);
+}
+
+:root[data-theme="dark"] .bot-badge-legacy {
+  color: #d1d5db;
+  background: #293445;
+  border-color: #64748b;
+}
+
+:root[data-theme="dark"] .bot-picks-result-actions .btn-outline-dark {
+  color: #f1f5f9;
+  background: transparent;
+  border-color: #94a3b8;
+}
+
+:root[data-theme="dark"] .bot-picks-result-actions .btn-outline-dark:hover,
+:root[data-theme="dark"] .bot-picks-result-actions .btn-outline-dark:focus {
+  color: #08111f;
+  background: #cbd5e1;
+}
+
+:root[data-theme="dark"] .bot-picks-result-actions .btn:disabled {
+  color: #8993a2 !important;
+  background: #202733 !important;
+  border-color: #3b4554 !important;
+  opacity: 0.72;
+}
+
+:root[data-theme="dark"] .bot-picks-pagination {
+  border-top-color: #334155;
+}
+
+:root[data-theme="dark"] .bot-picks-pagination-summary,
+:root[data-theme="dark"] .bot-picks-page-ellipsis {
+  color: #aeb8c7;
+}
+
+:root[data-theme="dark"] .bot-picks-page-button {
+  color: #dce3ec;
+  background: #111827;
+  border-color: #475569;
+}
+
+:root[data-theme="dark"] .bot-picks-page-button:hover:not(:disabled),
+:root[data-theme="dark"] .bot-picks-page-button:focus:not(:disabled) {
+  color: #ffffff;
+  background: #164e63;
+  border-color: #22d3ee;
+}
+
+:root[data-theme="dark"] .bot-picks-page-button.is-active {
+  color: #ffffff;
+  background: #0f766e;
+  border-color: #2dd4bf;
+}
+
+:root[data-theme="dark"] .bot-comparison-card {
+  color: #e5e7eb;
+  border-color: #303a48;
+  background-color: #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-a {
+  background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.19), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-b {
+  background: radial-gradient(circle at top right, rgba(22, 163, 74, 0.19), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-c {
+  background: radial-gradient(circle at top right, rgba(124, 58, 237, 0.21), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-d {
+  background: radial-gradient(circle at top right, rgba(217, 119, 6, 0.22), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-e {
+  background: radial-gradient(circle at top right, rgba(8, 145, 178, 0.23), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-f {
+  background: radial-gradient(circle at top right, rgba(219, 39, 119, 0.23), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-card-legacy {
+  background: radial-gradient(circle at top right, rgba(148, 163, 184, 0.18), transparent 34%), #111827;
+}
+
+:root[data-theme="dark"] .bot-comparison-total,
+:root[data-theme="dark"] .bot-bankroll-chart-values strong {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .bot-comparison-record,
+:root[data-theme="dark"] .bot-bankroll-chart-values {
+  color: #b8c2d1;
+}
+
+:root[data-theme="dark"] .bot-bankroll-chart-wrap svg {
+  background: linear-gradient(180deg, #101722 0%, #0b1018 100%);
+}
+
+:root[data-theme="dark"] .bot-chart-grid-line {
+  stroke: #273244;
+}
+
+:root[data-theme="dark"] .bot-chart-start-line {
+  stroke: #64748b;
+}
+
+:root[data-theme="dark"] .bot-chart-axis-label,
+:root[data-theme="dark"] .bot-chart-start-label {
+  fill: #aeb8c7;
+}
+
+:root[data-theme="dark"] .bot-data-science {
+  border-color: #334155;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(20, 184, 166, 0.13), transparent 30%),
+    radial-gradient(circle at 95% 10%, rgba(14, 116, 144, 0.12), transparent 26%),
+    #0b111a;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.30);
+}
+
+:root[data-theme="dark"] .bot-ds-kpi-grid {
+  border-bottom-color: #334155;
+  background: #334155;
+}
+
+:root[data-theme="dark"] .bot-ds-kpi,
+:root[data-theme="dark"] .bot-ds-card {
+  color: #e5e7eb;
+  background: #111827;
+  border-color: #334155;
+}
+
+:root[data-theme="dark"] .bot-ds-kpi-accent {
+  background: linear-gradient(145deg, #0f2c24, #102b31);
+}
+
+:root[data-theme="dark"] .bot-ds-kpi span,
+:root[data-theme="dark"] .bot-ds-kpi small,
+:root[data-theme="dark"] .bot-ds-card-heading p,
+:root[data-theme="dark"] .bot-ds-disclaimer,
+:root[data-theme="dark"] .bot-ds-league-extreme span,
+:root[data-theme="dark"] .bot-ds-league-extreme small,
+:root[data-theme="dark"] .bot-ds-league-controls label > span {
+  color: #aeb8c7;
+}
+
+:root[data-theme="dark"] .bot-ds-kpi strong,
+:root[data-theme="dark"] .bot-ds-card-heading h3,
+:root[data-theme="dark"] .bot-ds-league-extreme strong {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .bot-ds-insight {
+  color: #ccfbf1;
+  background: #103037;
+  border-left-color: #2dd4bf;
+}
+
+:root[data-theme="dark"] .bot-ds-card-heading,
+:root[data-theme="dark"] .bot-ds-league-extremes {
+  border-color: #334155;
+}
+
+:root[data-theme="dark"] .bot-ds-card-heading > span,
+:root[data-theme="dark"] .bot-ds-dimension {
+  color: #99f6e4;
+  background: #153b46;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extremes {
+  background: #0f1722;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extreme {
+  color: #e5e7eb;
+  background: #111827;
+  border-color: #334155;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extreme.is-best {
+  background: #102a20;
+  border-color: #238a4b;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extreme.is-best strong {
+  color: #86efac;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extreme.is-worst {
+  background: #32181d;
+  border-color: #9f3342;
+}
+
+:root[data-theme="dark"] .bot-ds-league-extreme.is-worst strong {
+  color: #fda4af;
+}
+
+:root[data-theme="dark"] .bot-ds-league-table tr.is-best {
+  --bs-table-bg: #102a20;
+  --bs-table-color: #e8f8ef;
+}
+
+:root[data-theme="dark"] .bot-ds-league-table tr.is-worst {
+  --bs-table-bg: #32181d;
+  --bs-table-color: #ffe4e6;
+}
+
 .chart-card,
 .chart-container {
   min-height: 280px;
@@ -752,4 +1187,82 @@ label {
   .dashboard-card-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Bot Picks cockpit keeps readable contrast in both themes. */
+:root[data-theme="dark"] .bot-picks-command-bar,
+:root[data-theme="dark"] .bot-picks-table-toolbar,
+:root[data-theme="dark"] .bot-picks-row-menu > div {
+  border-color: #334155;
+  background: rgba(15, 23, 42, 0.96);
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bot-picks-context-card {
+  border-color: #0e7490;
+  border-left-color: #38bdf8;
+  background: linear-gradient(135deg, #082f49, #111827);
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .bot-picks-context-eyebrow {
+  color: #7dd3fc;
+}
+
+:root[data-theme="dark"] .bot-picks-context-card p,
+:root[data-theme="dark"] .bot-picks-table-scope-note,
+:root[data-theme="dark"] .bot-picks-collapsible > summary small {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .bot-picks-quick-view,
+:root[data-theme="dark"] .bot-picks-row-menu > summary {
+  border-color: #475569;
+  background: #111827;
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bot-picks-quick-view span,
+:root[data-theme="dark"] .bot-pick-signal-grid > span,
+:root[data-theme="dark"] .bot-comparison-sample {
+  background: #1e293b;
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .bot-picks-quick-view.is-active {
+  border-color: #60a5fa;
+  background: #2563eb;
+  color: #fff;
+}
+
+:root[data-theme="dark"] .bot-picks-quick-view.is-active span {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+:root[data-theme="dark"] .bot-comparison-card.is-active {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.24), 0 14px 30px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="dark"] .bot-comparison-sample.is-early { background: #422006; color: #fde68a; }
+:root[data-theme="dark"] .bot-comparison-sample.is-developing { background: #172554; color: #bfdbfe; }
+:root[data-theme="dark"] .bot-comparison-sample.is-strong { background: #052e16; color: #bbf7d0; }
+
+:root[data-theme="dark"] .bot-picks-table thead th {
+  background: #111827;
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-primary,
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-secondary,
+:root[data-theme="dark"] .bot-picks-table tr.bot-production-monitor {
+  --bs-table-bg: transparent;
+  --bs-table-hover-bg: rgba(148, 163, 184, 0.1);
+  color: inherit;
+}
+
+:root[data-theme="dark"] .text-bg-info {
+  color: #082f49 !important;
+  background-color: #7dd3fc !important;
 }

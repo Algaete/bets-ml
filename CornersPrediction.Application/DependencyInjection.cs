@@ -5,6 +5,8 @@ using CornersPrediction.Application.Betting;
 using CornersPrediction.Application.Admin;
 using CornersPrediction.Application.UpcomingMatches;
 using CornersPrediction.Application.AutomatedCorners;
+using CornersPrediction.Application.Automation;
+using CornersPrediction.Application.Automation.BotC;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CornersPrediction.Application;
@@ -39,6 +41,14 @@ public static class DependencyInjection
         services.AddScoped<IGetCurrentBankrollUseCase, GetCurrentBankrollUseCase>();
         services.AddScoped<IGetAutomatedCornerSelectionsUseCase, GetAutomatedCornerSelectionsUseCase>();
         services.AddScoped<IUpdateAutomatedCornerSelectionStatusUseCase, UpdateAutomatedCornerSelectionStatusUseCase>();
+        services.AddScoped<IResolveAutomatedCornerSelectionUseCase, ResolveAutomatedCornerSelectionUseCase>();
+        services.AddScoped<ILinkAutomatedCornerSelectionMatchUseCase, LinkAutomatedCornerSelectionMatchUseCase>();
+        services.AddScoped<IDeleteAutomatedCornerSelectionUseCase, DeleteAutomatedCornerSelectionUseCase>();
+        services.AddScoped<IAutomatedBotPickSettlementUseCase, AutomatedBotPickSettlementUseCase>();
+        services.AddScoped<IRecommendationJobsUseCase, RecommendationJobsUseCase>();
+        services.AddScoped<IRecommendationBotDefinitionsUseCase, RecommendationBotDefinitionsUseCase>();
+        services.AddSingleton<IBotCPickDecisionEngine, BotCPickDecisionEngine>();
+        services.AddSingleton<IBotCMetaModelPredictor, UnavailableBotCMetaModelPredictor>();
         services.AddScoped<ICreatePlatformUserUseCase, CreatePlatformUserUseCase>();
         services.AddScoped<IUpdatePlatformUserUseCase, UpdatePlatformUserUseCase>();
         services.AddScoped<IDeletePlatformUserUseCase, DeletePlatformUserUseCase>();

@@ -24,15 +24,6 @@ public sealed class CornersPipelineController : ControllerBase
         return Ok(await _cornersPipelineService.RunMatchHistoryAsync(request?.Days ?? 7, cancellationToken));
     }
 
-    [HttpPost("world-cup-match-history")]
-    [ProducesResponseType(typeof(CornersPipelineStepResult), StatusCodes.Status200OK)]
-    public async Task<IActionResult> RunWorldCupMatchHistory(
-        [FromBody] RunPipelineStepRequest? request,
-        CancellationToken cancellationToken = default)
-    {
-        return Ok(await _cornersPipelineService.RunWorldCupMatchHistoryAsync(request?.Days ?? 7, cancellationToken));
-    }
-
     [HttpPost("upcoming-matches")]
     [ProducesResponseType(typeof(CornersPipelineStepResult), StatusCodes.Status200OK)]
     public async Task<IActionResult> RunUpcomingMatches(
@@ -63,8 +54,21 @@ public sealed class CornersPipelineController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         return Ok(await _cornersPipelineService.RunBotsAsync(
-            request?.ExcludeExistingSelections ?? false,
+            new RunBotsCommand(
+                ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false,
+                BatchNumber: request?.BatchNumber ?? 1,
+                BatchSize: request?.BatchSize ?? 100,
+                RunBotC: request?.RunBotC ?? true),
             cancellationToken));
+    }
+
+    [HttpGet("bots/availability")]
+    [ProducesResponseType(typeof(BotOddsAvailability), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetBotOddsAvailability(
+        [FromQuery] int batchSize = 100,
+        CancellationToken cancellationToken = default)
+    {
+        return Ok(await _cornersPipelineService.GetBotOddsAvailabilityAsync(batchSize, cancellationToken));
     }
 
     [HttpPost("full-run")]
@@ -76,7 +80,10 @@ public sealed class CornersPipelineController : ControllerBase
         var command = new RunFullPipelineCommand(
             MatchHistoryDays: request?.MatchHistoryDays ?? 7,
             UpcomingDays: request?.UpcomingDays ?? 7,
-            ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false);
+            ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false,
+            BotBatchNumber: request?.BotBatchNumber ?? 1,
+            BotBatchSize: request?.BotBatchSize ?? 100,
+            RunBotC: request?.RunBotC ?? true);
 
         return Ok(await _cornersPipelineService.RunFullPipelineAsync(command, cancellationToken));
     }

@@ -1,0 +1,405 @@
+@model CornersPrediction.Web.Models.NewGeneration.NewGenerationIndexViewModel
+
+@{
+    ViewData["Title"] = "Modelos 2026";
+    var selectedDate = (Model.MatchDate ?? DateTime.Today).ToString("yyyy-MM-dd");
+    var selectedSeason = string.IsNullOrWhiteSpace(Model.Season) ? DateTime.Today.Year.ToString() : Model.Season;
+    var statusClass = Model.ModelCatalog.Ready ? "is-ready" : Model.ModelCatalog.Available ? "is-partial" : "is-pending";
+    var pendingClass = Model.ModelCatalog.Available ? "d-none" : string.Empty;
+    var trainedThrough = Model.ModelCatalog.Models
+        .Select(item => item.TrainedThrough)
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Distinct()
+        .SingleOrDefault() ?? "Pendiente";
+}
+
+<style>
+    .next-ml-shell { --next-accent:#7c3aed; --next-cyan:#0891b2; display:grid; gap:1.25rem; }
+    .next-ml-hero { position:relative; overflow:hidden; display:flex; justify-content:space-between; gap:1.5rem; padding:1.6rem; border:1px solid rgba(124,58,237,.24); border-radius:20px; color:#e2e8f0; background:linear-gradient(120deg,#111827 0%,#312e81 58%,#155e75 125%); box-shadow:0 18px 48px rgba(15,23,42,.2); }
+    .next-ml-hero::after { content:""; position:absolute; width:280px; height:280px; right:-90px; top:-130px; border-radius:50%; background:rgba(34,211,238,.14); }
+    .next-ml-eyebrow { color:#c4b5fd; font-size:.72rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .next-ml-hero h1 { margin:.3rem 0; color:#fff; font-size:clamp(1.65rem,3vw,2.35rem); }
+    .next-ml-hero p { max-width:780px; margin:0; color:#cbd5e1; }
+    .next-ml-status { z-index:1; min-width:230px; align-self:center; padding:1rem; border:1px solid rgba(255,255,255,.16); border-radius:14px; background:rgba(15,23,42,.38); backdrop-filter:blur(10px); }
+    .next-ml-status strong,.next-ml-status span { display:block; }
+    .next-ml-status strong { margin:.2rem 0; color:#fff; font-size:1.05rem; }
+    .next-ml-status span { color:#94a3b8; font-size:.78rem; }
+    .next-status-dot { display:inline-block!important; width:9px; height:9px; margin-right:.35rem; border-radius:50%; background:#f59e0b; }
+    .next-status-dot.is-ready { background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.15); }
+    .next-status-dot.is-partial { background:#38bdf8; box-shadow:0 0 0 4px rgba(56,189,248,.15); }
+    .next-ml-grid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(280px,.72fr); gap:1.25rem; }
+    .next-ml-card { padding:1.25rem; border:1px solid var(--app-border-color,#d8dee9); border-radius:18px; background:var(--app-surface,#fff); box-shadow:0 12px 30px rgba(15,23,42,.06); }
+    .next-card-heading { display:flex; justify-content:space-between; gap:1rem; margin-bottom:1rem; }
+    .next-card-heading h2,.next-card-heading h3 { margin:0; font-size:1.05rem; }
+    .next-card-heading p { margin:.2rem 0 0; color:var(--bs-secondary-color); font-size:.82rem; }
+    .next-match-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.9rem; }
+    .next-field-league { grid-column:span 3; } .next-field-season { grid-column:span 1; } .next-field-date { grid-column:span 2; }
+    .next-field-team { grid-column:span 3; } .next-field-formation { grid-column:span 3; } .next-field-knockout { grid-column:span 6; }
+    .next-model-meta { display:grid; grid-template-columns:1fr 1fr; gap:.7rem; }
+    .next-model-meta > div { padding:.8rem; border:1px solid var(--app-border-color,#e2e8f0); border-radius:12px; background:rgba(124,58,237,.04); }
+    .next-model-meta span { display:block; color:var(--bs-secondary-color); font-size:.68rem; font-weight:750; letter-spacing:.06em; text-transform:uppercase; }
+    .next-model-meta strong { display:block; overflow-wrap:anywhere; margin-top:.2rem; }
+    .next-pending { padding:1rem; border-left:4px solid #f59e0b; border-radius:0 12px 12px 0; color:#92400e; background:#fffbeb; }
+    .next-result-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.75rem; padding:1rem; margin-bottom:1rem; border-radius:14px; color:#e2e8f0; background:linear-gradient(120deg,#312e81,#155e75); }
+    .next-result-head strong,.next-result-head span { display:block; }
+    .next-result-head span { color:#cbd5e1; font-size:.8rem; }
+    .next-market-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+    .next-market { padding:1rem; border:1px solid var(--app-border-color,#e2e8f0); border-radius:16px; background:rgba(148,163,184,.045); }
+    .next-market-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:.8rem; }
+    .next-market-title h3 { margin:0; font-size:1rem; }
+    .next-market-title span { color:var(--bs-secondary-color); font-size:.72rem; }
+    .next-prediction-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.7rem; }
+    .next-prediction-card { min-height:160px; padding:.9rem; border:1px solid rgba(124,58,237,.2); border-radius:14px; background:var(--app-surface,#fff); }
+    .next-prediction-card.is-total { border-color:rgba(8,145,178,.35); background:rgba(8,145,178,.04); }
+    .next-prediction-card .next-prediction-label { color:var(--bs-secondary-color); font-size:.72rem; font-weight:750; text-transform:uppercase; }
+    .next-prediction-card .next-prediction-value { display:block; margin:.35rem 0 .15rem; color:var(--bs-body-color); font-size:2.15rem; line-height:1; }
+    .next-prediction-card .next-prediction-rounded { display:block; font-size:.72rem; }
+    .next-prediction-card .next-prediction-meta { display:block; margin-top:.75rem; color:var(--bs-secondary-color); font-size:.64rem; overflow-wrap:anywhere; }
+    .next-payload-panel { margin-top:1rem; border:1px solid var(--app-border-color,#e2e8f0); border-radius:14px; overflow:hidden; }
+    .next-payload-panel summary { cursor:pointer; padding:1rem; font-weight:700; background:rgba(124,58,237,.05); }
+    .next-payload-body { padding:1rem; }
+    .next-payload-code { max-height:430px; overflow:auto; margin:0; padding:1rem; border-radius:12px; color:#dbeafe; background:#111827; font-size:.75rem; white-space:pre-wrap; }
+    .next-model-table { margin:0; font-size:.78rem; }
+    .next-model-table td,.next-model-table th { vertical-align:middle; }
+    .next-version-cell { max-width:260px; overflow-wrap:anywhere; }
+    @@media (max-width:1199.98px) { .next-market-grid { grid-template-columns:1fr; } }
+    @@media (max-width:991.98px) { .next-ml-grid { grid-template-columns:1fr; } }
+    @@media (max-width:767.98px) { .next-ml-hero { flex-direction:column; } .next-ml-status { width:100%; } .next-match-grid { grid-template-columns:1fr; } .next-match-grid > div { grid-column:auto; } .next-prediction-grid { grid-template-columns:1fr; } .next-model-meta { grid-template-columns:1fr 1fr; } }
+</style>
+
+<div class="next-ml-shell">
+    <section class="next-ml-hero">
+        <div>
+            <div class="next-ml-eyebrow">12 modelos CatBoost · Producción 2026</div>
+            <h1>Modelos 2026</h1>
+            <p>Predicciones prepartido de corners, tiros, tiros al arco y goles. La API consulta el historial una sola vez, construye las features y ejecuta los 12 bundles oficiales.</p>
+        </div>
+        <div class="next-ml-status" aria-live="polite">
+            <span><i id="ModelStatusDot" class="next-status-dot @statusClass"></i>Estado del servicio</span>
+            <strong id="ModelStatusText">@(Model.ModelCatalog.Ready ? "12 modelos validados" : Model.ModelCatalog.Available ? "Catálogo parcial" : "Esperando artefactos")</strong>
+            <span id="ModelStatusCount">@Model.ModelCatalog.ReadyModels de @Model.ModelCatalog.TotalModels disponibles</span>
+        </div>
+    </section>
+
+    <div id="PendingModelNotice" class="next-pending @pendingClass" role="status">
+        <strong>No hay modelos 2026 disponibles.</strong>
+        <div id="PendingModelMessage" class="small mt-1">@(Model.ModelCatalog.Error ?? "Los bundles de producción no pudieron validarse.") No se mostrarán predicciones simuladas.</div>
+    </div>
+
+    <div class="next-ml-grid">
+        <section class="next-ml-card">
+            <div class="next-card-heading">
+                <div>
+                    <h2>Partido a estimar</h2>
+                    <p>Solo datos conocidos antes del inicio. El mismo contexto alimenta todos los mercados.</p>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary" asp-controller="Predictions" asp-action="Index">Abrir modelo anterior</a>
+            </div>
+            <div class="next-match-grid">
+                <div class="next-field-league">
+                    <label class="form-label" for="NextLeague">Liga</label>
+                    <input id="NextLeague" class="form-control" list="NextLeagueOptions" value="@Model.League" autocomplete="off" placeholder="Premier League" />
+                    <datalist id="NextLeagueOptions">
+                        @foreach (var league in Model.LeagueOptions.OrderBy(value => value))
+                        {
+                            <option value="@league"></option>
+                        }
+                    </datalist>
+                </div>
+                <div class="next-field-season">
+                    <label class="form-label" for="NextSeason">Temporada</label>
+                    <input id="NextSeason" class="form-control" value="@selectedSeason" />
+                </div>
+                <div class="next-field-date">
+                    <label class="form-label" for="NextMatchDate">Fecha</label>
+                    <input id="NextMatchDate" class="form-control" type="date" value="@selectedDate" />
+                </div>
+                <div class="next-field-team">
+                    <label class="form-label" for="NextHomeTeam">Local</label>
+                    <input id="NextHomeTeam" class="form-control" list="NextHomeTeamOptions" value="@Model.HomeTeam" autocomplete="off" />
+                    <datalist id="NextHomeTeamOptions"></datalist>
+                </div>
+                <div class="next-field-team">
+                    <label class="form-label" for="NextAwayTeam">Visita</label>
+                    <input id="NextAwayTeam" class="form-control" list="NextAwayTeamOptions" value="@Model.AwayTeam" autocomplete="off" />
+                    <datalist id="NextAwayTeamOptions"></datalist>
+                </div>
+                <div class="next-field-formation">
+                    <label class="form-label" for="NextHomeFormation">Formación local <span class="text-muted">(opcional)</span></label>
+                    <input id="NextHomeFormation" class="form-control" list="NextFormationOptions" placeholder="4-3-3" autocomplete="off" />
+                </div>
+                <div class="next-field-formation">
+                    <label class="form-label" for="NextAwayFormation">Formación visita <span class="text-muted">(opcional)</span></label>
+                    <input id="NextAwayFormation" class="form-control" list="NextFormationOptions" placeholder="4-2-3-1" autocomplete="off" />
+                </div>
+                <div class="next-field-knockout">
+                    <div class="form-check form-switch">
+                        <input id="NextIsKnockout" class="form-check-input" type="checkbox" checked="@Model.IsKnockout" />
+                        <label class="form-check-label" for="NextIsKnockout">Partido de eliminación directa</label>
+                    </div>
+                </div>
+                <datalist id="NextFormationOptions">
+                    @foreach (var formation in Model.FormationOptions.OrderBy(value => value))
+                    {
+                        <option value="@formation"></option>
+                    }
+                </datalist>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mt-4">
+                <button id="NextPredictButton" class="btn btn-primary" type="button" disabled="@(!Model.ModelCatalog.Available)">Predecir los 12 modelos</button>
+                <button id="RefreshModelStatus" class="btn btn-outline-secondary" type="button">Actualizar estado</button>
+                <span class="small text-muted">Regresiones de cantidad esperada; no son probabilidades Over/Under.</span>
+            </div>
+            <div id="NextPredictionError" class="alert alert-danger mt-3 d-none" role="alert"></div>
+        </section>
+
+        <aside class="next-ml-card">
+            <div class="next-card-heading"><div><h2>Catálogo activo</h2><p>Resumen de los bundles validados.</p></div></div>
+            <div class="next-model-meta">
+                <div><span>Disponibles</span><strong id="MetaModelCount">@Model.ModelCatalog.ReadyModels / @Model.ModelCatalog.TotalModels</strong></div>
+                <div><span>Algoritmo</span><strong>CatBoost</strong></div>
+                <div><span>Mercados</span><strong>4</strong></div>
+                <div><span>Targets</span><strong>12</strong></div>
+                <div><span>Entrenados hasta</span><strong id="MetaTrainedThrough">@trainedThrough</strong></div>
+                <div><span>Fuente</span><strong>Historial prepartido SQL</strong></div>
+            </div>
+        </aside>
+    </div>
+
+    <section id="NextPredictionResult" class="next-ml-card d-none" aria-live="polite">
+        <div class="next-card-heading">
+            <div><h2>Predicciones del partido</h2><p>El decimal es el valor de análisis; el entero se muestra solo como referencia.</p></div>
+        </div>
+        <div class="next-result-head">
+            <div><span>Partido</span><strong id="NextResultMatch">—</strong></div>
+            <div><span>Fecha / liga</span><strong id="NextResultContext">—</strong></div>
+            <div><span>Latencia total</span><strong id="NextResultDuration">—</strong></div>
+        </div>
+
+        <div class="next-market-grid">
+            <div class="next-market">
+                <div class="next-market-title"><h3>Corners</h3><span>local · visita · total</span></div>
+                <div class="next-prediction-grid">
+                    <div class="next-prediction-card" data-prediction-target="TargetHomeCorners"><span class="next-prediction-label">Local</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card" data-prediction-target="TargetAwayCorners"><span class="next-prediction-label">Visita</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card is-total" data-prediction-target="TargetTotalCorners"><span class="next-prediction-label">Total</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                </div>
+            </div>
+            <div class="next-market">
+                <div class="next-market-title"><h3>Tiros</h3><span>local · visita · total</span></div>
+                <div class="next-prediction-grid">
+                    <div class="next-prediction-card" data-prediction-target="TargetHomeShots"><span class="next-prediction-label">Local</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card" data-prediction-target="TargetAwayShots"><span class="next-prediction-label">Visita</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card is-total" data-prediction-target="TargetTotalShots"><span class="next-prediction-label">Total</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                </div>
+            </div>
+            <div class="next-market">
+                <div class="next-market-title"><h3>Tiros al arco</h3><span>local · visita · total</span></div>
+                <div class="next-prediction-grid">
+                    <div class="next-prediction-card" data-prediction-target="TargetHomeShotsOnGoal"><span class="next-prediction-label">Local</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card" data-prediction-target="TargetAwayShotsOnGoal"><span class="next-prediction-label">Visita</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card is-total" data-prediction-target="TargetTotalShotsOnGoal"><span class="next-prediction-label">Total</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                </div>
+            </div>
+            <div class="next-market">
+                <div class="next-market-title"><h3>Goles</h3><span>local · visita · total</span></div>
+                <div class="next-prediction-grid">
+                    <div class="next-prediction-card" data-prediction-target="TargetHomeGoals"><span class="next-prediction-label">Local</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card" data-prediction-target="TargetAwayGoals"><span class="next-prediction-label">Visita</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                    <div class="next-prediction-card is-total" data-prediction-target="TargetTotalGoals"><span class="next-prediction-label">Total</span><strong class="next-prediction-value" data-role="value">—</strong><span class="next-prediction-rounded" data-role="rounded">Redondeado: —</span><small class="next-prediction-meta" data-role="meta">Esperando predicción</small></div>
+                </div>
+            </div>
+        </div>
+        <div id="NextPredictionWarnings" class="alert alert-warning mt-3 d-none"></div>
+
+        <details class="next-payload-panel">
+            <summary>Ver payload exacto utilizado por cada modelo</summary>
+            <div class="next-payload-body">
+                <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+                    <div class="flex-grow-1">
+                        <label class="form-label" for="NextPayloadTarget">Modelo</label>
+                        <select id="NextPayloadTarget" class="form-select"></select>
+                    </div>
+                    <span id="NextPayloadFeatureCount" class="badge text-bg-secondary">0 features</span>
+                </div>
+                <pre id="NextPayloadJson" class="next-payload-code">Ejecuta una predicción para ver las variables.</pre>
+            </div>
+        </details>
+    </section>
+
+    <section class="next-ml-card">
+        <div class="next-card-heading"><div><h2>Registro de modelos</h2><p>Versión, schema y disponibilidad de cada target.</p></div></div>
+        <div class="table-responsive">
+            <table class="table table-sm next-model-table">
+                <thead><tr><th>Modelo</th><th>Estado</th><th>Test MAE</th><th>Versión</th><th>Features</th><th>Entrenado hasta</th></tr></thead>
+                <tbody id="NextModelCatalogRows">
+                    @foreach (var item in Model.ModelCatalog.Models)
+                    {
+                        <tr data-model-target="@item.Target">
+                            <td><strong>@(item.DisplayName ?? item.Target)</strong><div class="text-muted">@item.Target</div></td>
+                            <td data-role="status"><span class="badge @(item.Ready ? "text-bg-success" : "text-bg-warning")">@(item.Ready ? "Validado" : "Pendiente")</span></td>
+                            <td data-role="mae"><strong>@(item.TestMae?.ToString("F4", System.Globalization.CultureInfo.GetCultureInfo("es-CL")) ?? "—")</strong></td>
+                            <td class="next-version-cell" data-role="version">@(item.ModelVersion ?? "—")</td>
+                            <td data-role="features">@item.FeatureCount</td>
+                            <td data-role="trained">@(item.TrainedThrough ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+@section Scripts {
+<script>
+(() => {
+    const $ = id => document.getElementById(id);
+    const league = $('NextLeague');
+    const home = $('NextHomeTeam');
+    const away = $('NextAwayTeam');
+    const predictButton = $('NextPredictButton');
+    const errorBox = $('NextPredictionError');
+    const result = $('NextPredictionResult');
+    const payloadSelect = $('NextPayloadTarget');
+    let modelAvailable = @Model.ModelCatalog.Available.ToString().ToLowerInvariant();
+    let payloadsByTarget = {};
+    let labelsByTarget = {};
+
+    const showError = message => {
+        errorBox.textContent = message;
+        errorBox.classList.remove('d-none');
+    };
+    const clearError = () => errorBox.classList.add('d-none');
+    const readError = async response => {
+        const body = await response.json().catch(() => null);
+        return body?.error || body?.detail || `Solicitud rechazada (HTTP ${response.status}).`;
+    };
+    const setOptions = teams => {
+        const html = teams.map(team => `<option value="${String(team.team ?? team.Team ?? '').replaceAll('&','&amp;').replaceAll('"','&quot;')}"></option>`).join('');
+        $('NextHomeTeamOptions').innerHTML = html;
+        $('NextAwayTeamOptions').innerHTML = html;
+    };
+    const loadTeams = async () => {
+        if (!league.value.trim()) { setOptions([]); return; }
+        try {
+            const response = await fetch(`/MatchHistory/TeamOptions?league=${encodeURIComponent(league.value.trim())}&teamGender=M`, { headers: { Accept: 'application/json' } });
+            if (response.ok) setOptions(await response.json());
+        } catch { setOptions([]); }
+    };
+    const loadLatestFormation = async (teamInput, formationInput) => {
+        if (!teamInput.value.trim()) return;
+        try {
+            const response = await fetch(`/Predictions/LatestFormation?team=${encodeURIComponent(teamInput.value.trim())}&league=${encodeURIComponent(league.value.trim())}`);
+            if (!response.ok) return;
+            const value = await response.json();
+            if (value.formation && !formationInput.value.trim()) formationInput.value = value.formation;
+        } catch { }
+    };
+    const catalogRows = () => Array.from(document.querySelectorAll('[data-model-target]'));
+    const renderCatalog = catalog => {
+        const models = catalog.models || [];
+        modelAvailable = catalog.available === true || models.some(model => model.ready === true);
+        predictButton.disabled = !modelAvailable;
+        $('ModelStatusDot').classList.toggle('is-ready', catalog.ready === true);
+        $('ModelStatusDot').classList.toggle('is-partial', modelAvailable && catalog.ready !== true);
+        $('ModelStatusText').textContent = catalog.ready ? (catalog.loaded ? '12 modelos cargados' : '12 modelos validados') : modelAvailable ? 'Catálogo parcial' : 'Esperando artefactos';
+        $('ModelStatusCount').textContent = `${catalog.readyModels || 0} de ${catalog.totalModels || 12} disponibles`;
+        $('MetaModelCount').textContent = `${catalog.readyModels || 0} / ${catalog.totalModels || 12}`;
+        const trained = [...new Set(models.map(model => model.trainedThrough).filter(Boolean))];
+        $('MetaTrainedThrough').textContent = trained.length === 1 ? trained[0] : trained.length ? trained.join(', ') : 'Pendiente';
+        $('PendingModelNotice').classList.toggle('d-none', modelAvailable);
+        if (catalog.error && !modelAvailable) $('PendingModelMessage').textContent = catalog.error;
+        models.forEach(model => {
+            const row = catalogRows().find(item => item.dataset.modelTarget === model.target && item.closest('tbody'));
+            if (!row) return;
+            row.querySelector('[data-role="status"]').innerHTML = `<span class="badge ${model.ready ? 'text-bg-success' : 'text-bg-warning'}">${model.ready ? (model.loaded ? 'Cargado' : 'Validado') : 'Pendiente'}</span>`;
+            row.querySelector('[data-role="mae"]').textContent = Number.isFinite(model.testMae) ? Number(model.testMae).toFixed(4).replace('.', ',') : '—';
+            row.querySelector('[data-role="version"]').textContent = model.modelVersion || '—';
+            row.querySelector('[data-role="features"]').textContent = model.featureCount || 0;
+            row.querySelector('[data-role="trained"]').textContent = model.trainedThrough || '—';
+        });
+        if (catalog.error && !modelAvailable) showError(catalog.error);
+    };
+    const renderPayload = () => {
+        const target = payloadSelect.value;
+        const payload = payloadsByTarget[target] || {};
+        $('NextPayloadFeatureCount').textContent = `${Object.keys(payload).length} features`;
+        $('NextPayloadJson').textContent = JSON.stringify(payload, null, 2);
+    };
+    const resetPredictionCards = () => {
+        document.querySelectorAll('[data-prediction-target]').forEach(card => {
+            card.querySelector('[data-role="value"]').textContent = '—';
+            card.querySelector('[data-role="rounded"]').textContent = 'Redondeado: —';
+            card.querySelector('[data-role="meta"]').textContent = 'No disponible';
+        });
+    };
+
+    $('RefreshModelStatus').addEventListener('click', async () => {
+        clearError();
+        try {
+            const response = await fetch('@Url.Action("ModelInfo", "NewGenerationPrediction")', { headers: { Accept: 'application/json' } });
+            if (!response.ok) throw new Error(await readError(response));
+            renderCatalog(await response.json());
+        } catch (error) { showError(error.message || 'No se pudo actualizar el estado.'); }
+    });
+
+    predictButton.addEventListener('click', async () => {
+        clearError();
+        result.classList.add('d-none');
+        if (!modelAvailable) { showError('Todavía no existen modelos de producción activos.'); return; }
+        const payload = {
+            league: league.value.trim(),
+            season: $('NextSeason').value.trim() || null,
+            matchDate: $('NextMatchDate').value,
+            homeTeam: home.value.trim(),
+            awayTeam: away.value.trim(),
+            homeFormation: $('NextHomeFormation').value.trim() || null,
+            awayFormation: $('NextAwayFormation').value.trim() || null,
+            isKnockout: $('NextIsKnockout').checked
+        };
+        if (!payload.league || !payload.matchDate || !payload.homeTeam || !payload.awayTeam) {
+            showError('Completa liga, fecha, local y visita.'); return;
+        }
+        predictButton.disabled = true;
+        predictButton.textContent = 'Consultando historial y ejecutando modelos…';
+        try {
+            const response = await fetch('@Url.Action("Predict", "NewGenerationPrediction")', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error(await readError(response));
+            const value = await response.json();
+            const predictions = value.predictions || [];
+            resetPredictionCards();
+            labelsByTarget = {};
+            predictions.forEach(prediction => {
+                const card = Array.from(document.querySelectorAll('[data-prediction-target]')).find(item => item.dataset.predictionTarget === prediction.target);
+                if (!card) return;
+                card.querySelector('[data-role="value"]').textContent = Number(prediction.predictionClipped).toFixed(2);
+                card.querySelector('[data-role="rounded"]').textContent = `Redondeado: ${prediction.predictionRounded}`;
+                card.querySelector('[data-role="meta"]').textContent = `${prediction.modelVersion || '—'} · ${prediction.featureSet || '—'} · hasta ${prediction.trainedThrough || '—'}`;
+                labelsByTarget[prediction.target] = prediction.displayName || prediction.target;
+            });
+            const match = value.match || {};
+            $('NextResultMatch').textContent = `${match.homeTeam || payload.homeTeam} vs ${match.awayTeam || payload.awayTeam}`;
+            $('NextResultContext').textContent = `${match.matchDate || payload.matchDate} · ${match.league || payload.league}`;
+            $('NextResultDuration').textContent = `${value.durationMilliseconds || 0} ms · ${predictions.length} modelos`;
+            const warnings = value.warnings || [];
+            $('NextPredictionWarnings').textContent = warnings.join(' ');
+            $('NextPredictionWarnings').classList.toggle('d-none', warnings.length === 0);
+            payloadsByTarget = value.featurePayloads || {};
+            payloadSelect.innerHTML = predictions.map(prediction => `<option value="${prediction.target}">${labelsByTarget[prediction.target]}</option>`).join('');
+            renderPayload();
+            result.classList.remove('d-none');
+            result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (error) { showError(error.message || 'No se pudo completar la predicción.'); }
+        finally { predictButton.disabled = !modelAvailable; predictButton.textContent = 'Predecir los 12 modelos'; }
+    });
+
+    payloadSelect.addEventListener('change', renderPayload);
+    league.addEventListener('change', loadTeams);
+    home.addEventListener('change', () => loadLatestFormation(home, $('NextHomeFormation')));
+    away.addEventListener('change', () => loadLatestFormation(away, $('NextAwayFormation')));
+    if (league.value.trim()) loadTeams();
+})();
+</script>
+}

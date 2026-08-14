@@ -1,5 +1,9 @@
 using System.Data;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using CornersPrediction.Application.Automation.BotE;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
@@ -71,9 +75,11 @@ public sealed class SqlAutomationRepository
     public async Task<IReadOnlyList<UpcomingOddsRecord>> GetUpcomingOddsAsync(
         DateOnly dateFrom,
         DateOnly dateTo,
+        DateTime minimumMatchDate,
         string? league,
         bool excludeExistingSelections,
         int expectedAutomationVersionCount,
+        bool resolveApiFootballFixtureId,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -83,6 +89,7 @@ public sealed class SqlAutomationRepository
                 q.PartidoProximoCuotaId,
                 q.Source,
                 q.SourceMatchId,
+                fixture.ApiFootballFixtureId,
                 q.SourceUrl,
                 q.MatchDate,
                 q.League,
@@ -149,9 +156,30 @@ public sealed class SqlAutomationRepository
                         q.PartidoProximoCuotaId DESC
                 )
             FROM dbo.PartidosProximosCuotas q
-            WHERE q.MarketType IN (N'CornersTotal', N'CornersHomeTeam', N'CornersAwayTeam')
+            OUTER APPLY
+            (
+                SELECT ApiFootballFixtureId = CASE
+                    WHEN COUNT_BIG(*) = 1 THEN MAX(pp.ExternalFixtureId)
+                    ELSE NULL
+                END
+                FROM dbo.PartidosProximos pp
+                WHERE @ResolveApiFootballFixtureId = 1
+                  AND pp.ExternalFixtureId IS NOT NULL
+                  AND pp.FechaPartido >= CAST(q.MatchDate AS DATE)
+                  AND pp.FechaPartido < DATEADD(DAY, 1, CAST(q.MatchDate AS DATE))
+                  AND pp.EquipoLocal COLLATE Latin1_General_100_CI_AI =
+                      COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
+                  AND pp.EquipoVisita COLLATE Latin1_General_100_CI_AI =
+                      COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
+            ) fixture
+            WHERE q.MarketType IN (
+                    N'CornersTotal', N'CornersHomeTeam', N'CornersAwayTeam',
+                    N'GoalsTotal', N'GoalsHomeTeam', N'GoalsAwayTeam',
+                    N'ShotsTotal', N'ShotsHomeTeam', N'ShotsAwayTeam',
+                    N'ShotsOnTargetTotal', N'ShotsOnTargetHomeTeam', N'ShotsOnTargetAwayTeam')
               AND q.MatchDate >= @DateFrom
               AND q.MatchDate < @DateToExclusive
+              AND q.MatchDate > @MinimumMatchDate
               AND (@League IS NULL OR COALESCE(q.StandardizedLeague, q.League) = @League)
               AND ISNULL(q.HomeTeamGender, 'M') <> 'F'
               AND ISNULL(q.AwayTeamGender, 'M') <> 'F'
@@ -164,6 +192,20 @@ public sealed class SqlAutomationRepository
                       SELECT COUNT(DISTINCT s.AutomationVersion)
                       FROM dbo.AutomatedCornerBetSelections s
                       WHERE s.Source = q.Source
+                        AND s.MarketType = CASE q.MarketType
+                            WHEN N'CornersHomeTeam' THEN N'HomeTeamCorners'
+                            WHEN N'CornersAwayTeam' THEN N'AwayTeamCorners'
+                            WHEN N'GoalsTotal' THEN N'TotalGoals'
+                            WHEN N'GoalsHomeTeam' THEN N'HomeTeamGoals'
+                            WHEN N'GoalsAwayTeam' THEN N'AwayTeamGoals'
+                            WHEN N'ShotsTotal' THEN N'TotalShots'
+                            WHEN N'ShotsHomeTeam' THEN N'HomeTeamShots'
+                            WHEN N'ShotsAwayTeam' THEN N'AwayTeamShots'
+                            WHEN N'ShotsOnTargetTotal' THEN N'TotalShotsOnGoal'
+                            WHEN N'ShotsOnTargetHomeTeam' THEN N'HomeTeamShotsOnGoal'
+                            WHEN N'ShotsOnTargetAwayTeam' THEN N'AwayTeamShotsOnGoal'
+                            ELSE N'TotalCorners'
+                        END
                         AND
                         (
                             (
@@ -186,13 +228,20 @@ public sealed class SqlAutomationRepository
                                 AND COALESCE(s.StandardizedAwayTeam, s.AwayTeam) = COALESCE(q.StandardizedAwayTeam, q.AwayTeam)
                             )
                         )
-                  ) < @ExpectedAutomationVersionCount
+                  ) < CASE
+                        WHEN q.MarketType IN (
+                            N'GoalsHomeTeam', N'GoalsAwayTeam',
+                            N'ShotsTotal', N'ShotsHomeTeam', N'ShotsAwayTeam',
+                            N'ShotsOnTargetHomeTeam', N'ShotsOnTargetAwayTeam') THEN 1
+                        ELSE @ExpectedAutomationVersionCount
+                      END
               )
         )
         SELECT
             PartidoProximoCuotaId,
             Source,
             SourceMatchId,
+            ApiFootballFixtureId,
             SourceUrl,
             MatchDate,
             League,
@@ -210,7 +259,8 @@ public sealed class SqlAutomationRepository
             UpdatedAtUtc
         FROM RankedOdds
         WHERE rn = 1
-        ORDER BY MatchDate, COALESCE(StandardizedLeague, League), COALESCE(StandardizedHomeTeam, HomeTeam), COALESCE(StandardizedAwayTeam, AwayTeam), LineValue;
+        ORDER BY MatchDate, COALESCE(StandardizedLeague, League), COALESCE(StandardizedHomeTeam, HomeTeam), COALESCE(StandardizedAwayTeam, AwayTeam), LineValue
+        OPTION (RECOMPILE);
         """;
 
         var rows = new List<UpcomingOddsRecord>();
@@ -220,9 +270,11 @@ public sealed class SqlAutomationRepository
         command.CommandType = CommandType.Text;
         command.Parameters.Add(new SqlParameter("@DateFrom", SqlDbType.DateTime2) { Value = dateFrom.ToDateTime(TimeOnly.MinValue) });
         command.Parameters.Add(new SqlParameter("@DateToExclusive", SqlDbType.DateTime2) { Value = dateTo.AddDays(1).ToDateTime(TimeOnly.MinValue) });
+        command.Parameters.Add(new SqlParameter("@MinimumMatchDate", SqlDbType.DateTime2) { Value = minimumMatchDate });
         command.Parameters.Add(new SqlParameter("@League", SqlDbType.NVarChar, 200) { Value = (object?)league ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@ExcludeExistingSelections", SqlDbType.Bit) { Value = excludeExistingSelections });
         command.Parameters.Add(new SqlParameter("@ExpectedAutomationVersionCount", SqlDbType.Int) { Value = Math.Max(1, expectedAutomationVersionCount) });
+        command.Parameters.Add(new SqlParameter("@ResolveApiFootballFixtureId", SqlDbType.Bit) { Value = resolveApiFootballFixtureId });
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -232,6 +284,7 @@ public sealed class SqlAutomationRepository
                 PartidoProximoCuotaId = reader.GetInt64(reader.GetOrdinal("PartidoProximoCuotaId")),
                 Source = reader.GetString(reader.GetOrdinal("Source")),
                 SourceMatchId = reader.IsDBNull(reader.GetOrdinal("SourceMatchId")) ? null : reader.GetString(reader.GetOrdinal("SourceMatchId")),
+                ApiFootballFixtureId = reader.IsDBNull(reader.GetOrdinal("ApiFootballFixtureId")) ? null : reader.GetInt64(reader.GetOrdinal("ApiFootballFixtureId")),
                 SourceUrl = reader.IsDBNull(reader.GetOrdinal("SourceUrl")) ? null : reader.GetString(reader.GetOrdinal("SourceUrl")),
                 MatchDate = reader.GetDateTime(reader.GetOrdinal("MatchDate")),
                 League = reader.GetString(reader.GetOrdinal("League")),
@@ -253,6 +306,233 @@ public sealed class SqlAutomationRepository
         return rows;
     }
 
+    public async Task<IReadOnlyList<BotECalibrationObservation>> GetBotECalibrationHistoryAsync(
+        string sourceBotKey,
+        DateTime asOfDateUtc,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sourceBotKey))
+        {
+            throw new ArgumentException("A source bot key is required.", nameof(sourceBotKey));
+        }
+
+        const string sql = """
+        WITH EligibleEvaluations AS
+        (
+            SELECT
+                e.AutomatedBotPickEvaluationId,
+                e.ApiFootballFixtureId,
+                e.PublishedSelectionId,
+                e.MatchDate,
+                ExpectedUtcDate = CAST(
+                    e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
+                    AS DATE),
+                e.HomeTeam,
+                e.AwayTeam,
+                e.MarketType,
+                e.SelectedSide,
+                e.LineValue,
+                e.SelectedOdds,
+                SourceProbability = e.FinalProbability,
+                e.MarketNoVigProbability,
+                e.DataQualityScore,
+                e.BaseModelTrainedThroughUtc,
+                BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
+            FROM dbo.AutomatedBotPickEvaluations e
+            WHERE e.BotKey = @SourceBotKey
+              AND e.MatchDate < @AsOfDateUtc
+              AND e.Decision IN (N'Approved', N'Rejected')
+              AND e.SelectedSide IN (N'Over', N'Under')
+              AND e.SelectedOdds > 1
+              AND e.FinalProbability > 0 AND e.FinalProbability < 1
+              AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
+              AND e.DataQualityScore BETWEEN 0 AND 1
+              AND e.BaseModelTrainedThroughUtc IS NOT NULL
+              AND CAST(
+                    e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
+                    AS DATETIME2) > e.BaseModelTrainedThroughUtc
+        ),
+        CandidateMatchesRaw AS
+        (
+            SELECT
+                e.AutomatedBotPickEvaluationId,
+                MatchHistoryId = CONVERT(BIGINT, mh.Id),
+                mh.ApiFootballFixtureId,
+                LinkPriority = 0,
+                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
+            FROM EligibleEvaluations e
+            INNER JOIN dbo.AutomatedCornerBetSelections s
+                ON s.AutomatedCornerBetSelectionId = e.PublishedSelectionId
+            INNER JOIN dbo.MatchHistory mh
+                ON mh.Id = s.MatchHistoryId
+            WHERE e.PublishedSelectionId IS NOT NULL
+              AND s.MatchHistoryId IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                e.AutomatedBotPickEvaluationId,
+                MatchHistoryId = CONVERT(BIGINT, mh.Id),
+                mh.ApiFootballFixtureId,
+                LinkPriority = 1,
+                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
+            FROM EligibleEvaluations e
+            INNER JOIN dbo.MatchHistory mh
+                ON mh.ApiFootballFixtureId = e.ApiFootballFixtureId
+            WHERE e.ApiFootballFixtureId IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                e.AutomatedBotPickEvaluationId,
+                MatchHistoryId = CONVERT(BIGINT, mh.Id),
+                mh.ApiFootballFixtureId,
+                LinkPriority = 2,
+                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
+            FROM EligibleEvaluations e
+            INNER JOIN dbo.MatchHistory mh
+                ON mh.MatchDate BETWEEN DATEADD(DAY, -1, e.ExpectedUtcDate)
+                                    AND DATEADD(DAY, 1, e.ExpectedUtcDate)
+               AND COALESCE(NULLIF(mh.StandardizedHomeTeam, N''), mh.HomeTeam)
+                    COLLATE Latin1_General_100_CI_AI = e.HomeTeam COLLATE Latin1_General_100_CI_AI
+               AND COALESCE(NULLIF(mh.StandardizedAwayTeam, N''), mh.AwayTeam)
+                    COLLATE Latin1_General_100_CI_AI = e.AwayTeam COLLATE Latin1_General_100_CI_AI
+            WHERE e.PublishedSelectionId IS NULL
+              AND e.ApiFootballFixtureId IS NULL
+        ),
+        CandidateMatches AS
+        (
+            SELECT
+                AutomatedBotPickEvaluationId,
+                MatchHistoryId,
+                ApiFootballFixtureId = MAX(ApiFootballFixtureId),
+                LinkPriority = MIN(LinkPriority),
+                DateDistanceDays = MIN(DateDistanceDays)
+            FROM CandidateMatchesRaw
+            GROUP BY AutomatedBotPickEvaluationId, MatchHistoryId
+        ),
+        RankedCandidateMatches AS
+        (
+            SELECT
+                candidate.*,
+                CandidateRank = DENSE_RANK() OVER
+                (
+                    PARTITION BY candidate.AutomatedBotPickEvaluationId
+                    ORDER BY candidate.LinkPriority, candidate.DateDistanceDays,
+                        CASE WHEN candidate.ApiFootballFixtureId IS NULL THEN 1 ELSE 0 END
+                )
+            FROM CandidateMatches candidate
+        ),
+        MatchedEvaluations AS
+        (
+            SELECT
+                AutomatedBotPickEvaluationId,
+                MatchCandidateCount = SUM(CASE WHEN CandidateRank = 1 THEN 1 ELSE 0 END),
+                MatchHistoryId = MAX(CASE WHEN CandidateRank = 1 THEN MatchHistoryId END)
+            FROM RankedCandidateMatches
+            GROUP BY AutomatedBotPickEvaluationId
+        )
+        SELECT
+            EvaluationId = e.AutomatedBotPickEvaluationId,
+            FixtureId = mh.ApiFootballFixtureId,
+            MatchDateUtc = CAST(
+                e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
+                AS DATETIME2),
+            e.MarketType,
+            e.SelectedSide,
+            LineValue = e.LineValue,
+            Odds = e.SelectedOdds,
+            ActualValue = CONVERT(INT, CASE e.MarketType
+                WHEN N'TotalGoals' THEN mh.HomeGoals + mh.AwayGoals
+                WHEN N'HomeTeamGoals' THEN mh.HomeGoals
+                WHEN N'AwayTeamGoals' THEN mh.AwayGoals
+                WHEN N'TotalCorners' THEN mh.HomeCorners + mh.AwayCorners
+                WHEN N'HomeTeamCorners' THEN mh.HomeCorners
+                WHEN N'AwayTeamCorners' THEN mh.AwayCorners
+                WHEN N'TotalShots' THEN mh.HomeShots + mh.AwayShots
+                WHEN N'HomeTeamShots' THEN mh.HomeShots
+                WHEN N'AwayTeamShots' THEN mh.AwayShots
+                WHEN N'TotalShotsOnGoal' THEN mh.HomeShotsOnGoal + mh.AwayShotsOnGoal
+                WHEN N'HomeTeamShotsOnGoal' THEN mh.HomeShotsOnGoal
+                WHEN N'AwayTeamShotsOnGoal' THEN mh.AwayShotsOnGoal
+            END),
+            e.SourceProbability,
+            e.MarketNoVigProbability,
+            e.DataQualityScore,
+            e.BaseModelVersion
+        FROM EligibleEvaluations e
+        INNER JOIN MatchedEvaluations matched
+            ON matched.AutomatedBotPickEvaluationId = e.AutomatedBotPickEvaluationId
+           AND matched.MatchCandidateCount = 1
+        INNER JOIN dbo.MatchHistory mh
+            ON mh.Id = matched.MatchHistoryId
+        WHERE mh.ApiFootballFixtureId IS NOT NULL
+          AND UPPER(LTRIM(RTRIM(COALESCE(mh.FixtureStatus, N'')))) IN (N'FT', N'AET', N'PEN')
+          AND
+          (
+              (e.MarketType IN (N'TotalGoals', N'HomeTeamGoals', N'AwayTeamGoals')
+                  AND ISNULL(mh.ApiFootballGoalsAvailable, 0) = 1)
+              OR (e.MarketType IN (N'TotalCorners', N'HomeTeamCorners', N'AwayTeamCorners')
+                  AND ISNULL(mh.ApiFootballCornersAvailable, 0) = 1)
+              OR (e.MarketType IN (N'TotalShots', N'HomeTeamShots', N'AwayTeamShots')
+                  AND ISNULL(mh.ApiFootballShotsAvailable, 0) = 1)
+              OR (e.MarketType IN (N'TotalShotsOnGoal', N'HomeTeamShotsOnGoal', N'AwayTeamShotsOnGoal')
+                  AND ISNULL(mh.ApiFootballShotsOnGoalAvailable, 0) = 1)
+          )
+          AND CASE e.MarketType
+                WHEN N'TotalGoals' THEN mh.HomeGoals + mh.AwayGoals
+                WHEN N'HomeTeamGoals' THEN mh.HomeGoals
+                WHEN N'AwayTeamGoals' THEN mh.AwayGoals
+                WHEN N'TotalCorners' THEN mh.HomeCorners + mh.AwayCorners
+                WHEN N'HomeTeamCorners' THEN mh.HomeCorners
+                WHEN N'AwayTeamCorners' THEN mh.AwayCorners
+                WHEN N'TotalShots' THEN mh.HomeShots + mh.AwayShots
+                WHEN N'HomeTeamShots' THEN mh.HomeShots
+                WHEN N'AwayTeamShots' THEN mh.AwayShots
+                WHEN N'TotalShotsOnGoal' THEN mh.HomeShotsOnGoal + mh.AwayShotsOnGoal
+                WHEN N'HomeTeamShotsOnGoal' THEN mh.HomeShotsOnGoal
+                WHEN N'AwayTeamShotsOnGoal' THEN mh.AwayShotsOnGoal
+              END IS NOT NULL
+        ORDER BY e.MatchDate, e.AutomatedBotPickEvaluationId
+        OPTION (RECOMPILE);
+        """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.CommandType = CommandType.Text;
+        command.CommandTimeout = 180;
+        command.Parameters.Add(new SqlParameter("@SourceBotKey", SqlDbType.NVarChar, 50)
+        {
+            Value = sourceBotKey.Trim().ToUpperInvariant()
+        });
+        command.Parameters.Add(new SqlParameter("@AsOfDateUtc", SqlDbType.DateTime2)
+        {
+            Value = asOfDateUtc
+        });
+
+        var observations = new List<BotECalibrationObservation>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            observations.Add(new BotECalibrationObservation(
+                reader.GetInt64(reader.GetOrdinal("EvaluationId")),
+                reader.GetInt64(reader.GetOrdinal("FixtureId")),
+                reader.GetDateTime(reader.GetOrdinal("MatchDateUtc")),
+                reader.GetString(reader.GetOrdinal("MarketType")),
+                reader.GetString(reader.GetOrdinal("SelectedSide")),
+                reader.GetDecimal(reader.GetOrdinal("LineValue")),
+                reader.GetDecimal(reader.GetOrdinal("Odds")),
+                reader.GetInt32(reader.GetOrdinal("ActualValue")),
+                Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("SourceProbability"))),
+                Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("MarketNoVigProbability"))),
+                Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("DataQualityScore"))),
+                reader.GetString(reader.GetOrdinal("BaseModelVersion"))));
+        }
+
+        return observations;
+    }
+
     public async Task<UpsertSelectionResult> UpsertSelectionAsync(
         PersistSelectionCommand commandModel,
         CancellationToken cancellationToken)
@@ -266,6 +546,7 @@ public sealed class SqlAutomationRepository
         command.Parameters.Add(new SqlParameter("@AutomationVersion", SqlDbType.NVarChar, 50) { Value = commandModel.AutomationVersion });
         command.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 50) { Value = commandModel.Odds.Source });
         command.Parameters.Add(new SqlParameter("@SourceMatchId", SqlDbType.NVarChar, 100) { Value = (object?)commandModel.Odds.SourceMatchId ?? DBNull.Value });
+        command.Parameters.Add(new SqlParameter("@ApiFootballFixtureId", SqlDbType.BigInt) { Value = (object?)commandModel.Odds.ApiFootballFixtureId ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@SourceUrl", SqlDbType.NVarChar, 500) { Value = (object?)commandModel.Odds.SourceUrl ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@MatchDate", SqlDbType.DateTime2) { Value = commandModel.Odds.MatchDate });
         command.Parameters.Add(new SqlParameter("@League", SqlDbType.NVarChar, 200) { Value = commandModel.Odds.League });
@@ -298,8 +579,9 @@ public sealed class SqlAutomationRepository
         command.Parameters.Add(new SqlParameter("@ConfidenceLevel", SqlDbType.NVarChar, 20) { Value = (object?)commandModel.CornersPrediction.Confidence ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@OverUnderConfidenceLevel", SqlDbType.NVarChar, 20) { Value = (object?)commandModel.OverUnderPrediction?.Confidence ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@ModelConsensus", SqlDbType.NVarChar, 20) { Value = (object?)commandModel.CornersPrediction.ModelConsensus ?? DBNull.Value });
-        command.Parameters.Add(new SqlParameter("@ContextTotalCorners", SqlDbType.Decimal) { Precision = 9, Scale = 4, Value = commandModel.PredictionContext.Comparison.EnrichedPrediction.ToSqlDecimal() });
-        command.Parameters.Add(new SqlParameter("@ContextDifference", SqlDbType.Decimal) { Precision = 9, Scale = 4, Value = Math.Abs(commandModel.PredictionContext.Comparison.EnrichedPrediction - commandModel.CornersPrediction.PredictedTotalCorners).ToSqlDecimal() });
+        var contextPrediction = ResolveContextPrediction(commandModel.Odds.MarketType, commandModel.PredictionContext);
+        command.Parameters.Add(new SqlParameter("@ContextTotalCorners", SqlDbType.Decimal) { Precision = 9, Scale = 4, Value = contextPrediction.ToSqlDecimal() });
+        command.Parameters.Add(new SqlParameter("@ContextDifference", SqlDbType.Decimal) { Precision = 9, Scale = 4, Value = Math.Abs(contextPrediction - commandModel.CornersPrediction.PredictedTotalCorners).ToSqlDecimal() });
         command.Parameters.Add(new SqlParameter("@RecommendedSide", SqlDbType.NVarChar, 10) { Value = (object?)commandModel.CornersPrediction.RecommendedSide ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@DecisionReason", SqlDbType.NVarChar) { Value = commandModel.DecisionReason });
 
@@ -320,6 +602,92 @@ public sealed class SqlAutomationRepository
             SelectionId: Convert.ToInt64(idParameter.Value),
             MergeAction: Convert.ToString(mergeActionParameter.Value) ?? "UNKNOWN");
     }
+
+    public async Task UpsertBotCEvaluationAsync(
+        PersistBotCEvaluationCommand model,
+        CancellationToken cancellationToken)
+    {
+        var decision = model.Decision;
+        var evidenceFingerprint = decision.ConfigurationVersion.StartsWith(
+            "bot-e-",
+            StringComparison.OrdinalIgnoreCase)
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(decision.FeatureSnapshotJson)))
+            : string.Empty;
+        var idempotencyPayload = string.Join(
+            "|",
+            model.BotKey.Trim().ToUpperInvariant(),
+            model.Odds.PartidoProximoCuotaId,
+            model.Odds.MarketType.Trim().ToUpperInvariant(),
+            model.Odds.LineValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            model.BaseModelVersion,
+            decision.ConfigurationVersion,
+            evidenceFingerprint);
+        var idempotencyKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idempotencyPayload)));
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "dbo.sp_UpsertAutomatedBotPickEvaluation";
+        command.CommandType = CommandType.StoredProcedure;
+        command.CommandTimeout = 120;
+        Add(command, "@IdempotencyKey", SqlDbType.Char, idempotencyKey, 64);
+        Add(command, "@RunId", SqlDbType.UniqueIdentifier, model.RunId);
+        Add(command, "@BotKey", SqlDbType.NVarChar, model.BotKey, 50);
+        Add(command, "@AutomationVersion", SqlDbType.NVarChar, model.AutomationVersion, 50);
+        Add(command, "@PartidoProximoCuotaId", SqlDbType.BigInt, model.Odds.PartidoProximoCuotaId);
+        Add(command, "@ApiFootballFixtureId", SqlDbType.BigInt, model.Odds.ApiFootballFixtureId);
+        Add(command, "@MatchDate", SqlDbType.DateTime2, model.Odds.MatchDate);
+        Add(command, "@League", SqlDbType.NVarChar, model.Odds.EffectiveLeague, 200);
+        Add(command, "@HomeTeam", SqlDbType.NVarChar, model.Odds.EffectiveHomeTeam, 150);
+        Add(command, "@AwayTeam", SqlDbType.NVarChar, model.Odds.EffectiveAwayTeam, 150);
+        Add(command, "@Source", SqlDbType.NVarChar, model.Odds.Source, 50);
+        Add(command, "@SourceMarketType", SqlDbType.NVarChar, model.Odds.MarketType, 50);
+        Add(command, "@MarketType", SqlDbType.NVarChar, model.MarketType, 50);
+        AddDecimal(command, "@LineValue", model.Odds.LineValue, 6, 2);
+        Add(command, "@SelectedSide", SqlDbType.NVarChar, EmptyToNull(decision.SelectedSide), 10);
+        AddDecimal(command, "@SelectedOdds", decision.SelectedOdds, 10, 2);
+        Add(command, "@DecisionEngineType", SqlDbType.NVarChar, decision.DecisionEngineType, 40);
+        Add(command, "@Decision", SqlDbType.NVarChar, decision.Decision, 20);
+        Add(command, "@BaseModelName", SqlDbType.NVarChar, model.BaseModelName, 120);
+        Add(command, "@BaseModelVersion", SqlDbType.NVarChar, model.BaseModelVersion, 120);
+        Add(command, "@BaseModelTrainedThroughUtc", SqlDbType.DateTime2, model.BaseModelTrainedThroughUtc);
+        Add(command, "@FeatureSchemaVersion", SqlDbType.NVarChar, decision.FeatureSchemaVersion, 80);
+        Add(command, "@ConfigurationVersion", SqlDbType.NVarChar, decision.ConfigurationVersion, 80);
+        AddDecimal(command, "@BaseRawProbability", decision.BaseRawProbability, 9, 6);
+        AddDecimal(command, "@BaseCalibratedProbability", decision.BaseCalibratedProbability, 9, 6);
+        AddDecimal(command, "@RawImpliedProbability", decision.RawImpliedProbability, 9, 6);
+        AddDecimal(command, "@MarketNoVigProbability", decision.MarketNoVigProbability, 9, 6);
+        AddDecimal(command, "@FinalProbability", decision.FinalProbability, 9, 6);
+        AddDecimal(command, "@FinalEdge", decision.FinalEdge, 9, 6);
+        AddDecimal(command, "@FinalExpectedValue", decision.FinalExpectedValue, 9, 6);
+        AddDecimal(command, "@RuleBasedConfidenceScore", decision.RuleBasedConfidenceScore, 9, 6);
+        AddDecimal(command, "@ContextExpectedValue", decision.ContextExpectedValue, 12, 4);
+        AddDecimal(command, "@ContextAgreementScore", decision.ContextAgreementScore, 9, 6);
+        AddDecimal(command, "@DataQualityScore", decision.DataQualityScore, 9, 6);
+        Add(command, "@DecisionReasonsJson", SqlDbType.NVarChar, JsonSerializer.Serialize(decision.DecisionReasons));
+        Add(command, "@RiskFlagsJson", SqlDbType.NVarChar, JsonSerializer.Serialize(decision.RiskFlags));
+        Add(command, "@Explanation", SqlDbType.NVarChar, decision.Summary, 1000);
+        Add(command, "@FeatureSnapshotJson", SqlDbType.NVarChar, decision.FeatureSnapshotJson);
+        Add(command, "@PublishedSelectionId", SqlDbType.BigInt, model.PublishedSelectionId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void Add(SqlCommand command, string name, SqlDbType type, object? value, int size = 0)
+    {
+        var parameter = size > 0 ? new SqlParameter(name, type, size) : new SqlParameter(name, type);
+        parameter.Value = value ?? DBNull.Value;
+        command.Parameters.Add(parameter);
+    }
+
+    private static void AddDecimal(SqlCommand command, string name, double? value, byte precision, byte scale) =>
+        AddDecimal(command, name, value is null ? null : Convert.ToDecimal(value.Value), precision, scale);
+
+    private static void AddDecimal(SqlCommand command, string name, decimal? value, byte precision, byte scale)
+    {
+        var parameter = new SqlParameter(name, SqlDbType.Decimal) { Precision = precision, Scale = scale, Value = value ?? (object)DBNull.Value };
+        command.Parameters.Add(parameter);
+    }
+
+    private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     public async Task<IReadOnlyList<PersistedAutomatedSelection>> GetSelectionsAsync(
         DateOnly? dateFrom,
@@ -343,65 +711,6 @@ public sealed class SqlAutomationRepository
         }
 
         return rows;
-    }
-
-    public async Task<IReadOnlyList<PersistedAutomatedSelection>> PreviewSettleAsync(
-        DateOnly? matchDateTo,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-        WITH SettledCandidates AS
-        (
-            SELECT
-                s.AutomatedCornerBetSelectionId
-            FROM dbo.AutomatedCornerBetSelections s
-            INNER JOIN dbo.MatchHistory mh
-                ON CAST(s.MatchDate AS DATE) = mh.MatchDate
-               AND COALESCE(s.StandardizedLeague, s.League) = COALESCE(mh.StandardizedLeague, mh.League)
-               AND COALESCE(s.StandardizedHomeTeam, s.HomeTeam) = COALESCE(mh.StandardizedHomeTeam, mh.HomeTeam)
-               AND COALESCE(s.StandardizedAwayTeam, s.AwayTeam) = COALESCE(mh.StandardizedAwayTeam, mh.AwayTeam)
-            WHERE s.Status = N'Pending'
-              AND (@MatchDateTo IS NULL OR CAST(s.MatchDate AS DATE) <= @MatchDateTo)
-        )
-        SELECT s.*
-        FROM dbo.AutomatedCornerBetSelections s
-        INNER JOIN SettledCandidates c
-            ON c.AutomatedCornerBetSelectionId = s.AutomatedCornerBetSelectionId
-        ORDER BY s.MatchDate, COALESCE(s.StandardizedLeague, s.League), COALESCE(s.StandardizedHomeTeam, s.HomeTeam);
-        """;
-
-        var rows = new List<PersistedAutomatedSelection>();
-        await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        command.CommandType = CommandType.Text;
-        command.Parameters.Add(new SqlParameter("@MatchDateTo", SqlDbType.Date) { Value = (object?)matchDateTo?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value });
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            rows.Add(MapSelection(reader));
-        }
-
-        return rows;
-    }
-
-    public async Task<int> SettleAsync(DateOnly? matchDateTo, CancellationToken cancellationToken)
-    {
-        await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "dbo.sp_SettleAutomatedCornerBetSelections";
-        command.CommandType = CommandType.StoredProcedure;
-        command.Parameters.Add(new SqlParameter("@MatchDateTo", SqlDbType.Date) { Value = (object?)matchDateTo?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value });
-
-        var rowsAffected = new SqlParameter("@RowsAffected", SqlDbType.Int)
-        {
-            Direction = ParameterDirection.Output
-        };
-        command.Parameters.Add(rowsAffected);
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        return Convert.ToInt32(rowsAffected.Value);
     }
 
     private async Task<SqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
@@ -512,7 +821,33 @@ public sealed class SqlAutomationRepository
         {
             "CornersHomeTeam" => "HomeTeamCorners",
             "CornersAwayTeam" => "AwayTeamCorners",
+            "GoalsTotal" => "TotalGoals",
+            "GoalsHomeTeam" => "HomeTeamGoals",
+            "GoalsAwayTeam" => "AwayTeamGoals",
+            "ShotsTotal" => "TotalShots",
+            "ShotsHomeTeam" => "HomeTeamShots",
+            "ShotsAwayTeam" => "AwayTeamShots",
+            "ShotsOnTargetTotal" => "TotalShotsOnGoal",
+            "ShotsOnTargetHomeTeam" => "HomeTeamShotsOnGoal",
+            "ShotsOnTargetAwayTeam" => "AwayTeamShotsOnGoal",
             _ => "TotalCorners"
+        };
+    }
+
+    private static double ResolveContextPrediction(string sourceMarketType, PredictionContextDto context)
+    {
+        return sourceMarketType switch
+        {
+            "GoalsTotal" => context.Comparison.EnrichedGoalsPrediction,
+            "GoalsHomeTeam" => context.Comparison.HomeExpectedGoals,
+            "GoalsAwayTeam" => context.Comparison.AwayExpectedGoals,
+            "ShotsTotal" => context.Comparison.EnrichedShotsPrediction,
+            "ShotsHomeTeam" => context.Comparison.HomeExpectedShots,
+            "ShotsAwayTeam" => context.Comparison.AwayExpectedShots,
+            "ShotsOnTargetTotal" => context.Comparison.EnrichedShotsOnGoalPrediction,
+            "ShotsOnTargetHomeTeam" => context.Comparison.HomeExpectedShotsOnGoal,
+            "ShotsOnTargetAwayTeam" => context.Comparison.AwayExpectedShotsOnGoal,
+            _ => context.Comparison.EnrichedPrediction
         };
     }
 }

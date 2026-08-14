@@ -199,7 +199,11 @@ public static class BettingOptions
         "OverUnderLineModel",
         "ShotsOnGoalModel",
         "GoalsModel",
-        "AutomatedCornersBot"
+        "AutomatedCornersBot",
+        "AutomatedGoalsBot",
+        "AutomatedSogBot",
+        "AutomatedShotsBot",
+        "AutomatedModels2026Bot"
     ];
     public static readonly string[] BankrollTransactionTypes = ["Deposit", "Withdrawal", "BetSettlement", "ManualAdjustment"];
     public static readonly string[] CurrencyCodes = ["CLP", "USD", "AUD"];

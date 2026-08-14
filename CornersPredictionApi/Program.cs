@@ -2,11 +2,17 @@ using AutomatedCornersBot.Api;
 using CornersMLData.Data;
 using CornersMLData.Services;
 using CornersPrediction.Application;
+using CornersPrediction.Application.Automation.BotC;
 using CornersPrediction.Infrastructure;
 using CornersPrediction.Infrastructure.Persistence;
 using CornersPredictionApi.ApiFootball;
+using CornersPredictionApi.CompetitionFiltering;
+using CornersPredictionApi.NewGenerationMl;
+using CornersPredictionApi.RecommendationJobs;
 using DotNetEnv;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Data.SqlClient;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -30,15 +36,23 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.Configure<AutomatedBotOptions>(builder.Configuration.GetSection("AutomatedBot"));
+builder.Services.Configure<BotCMetaModelOptions>(builder.Configuration.GetSection(BotCMetaModelOptions.SectionName));
+builder.Services.AddSingleton<IBotCMetaModelPredictor, FileBotCMetaModelPredictor>();
+builder.Services.Configure<CompetitionFilterOptions>(
+    builder.Configuration.GetSection(CompetitionFilterOptions.SectionName));
+builder.Services.AddSingleton<CompetitionEligibilityPolicy>();
 builder.Services.AddScoped<CornersMLData.Data.MatchHistoryRepository>();
 builder.Services.AddScoped<PartidosProximosRepository>();
 builder.Services.AddScoped<BetanoUpcomingOddsRepository>();
 builder.Services.AddScoped<PinnacleUpcomingOddsRepository>();
 builder.Services.AddScoped<TeamPositionResolver>();
 builder.Services.AddSingleton<CanonicalNameNormalizationRepository>();
-builder.Services.AddScoped<EspnPartidosProximosScraper>();
 builder.Services.AddScoped<BetanoUpcomingOddsScraper>();
-builder.Services.AddScoped<PinnacleUpcomingOddsScraper>();
+builder.Services.AddHttpClient<PinnacleUpcomingOddsScraper>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("CornersPrediction-Pinnacle/2.0");
+});
 builder.Services.AddSingleton<SqlAutomationRepository>();
 builder.Services.AddSingleton<FeatureBuilder>();
 builder.Services.AddHttpClient<PredictionApiClient>();
@@ -53,6 +67,18 @@ builder.Services.AddHttpClient<ApiFootballClient>((serviceProvider, client) =>
 });
 builder.Services.AddScoped<ApiFootballRepository>();
 builder.Services.AddScoped<ApiFootballSyncService>();
+builder.Services.AddScoped<ApiFootballBotPickReconciliationService>();
+builder.Services.AddScoped<ApiFootballUpcomingMatchesSyncService>();
+builder.Services.AddSingleton<ApiFootballHistoricalBatchCoordinator>();
+builder.Services.Configure<NewGenerationMlOptions>(
+    builder.Configuration.GetSection(NewGenerationMlOptions.SectionName));
+builder.Services.AddSingleton<NewGenerationModelPackage>();
+builder.Services.AddSingleton<NewGenerationPythonRunner>();
+builder.Services.AddScoped<NewGenerationFeatureBuilder>();
+builder.Services.AddScoped<NewGenerationPredictionService>();
+builder.Services.Configure<RecommendationJobOptions>(
+    builder.Configuration.GetSection(RecommendationJobOptions.SectionName));
+builder.Services.AddHostedService<RecommendationJobWorker>();
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -174,7 +200,24 @@ static IDictionary<string, string?> BuildDeploymentConfigurationFromEnvironment(
         ["AutomatedBot:PredictionApi:BaseUrl"] =
             Environment.GetEnvironmentVariable("AUTOMATED_BOT_PREDICTION_API_BASE_URL"),
         ["AutomatedBot:PredictionApi:InternalApiKey"] = Environment.GetEnvironmentVariable("INTERNAL_API_KEY"),
-        ["ApiFootball:ApiKey"] = Environment.GetEnvironmentVariable("API_FOOTBALL_KEY")
+        ["ApiFootball:ApiKey"] = Environment.GetEnvironmentVariable("API_FOOTBALL_KEY"),
+        ["NewGenerationMl:ModelsRoot"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_MODELS_ROOT"),
+        ["NewGenerationMl:ActiveVersion"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_ACTIVE_VERSION"),
+        ["NewGenerationMl:PythonExecutable"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_PYTHON_EXECUTABLE"),
+        ["NewGenerationMl:ScriptPath"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_SCRIPT_PATH"),
+        ["NewGenerationMl:TimeoutSeconds"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_TIMEOUT_SECONDS"),
+        ["BotCMetaModel:Enabled"] = Environment.GetEnvironmentVariable("BOT_C_META_MODEL_ENABLED"),
+        ["BotCMetaModel:ArtifactPath"] = Environment.GetEnvironmentVariable("BOT_C_META_MODEL_ARTIFACT_PATH"),
+        ["BotCMetaModel:ArtifactPaths:bot-d-features-1.0.0"] = Environment.GetEnvironmentVariable("BOT_D_META_MODEL_ARTIFACT_PATH"),
+        ["PinnacleGuestApi:BaseUrl"] = Environment.GetEnvironmentVariable("PINNACLE_GUEST_API_BASE_URL"),
+        ["PinnacleGuestApi:ApiKey"] = Environment.GetEnvironmentVariable("PINNACLE_GUEST_API_KEY"),
+        ["BetanoScraping:BrowserChannel"] = Environment.GetEnvironmentVariable("BETANO_BROWSER_CHANNEL"),
+        ["BetanoScraping:Headless"] = Environment.GetEnvironmentVariable("BETANO_HEADLESS"),
+        ["BetanoScraping:ProfilePath"] = Environment.GetEnvironmentVariable("BETANO_PROFILE_PATH"),
+        ["RecommendationJobs:Enabled"] = Environment.GetEnvironmentVariable("RECOMMENDATION_JOBS_ENABLED"),
+        ["RecommendationJobs:Recurring:Enabled"] = Environment.GetEnvironmentVariable("RECOMMENDATION_RECURRING_ENABLED"),
+        ["RecommendationJobs:Recurring:IntervalMinutes"] = Environment.GetEnvironmentVariable("RECOMMENDATION_RECURRING_INTERVAL_MINUTES"),
+        ["RecommendationJobs:Recurring:LookAheadDays"] = Environment.GetEnvironmentVariable("RECOMMENDATION_RECURRING_LOOKAHEAD_DAYS")
     }
     .Where(setting => !string.IsNullOrWhiteSpace(setting.Value))
     .ToDictionary(setting => setting.Key, setting => setting.Value);
@@ -210,10 +253,35 @@ static async Task InitializeRobotDatabaseAsync(IServiceProvider services)
         await scope.ServiceProvider
             .GetRequiredService<ApiFootballRepository>()
             .EnsureSchemaAsync(CancellationToken.None);
+        await EnsureMatchHistoryPerformanceIndexesAsync(scope.ServiceProvider, CancellationToken.None);
         logger.LogInformation("Robot database objects are ready.");
     }
     catch (Exception exception)
     {
         logger.LogError(exception, "Robot database initialization failed. Robot endpoints remain available for retry.");
     }
+}
+
+static async Task EnsureMatchHistoryPerformanceIndexesAsync(
+    IServiceProvider services,
+    CancellationToken cancellationToken)
+{
+    var environment = services.GetRequiredService<IWebHostEnvironment>();
+    var options = services
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<AutomatedBotOptions>>()
+        .Value;
+    var scriptPath = Path.Combine(environment.ContentRootPath, "SqlScripts", "MatchHistoryPerformanceIndexes.sql");
+    if (!File.Exists(scriptPath))
+    {
+        throw new FileNotFoundException("The MatchHistory performance index script was not found.", scriptPath);
+    }
+
+    var sql = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+    await using var connection = new SqlConnection(options.ResolveSqlConnectionString());
+    await connection.OpenAsync(cancellationToken);
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    command.CommandType = CommandType.Text;
+    command.CommandTimeout = 600;
+    await command.ExecuteNonQueryAsync(cancellationToken);
 }

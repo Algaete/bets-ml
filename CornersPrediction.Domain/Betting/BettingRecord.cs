@@ -200,6 +200,10 @@ public static class BetPredictionModels
     public const string ShotsOnGoalModel = "ShotsOnGoalModel";
     public const string GoalsModel = "GoalsModel";
     public const string AutomatedCornersBot = "AutomatedCornersBot";
+    public const string AutomatedGoalsBot = "AutomatedGoalsBot";
+    public const string AutomatedSogBot = "AutomatedSogBot";
+    public const string AutomatedShotsBot = "AutomatedShotsBot";
+    public const string AutomatedModels2026Bot = "AutomatedModels2026Bot";
 
     public static readonly string[] All =
     [
@@ -208,7 +212,11 @@ public static class BetPredictionModels
         OverUnderLineModel,
         ShotsOnGoalModel,
         GoalsModel,
-        AutomatedCornersBot
+        AutomatedCornersBot,
+        AutomatedGoalsBot,
+        AutomatedSogBot,
+        AutomatedShotsBot,
+        AutomatedModels2026Bot
     ];
 }
 

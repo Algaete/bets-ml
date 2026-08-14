@@ -1,15 +1,16 @@
 using CornersMLData.Data;
 using CornersMLData.Models;
-using Microsoft.Playwright;
+using CornersPredictionApi.CompetitionFiltering;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,492 +18,386 @@ namespace CornersMLData.Services
 {
     public sealed class PinnacleUpcomingOddsScraper
     {
+        private const int SoccerSportId = 29;
+        private const string DefaultApiBaseUrl = "https://guest.api.arcadia.pinnacle.com/";
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNameCaseInsensitive = true
         };
 
-        private static readonly Regex MatchUrlRegex = new(
-            @"^https://www\.pinnacle\.com/es/soccer/(?!matchups/|futures/).+/(?<id>\d+)/?$",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-        private static readonly Regex CornersLineRegex = new(
-            @"Más de\s+(?<line>\d+(?:[.,]\d+)?)\s+Córneres?\s+(?<over>\d+(?:[.,]\d+)?)\s+Menos de\s+(?<line2>\d+(?:[.,]\d+)?)\s+Córneres?\s+(?<under>\d+(?:[.,]\d+)?)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-        private static readonly Regex TeamTotalLineRegex = new(
-            @"Más de\s+(?<line>\d+(?:[.,]\d+)?)\s+(?<over>\d+(?:[.,]\d+)?)\s+Menos de\s+(?<line2>\d+(?:[.,]\d+)?)\s+(?<under>\d+(?:[.,]\d+)?)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
+        private readonly HttpClient _httpClient;
         private readonly ILogger<PinnacleUpcomingOddsScraper> _logger;
+        private readonly CompetitionEligibilityPolicy _competitionPolicy;
+        private readonly string _apiBaseUrl;
+        private readonly string _apiKey;
+        private readonly int _parallelism;
+        private readonly int _upcomingDays;
 
-        public PinnacleUpcomingOddsScraper(ILogger<PinnacleUpcomingOddsScraper> logger)
+        public PinnacleUpcomingOddsScraper(
+            HttpClient httpClient,
+            IConfiguration configuration,
+            ILogger<PinnacleUpcomingOddsScraper> logger,
+            CompetitionEligibilityPolicy competitionPolicy)
         {
+            _httpClient = httpClient;
             _logger = logger;
+            _competitionPolicy = competitionPolicy;
+            _apiBaseUrl = NormalizeBaseUrl(
+                configuration["PinnacleGuestApi:BaseUrl"] ?? DefaultApiBaseUrl);
+            var configuredApiKey = configuration["PinnacleGuestApi:ApiKey"];
+            if (string.IsNullOrWhiteSpace(configuredApiKey))
+            {
+                throw new InvalidOperationException(
+                    "PinnacleGuestApi:ApiKey is required. Set PINNACLE_GUEST_API_KEY.");
+            }
+
+            _apiKey = configuredApiKey.Trim();
+            _parallelism = Math.Clamp(
+                configuration.GetValue("PinnacleGuestApi:Parallelism", 6),
+                1,
+                12);
+            _upcomingDays = Math.Clamp(
+                configuration.GetValue("PinnacleGuestApi:UpcomingDays", 7),
+                1,
+                14);
         }
 
         public async Task<PinnacleUpcomingFootballOddsResponse> ScrapeUpcomingFootballAsync(
-            int take = 10,
+            int take = 100,
             CancellationToken cancellationToken = default)
         {
-            if (take <= 0)
-                take = 10;
+            take = Math.Clamp(take <= 0 ? 100 : take, 1, 200);
 
-            if (take > 50)
-                take = 50;
+            var matchups = await GetAsync<List<ArcadiaMatchup>>(
+                $"0.1/sports/{SoccerSportId}/matchups?withSpecials=true",
+                cancellationToken) ?? new List<ArcadiaMatchup>();
 
-            using var playwright = await Playwright.CreateAsync();
+            var parents = matchups
+                .Where(matchup => matchup.ParentId == null)
+                .GroupBy(matchup => matchup.Id)
+                .ToDictionary(group => group.Key, group => group.First());
 
-            var sessionDir = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                ".runtime",
-                "tmp",
-                $"playwright-pinnacle-upcoming-odds-{Environment.ProcessId}-{Guid.NewGuid():N}");
+            var minimumStart = DateTimeOffset.UtcNow.AddMinutes(-15);
+            var maximumStart = DateTimeOffset.UtcNow.AddDays(_upcomingDays);
+            var marketMatchupsByParent = matchups
+                .Where(matchup => matchup.ParentId != null)
+                .GroupBy(matchup => matchup.ParentId!.Value)
+                .ToDictionary(group => group.Key, group => (IReadOnlyList<ArcadiaMatchup>)group.ToArray());
+            var marketCandidates = parents.Values
+                .Where(parent => !parent.IsLive && parent.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                .Where(parent => parent.StartTime >= minimumStart && parent.StartTime <= maximumStart)
+                .Select(parent => new PinnacleApiCandidate(
+                    parent,
+                    marketMatchupsByParent.GetValueOrDefault(parent.Id) ?? Array.Empty<ArcadiaMatchup>()))
+                .Where(candidate => !IsWomenMatch(candidate.Parent))
+                .ToArray();
+            var candidates = marketCandidates
+                .Where(candidate => _competitionPolicy.IsEligible(
+                    candidate.Parent.League.Name,
+                    candidate.Parent.League.Group))
+                .OrderBy(candidate => candidate.Parent.StartTime)
+                .ThenBy(candidate => candidate.Parent.League.Name)
+                .ThenBy(candidate => candidate.Parent.Id)
+                .ToArray();
 
-            Directory.CreateDirectory(sessionDir);
+            _logger.LogInformation(
+                "Filtro de competiciones Pinnacle aplicado. MarketCandidates={MarketCandidates}, Included={Included}, Excluded={Excluded}",
+                marketCandidates.Length,
+                candidates.Length,
+                marketCandidates.Length - candidates.Length);
 
-            var context = await playwright.Chromium.LaunchPersistentContextAsync(
-                sessionDir,
-                new BrowserTypeLaunchPersistentContextOptions
-                {
-                    Channel = Environment.GetEnvironmentVariable("PLAYWRIGHT_BROWSER_CHANNEL"),
-                    Headless = true,
-                    SlowMo = 0,
-                    ChromiumSandbox = false,
-                    ViewportSize = new ViewportSize { Width = 1600, Height = 1200 },
-                    ScreenSize = new ScreenSize { Width = 1600, Height = 1200 },
-                    Locale = "es-CL",
-                    IgnoreHTTPSErrors = true,
-                    UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    Args = new[]
-                    {
-                        "--no-sandbox",
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-dev-shm-usage",
-                        "--disable-background-networking",
-                        "--start-maximized"
-                    }
-                });
-
-            try
+            var selectedCandidates = candidates.Take(take).ToArray();
+            using var semaphore = new SemaphoreSlim(_parallelism, _parallelism);
+            var tasks = selectedCandidates.Select(async candidate =>
             {
-                var discoveredMatches = await DiscoverUpcomingMatchesAsync(context, take, cancellationToken);
-                var results = new List<PinnacleUpcomingFootballOddsMatch>();
-
-                foreach (var candidate in discoveredMatches.Take(take))
+                await semaphore.WaitAsync(cancellationToken);
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    try
-                    {
-                        var match = await ScrapeMatchAsync(context, candidate, cancellationToken);
-                        results.Add(match);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(
-                            ex,
-                            "No se pudo scrapear partido Pinnacle. Url={Url}, MatchId={MatchId}",
-                            candidate.Url,
-                            candidate.SourceMatchId);
-
-                        results.Add(new PinnacleUpcomingFootballOddsMatch
-                        {
-                            SourceMatchId = candidate.SourceMatchId,
-                            SourceUrl = candidate.Url,
-                            Notes =
-                            {
-                                $"Error scraping match: {ex.Message}"
-                            }
-                        });
-                    }
+                    return await ScrapeMatchAsync(candidate, cancellationToken);
                 }
-
-                return new PinnacleUpcomingFootballOddsResponse
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    Message = "Scraping Pinnacle de proximos partidos de futbol completado.",
-                    ScrapedAtUtc = DateTime.UtcNow,
-                    TotalDiscovered = discoveredMatches.Count,
-                    TotalProcessed = results.Count,
-                    TotalWithCornersTotal = results.Count(x => x.CornersTotal != null),
-                    TotalWithCornersHomeTeam = results.Count(x => x.CornersHomeTeam != null),
-                    TotalWithCornersAwayTeam = results.Count(x => x.CornersAwayTeam != null),
-                    Matches = results
-                };
-            }
-            finally
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning(
+                        exception,
+                        "No se pudo obtener mercados Pinnacle por API. MatchId={MatchId}",
+                        candidate.Parent.Id);
+
+                    var failedMatch = BuildMatchMetadata(candidate);
+                    failedMatch.Notes.Add($"Error loading Pinnacle markets: {exception.Message}");
+                    return failedMatch;
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            var results = await Task.WhenAll(tasks);
+
+            return new PinnacleUpcomingFootballOddsResponse
             {
-                try { await context.CloseAsync(); } catch { }
-            }
-        }
-
-        private async Task<List<PinnacleMatchCandidate>> DiscoverUpcomingMatchesAsync(
-            IBrowserContext context,
-            int take,
-            CancellationToken cancellationToken)
-        {
-            var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync();
-            await page.GotoAsync(
-                "https://www.pinnacle.com/es/soccer/matchups/highlights/",
-                new PageGotoOptions
-                {
-                    WaitUntil = WaitUntilState.DOMContentLoaded,
-                    Timeout = 45000
-                });
-
-            await page.WaitForTimeoutAsync(8000);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var candidatesJson = await page.EvaluateAsync<string>(
-                """
-                (limit) => {
-                  const items = [];
-                  const seen = new Set();
-                  const anchors = Array.from(document.querySelectorAll('a[href]'));
-
-                  for (const anchor of anchors) {
-                    const href = (anchor.href || '').split('#')[0];
-                    if (!href) {
-                      continue;
-                    }
-
-                    if (!/^https:\/\/www\.pinnacle\.com\/es\/soccer\/(?!matchups\/|futures\/).+\/\d+\/?$/i.test(href)) {
-                      continue;
-                    }
-
-                    const idMatch = href.match(/\/(\d+)\/?$/);
-                    if (!idMatch) {
-                      continue;
-                    }
-
-                    const sourceMatchId = idMatch[1];
-                    if (seen.has(sourceMatchId)) {
-                      continue;
-                    }
-
-                    seen.add(sourceMatchId);
-                    items.push({
-                      sourceMatchId,
-                      url: href,
-                      listingText: (anchor.textContent || '').replace(/\s+/g, ' ').trim()
-                    });
-
-                    if (items.length >= limit * 3) {
-                      break;
-                    }
-                  }
-
-                  return JSON.stringify(items);
-                }
-                """,
-                take);
-
-            var candidates = JsonSerializer.Deserialize<List<PinnacleMatchCandidate>>(candidatesJson, JsonOptions);
-
-            return candidates?
-                .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Url) && MatchUrlRegex.IsMatch(candidate.Url))
-                .ToList()
-                ?? new List<PinnacleMatchCandidate>();
+                Message = "Sincronizacion Pinnacle por API guest completada.",
+                ScrapedAtUtc = DateTime.UtcNow,
+                TotalDiscovered = candidates.Length,
+                TotalProcessed = results.Length,
+                TotalWithCornersTotal = results.Count(match => match.CornersTotal != null),
+                TotalWithCornersHomeTeam = results.Count(match => match.CornersHomeTeam != null),
+                TotalWithCornersAwayTeam = results.Count(match => match.CornersAwayTeam != null),
+                TotalWithGoalsTotal = results.Count(match => match.GoalsTotal != null),
+                TotalWithGoalsHomeTeam = results.Count(match => match.GoalsHomeTeam != null),
+                TotalWithGoalsAwayTeam = results.Count(match => match.GoalsAwayTeam != null),
+                TotalWithShotsOnTargetTotal = results.Count(match => match.ShotsOnTargetTotal != null),
+                TotalWithShotsOnTargetHomeTeam = results.Count(match => match.ShotsOnTargetHomeTeam != null),
+                TotalWithShotsOnTargetAwayTeam = results.Count(match => match.ShotsOnTargetAwayTeam != null),
+                TotalWithShotsTotal = results.Count(match => match.ShotsTotal != null),
+                TotalWithShotsHomeTeam = results.Count(match => match.ShotsHomeTeam != null),
+                TotalWithShotsAwayTeam = results.Count(match => match.ShotsAwayTeam != null),
+                TotalWithCardsTotal = results.Count(match => match.CardsTotal != null),
+                Matches = results.ToList()
+            };
         }
 
         private async Task<PinnacleUpcomingFootballOddsMatch> ScrapeMatchAsync(
-            IBrowserContext context,
-            PinnacleMatchCandidate candidate,
+            PinnacleApiCandidate candidate,
             CancellationToken cancellationToken)
         {
-            var page = await context.NewPageAsync();
+            var markets = await GetAsync<List<ArcadiaMarket>>(
+                $"0.1/matchups/{candidate.Parent.Id}/markets/related/straight",
+                cancellationToken) ?? new List<ArcadiaMarket>();
 
-            try
-            {
-                await page.GotoAsync(
-                    candidate.Url,
-                    new PageGotoOptions
-                    {
-                        WaitUntil = WaitUntilState.DOMContentLoaded,
-                        Timeout = 45000
-                    });
+            var match = BuildMatchMetadata(candidate);
+            var openMarkets = markets
+                .Where(market => market.Period == 0)
+                .Where(market => market.Status.Equals("open", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            var cornerMarkets = GetUnitMarkets(candidate, openMarkets, "Corners");
 
-                await page.WaitForTimeoutAsync(8000);
-                cancellationToken.ThrowIfCancellationRequested();
+            match.CornersTotal = BuildMarket(
+                cornerMarkets,
+                "total",
+                side: null,
+                "Total (Corners) Match");
+            match.CornersHomeTeam = BuildMarket(
+                cornerMarkets,
+                "team_total",
+                "home",
+                "Team Total (Corners) Match - Home");
+            match.CornersAwayTeam = BuildMarket(
+                cornerMarkets,
+                "team_total",
+                "away",
+                "Team Total (Corners) Match - Away");
+            var goalMarkets = GetUnitMarkets(candidate, openMarkets, "Goals");
+            if (goalMarkets.Length == 0)
+                goalMarkets = openMarkets.Where(market => market.MatchupId == candidate.Parent.Id).ToArray();
+            match.GoalsTotal = BuildMarket(goalMarkets, "total", null, "Total Goals Match");
+            match.GoalsHomeTeam = BuildMarket(goalMarkets, "team_total", "home", "Team Total Goals Match - Home");
+            match.GoalsAwayTeam = BuildMarket(goalMarkets, "team_total", "away", "Team Total Goals Match - Away");
+            var shotsOnTargetMarkets = GetUnitMarkets(candidate, openMarkets, "Shots on Target", "Shots On Target", "ShotsOnTarget");
+            match.ShotsOnTargetTotal = BuildMarket(shotsOnTargetMarkets, "total", null, "Total Shots on Target Match");
+            match.ShotsOnTargetHomeTeam = BuildMarket(shotsOnTargetMarkets, "team_total", "home", "Team Total Shots on Target Match - Home");
+            match.ShotsOnTargetAwayTeam = BuildMarket(shotsOnTargetMarkets, "team_total", "away", "Team Total Shots on Target Match - Away");
+            var shotsMarkets = GetUnitMarkets(candidate, openMarkets, "Shots");
+            match.ShotsTotal = BuildMarket(shotsMarkets, "total", null, "Total Shots Match");
+            match.ShotsHomeTeam = BuildMarket(shotsMarkets, "team_total", "home", "Team Total Shots Match - Home");
+            match.ShotsAwayTeam = BuildMarket(shotsMarkets, "team_total", "away", "Team Total Shots Match - Away");
+            match.CardsTotal = BuildMarket(GetUnitMarkets(candidate, openMarkets, "Cards", "Bookings"), "total", null, "Total Cards Match");
 
-                var snapshotJson = await page.EvaluateAsync<string>(
-                    """
-                    () => {
-                      const jsonLd = Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
-                        .map(script => (script.textContent || '').trim())
-                        .filter(Boolean);
+            if (match.CornersTotal == null)
+                match.Notes.Add("Pinnacle API no entrego total de corners abierto para el partido.");
 
-                      return JSON.stringify({
-                        title: document.title || '',
-                        url: location.href,
-                        bodyText: (document.body.innerText || '').replace(/\s+/g, ' ').trim(),
-                        jsonLd
-                      });
-                    }
-                    """);
+            if (match.CornersHomeTeam == null)
+                match.Notes.Add("Pinnacle API no entrego total de corners del local.");
 
-                var snapshot = JsonSerializer.Deserialize<PinnacleMatchPageSnapshot>(snapshotJson, JsonOptions);
-                if (snapshot == null)
-                    throw new InvalidOperationException("No se pudo leer el contenido del partido en Pinnacle.");
+            if (match.CornersAwayTeam == null)
+                match.Notes.Add("Pinnacle API no entrego total de corners de la visita.");
 
-                var metadata = ParseMetadata(snapshot.JsonLd, candidate.Url, candidate.SourceMatchId);
+            if (match.GoalsTotal == null)
+                match.Notes.Add("Pinnacle API no entrego total de goles abierto para el partido.");
 
-                var match = new PinnacleUpcomingFootballOddsMatch
-                {
-                    SourceMatchId = candidate.SourceMatchId,
-                    SourceUrl = candidate.Url,
-                    MatchDateLocal = metadata.MatchDateLocal,
-                    League = metadata.League,
-                    HomeTeam = metadata.HomeTeam,
-                    AwayTeam = metadata.AwayTeam,
-                    StandardizedLeague = CanonicalizeLeague(metadata.League),
-                    StandardizedHomeTeam = CanonicalizeTeam(metadata.HomeTeam),
-                    StandardizedAwayTeam = CanonicalizeTeam(metadata.AwayTeam),
-                    HomeTeamGender = "M",
-                    AwayTeamGender = "M",
-                    CornersTotal = ParseCornersTotal(snapshot.BodyText),
-                };
+            if (match.GoalsHomeTeam == null || match.GoalsAwayTeam == null)
+                match.Notes.Add("Pinnacle API no entrego ambos totales de goles por equipo.");
 
-                var teamTotals = ParseTeamCorners(snapshot.BodyText);
-                match.CornersHomeTeam = teamTotals.homeMarket;
-                match.CornersAwayTeam = teamTotals.awayMarket;
+            if (match.ShotsOnTargetTotal == null)
+                match.Notes.Add("Pinnacle API no entrego total de tiros al arco abierto para el partido.");
 
-                if (match.CornersTotal == null)
-                    match.Notes.Add("No se encontro el mercado Total (Córneres) Partido.");
+            if (match.ShotsOnTargetHomeTeam == null || match.ShotsOnTargetAwayTeam == null)
+                match.Notes.Add("Pinnacle API no entrego ambos totales de tiros al arco por equipo.");
 
-                if (match.CornersHomeTeam == null || match.CornersAwayTeam == null)
-                    match.Notes.Add("No se encontro completo el mercado Total del equipo (Córneres) Partido.");
+            if (match.ShotsTotal == null)
+                match.Notes.Add("Pinnacle API no entrego total de tiros abierto para el partido.");
 
-                return match;
-            }
-            finally
-            {
-                try { await page.CloseAsync(); } catch { }
-            }
+            if (match.ShotsHomeTeam == null || match.ShotsAwayTeam == null)
+                match.Notes.Add("Pinnacle API no entrego ambos totales de tiros por equipo.");
+
+            if (match.CardsTotal == null)
+                match.Notes.Add("Pinnacle API no entrego total de tarjetas abierto para el partido.");
+
+            return match;
         }
 
-        private static PinnacleMatchMetadata ParseMetadata(
-            IReadOnlyList<string> jsonLd,
-            string fallbackUrl,
-            string sourceMatchId)
+        private static PinnacleUpcomingFootballOddsMatch BuildMatchMetadata(PinnacleApiCandidate candidate)
         {
-            string? homeTeam = null;
-            string? awayTeam = null;
-            string? league = null;
-            DateTime? startUtc = null;
+            var homeTeam = GetParticipantName(candidate.Parent, "home", 0);
+            var awayTeam = GetParticipantName(candidate.Parent, "away", 1);
+            var league = candidate.Parent.League.Name;
 
-            foreach (var rawJson in jsonLd)
+            return new PinnacleUpcomingFootballOddsMatch
             {
-                try
-                {
-                    var node = JsonNode.Parse(rawJson);
-                    if (node is not JsonObject obj)
-                        continue;
-
-                    var type = obj["@type"]?.GetValue<string>();
-                    if (string.Equals(type, "SportsEvent", StringComparison.OrdinalIgnoreCase))
-                    {
-                        homeTeam = obj["homeTeam"]?["name"]?.GetValue<string>() ?? homeTeam;
-                        awayTeam = obj["awayTeam"]?["name"]?.GetValue<string>() ?? awayTeam;
-                        league = obj["location"]?["name"]?.GetValue<string>() ?? league;
-
-                        var startDateRaw = obj["startDate"]?.GetValue<string>();
-                        if (!string.IsNullOrWhiteSpace(startDateRaw)
-                            && DateTimeOffset.TryParse(startDateRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsedStart))
-                        {
-                            startUtc = parsedStart.UtcDateTime;
-                        }
-                    }
-                    else if (string.Equals(type, "BreadcrumbList", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var items = obj["itemListElement"]?.AsArray();
-                        if (items != null)
-                        {
-                            foreach (var item in items)
-                            {
-                                if (item?["position"]?.GetValue<int>() == 3)
-                                {
-                                    league ??= item["name"]?.GetValue<string>();
-                                }
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignore malformed json-ld fragments.
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
-            {
-                var urlTeams = ParseTeamsFromUrl(fallbackUrl);
-                homeTeam ??= urlTeams.homeTeam;
-                awayTeam ??= urlTeams.awayTeam;
-            }
-
-            var matchDateLocal = startUtc.HasValue
-                ? TimeZoneInfo.ConvertTimeFromUtc(startUtc.Value, ResolveChileTimeZone())
-                : (DateTime?)null;
-
-            return new PinnacleMatchMetadata(
-                sourceMatchId: sourceMatchId,
-                league: string.IsNullOrWhiteSpace(league) ? "Unknown" : league.Trim(),
-                homeTeam: string.IsNullOrWhiteSpace(homeTeam) ? "Unknown" : homeTeam.Trim(),
-                awayTeam: string.IsNullOrWhiteSpace(awayTeam) ? "Unknown" : awayTeam.Trim(),
-                matchDateLocal: matchDateLocal);
+                SourceMatchId = candidate.Parent.Id.ToString(CultureInfo.InvariantCulture),
+                SourceUrl = BuildSourceUrl(candidate.Parent.Id, league, homeTeam, awayTeam),
+                MatchDateLocal = TimeZoneInfo.ConvertTime(
+                    candidate.Parent.StartTime,
+                    ResolveChileTimeZone()).DateTime,
+                League = league,
+                HomeTeam = homeTeam,
+                AwayTeam = awayTeam,
+                StandardizedLeague = CanonicalNameCatalog.CanonicalizeLeague(league),
+                StandardizedHomeTeam = CanonicalNameCatalog.CanonicalizeTeam(homeTeam),
+                StandardizedAwayTeam = CanonicalNameCatalog.CanonicalizeTeam(awayTeam),
+                HomeTeamGender = "M",
+                AwayTeamGender = "M"
+            };
         }
 
-        private static BetanoMarketOddsDto? ParseCornersTotal(string bodyText)
+        private static BetanoMarketOddsDto? BuildMarket(
+            IEnumerable<ArcadiaMarket> markets,
+            string marketType,
+            string? side,
+            string marketName)
         {
-            var section = ExtractSection(
-                bodyText,
-                "Total \\(Córneres\\)Partido",
-                "Total del equipo \\(Córneres\\)Partido",
-                "Línea de dinero \\(Tarjetas\\)Partido",
-                "Hándicap \\(Córneres\\)1\\.ª parte",
-                "Total \\(Córneres\\)1\\.ª parte");
+            var lines = markets
+                .Where(market => market.Type.Equals(marketType, StringComparison.OrdinalIgnoreCase))
+                .Where(market => side == null || market.Side.Equals(side, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(market => market.IsAlternate)
+                .Select(TryBuildLine)
+                .Where(line => line is not null)
+                .Select(line => line!)
+                .GroupBy(line => line.Line)
+                .Select(group => group.First())
+                .OrderBy(line => line.Line)
+                .ToList();
 
-            if (string.IsNullOrWhiteSpace(section))
-                return null;
-
-            var lines = ParseLinePairs(section, requireCornersWord: true, preserveEncounterOrder: false);
             return lines.Count == 0
                 ? null
                 : new BetanoMarketOddsDto
                 {
-                    MarketName = "Total (Córneres) Partido",
+                    MarketName = marketName,
                     Lines = lines
                 };
         }
 
-        private static (BetanoMarketOddsDto? homeMarket, BetanoMarketOddsDto? awayMarket) ParseTeamCorners(string bodyText)
+        private static BetanoLineOddsDto? TryBuildLine(ArcadiaMarket market)
         {
-            var section = ExtractSection(
-                bodyText,
-                "Total del equipo \\(Córneres\\)Partido",
-                "Línea de dinero \\(Tarjetas\\)Partido",
-                "Hándicap \\(Córneres\\)1\\.ª parte",
-                "Total \\(Córneres\\)1\\.ª parte");
+            var over = market.Prices.FirstOrDefault(price =>
+                price.Designation.Equals("over", StringComparison.OrdinalIgnoreCase));
+            var under = market.Prices.FirstOrDefault(price =>
+                price.Designation.Equals("under", StringComparison.OrdinalIgnoreCase));
+            var points = over?.Points ?? under?.Points;
 
-            if (string.IsNullOrWhiteSpace(section))
-                return (null, null);
-
-            var lines = ParseLinePairs(section, requireCornersWord: false, preserveEncounterOrder: true);
-            if (lines.Count < 2)
-                return (null, null);
-
-            return (
-                new BetanoMarketOddsDto
-                {
-                    MarketName = "Total del equipo (Córneres) Partido - Home",
-                    Lines = new List<BetanoLineOddsDto> { lines[0] }
-                },
-                new BetanoMarketOddsDto
-                {
-                    MarketName = "Total del equipo (Córneres) Partido - Away",
-                    Lines = new List<BetanoLineOddsDto> { lines[1] }
-                });
-        }
-
-        private static List<BetanoLineOddsDto> ParseLinePairs(
-            string section,
-            bool requireCornersWord,
-            bool preserveEncounterOrder)
-        {
-            var regex = requireCornersWord ? CornersLineRegex : TeamTotalLineRegex;
-            var lines = new List<BetanoLineOddsDto>();
-
-            foreach (Match match in regex.Matches(section))
-            {
-                if (!match.Success)
-                    continue;
-
-                var lineRaw = match.Groups["line"].Value;
-                var line2Raw = match.Groups["line2"].Value;
-                if (!string.Equals(lineRaw, line2Raw, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                if (!TryParseDecimal(lineRaw, out var line)
-                    || !TryParseDecimal(match.Groups["over"].Value, out var overOdds)
-                    || !TryParseDecimal(match.Groups["under"].Value, out var underOdds))
-                {
-                    continue;
-                }
-
-                lines.Add(new BetanoLineOddsDto
-                {
-                    Line = line,
-                    OverOdds = overOdds,
-                    UnderOdds = underOdds
-                });
-            }
-
-            var deduped = lines
-                .GroupBy(x => x.Line)
-                .Select(g => g.First())
-                .ToList();
-
-            return preserveEncounterOrder
-                ? deduped
-                : deduped.OrderBy(x => x.Line).ToList();
-        }
-
-        private static string? ExtractSection(string text, string startPattern, params string[] endPatterns)
-        {
-            var startMatch = Regex.Match(text, startPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            if (!startMatch.Success)
+            if (points == null || (over == null && under == null))
                 return null;
 
-            var startIndex = startMatch.Index + startMatch.Length;
-            var endIndex = text.Length;
-
-            foreach (var endPattern in endPatterns)
+            return new BetanoLineOddsDto
             {
-                var endMatch = Regex.Match(
-                    text[startIndex..],
-                    endPattern,
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                Line = points.Value,
+                OverOdds = over == null ? null : ConvertAmericanToDecimal(over.Price),
+                UnderOdds = under == null ? null : ConvertAmericanToDecimal(under.Price)
+            };
+        }
 
-                if (endMatch.Success)
-                    endIndex = Math.Min(endIndex, startIndex + endMatch.Index);
+        private async Task<T?> GetAsync<T>(string relativeUrl, CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                new Uri(new Uri(_apiBaseUrl), relativeUrl));
+            request.Headers.TryAddWithoutValidation("X-API-Key", _apiKey);
+            request.Headers.TryAddWithoutValidation("X-Language", "en-GB");
+            request.Headers.TryAddWithoutValidation("X-Customer-Culture", "en-GB");
+
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken);
+        }
+
+        private static decimal? ConvertAmericanToDecimal(decimal americanOdds)
+        {
+            if (americanOdds == 0)
+                return null;
+
+            var decimalOdds = americanOdds > 0
+                ? 1m + americanOdds / 100m
+                : 1m + 100m / Math.Abs(americanOdds);
+            return Math.Round(decimalOdds, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private static string GetParticipantName(ArcadiaMatchup matchup, string alignment, int fallbackIndex)
+        {
+            var aligned = matchup.Participants.FirstOrDefault(participant =>
+                participant.Alignment.Equals(alignment, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(aligned?.Name))
+                return aligned.Name.Trim();
+
+            return matchup.Participants.Count > fallbackIndex
+                ? matchup.Participants[fallbackIndex].Name.Trim()
+                : string.Empty;
+        }
+
+        private static bool IsWomenMatch(ArcadiaMatchup matchup)
+        {
+            var text = string.Join(' ',
+                matchup.League.Name,
+                matchup.League.Group,
+                string.Join(' ', matchup.Participants.Select(participant => participant.Name)))
+                .ToLowerInvariant();
+
+            return text.Contains("women")
+                || text.Contains("female")
+                || text.Contains("femen")
+                || text.Contains("(w)");
+        }
+
+        private static string BuildSourceUrl(long id, string league, string homeTeam, string awayTeam) =>
+            $"https://www.pinnacle.com/es/soccer/{Slugify(league)}/{Slugify(homeTeam)}-vs-{Slugify(awayTeam)}/{id}/";
+
+        private static string Slugify(string value)
+        {
+            var decomposed = value.Normalize(NormalizationForm.FormD);
+            var slug = new StringBuilder(decomposed.Length);
+            var pendingSeparator = false;
+
+            foreach (var character in decomposed)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                    continue;
+
+                if (char.IsLetterOrDigit(character))
+                {
+                    if (pendingSeparator && slug.Length > 0)
+                        slug.Append('-');
+
+                    slug.Append(char.ToLowerInvariant(character));
+                    pendingSeparator = false;
+                }
+                else
+                {
+                    pendingSeparator = true;
+                }
             }
 
-            return startIndex >= endIndex
-                ? null
-                : text[startIndex..endIndex].Trim();
+            return slug.ToString();
         }
 
-        private static (string? homeTeam, string? awayTeam) ParseTeamsFromUrl(string url)
-        {
-            var match = Regex.Match(
-                url,
-                @"/soccer/[^/]+/(?<slug>[^/]+)/\d+/?$",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-            if (!match.Success)
-                return (null, null);
-
-            var slug = match.Groups["slug"].Value.Replace('-', ' ');
-            var parts = Regex.Split(slug, @"\svs\s", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            return parts.Length == 2 ? (Cultureize(parts[0]), Cultureize(parts[1])) : (null, null);
-        }
-
-        private static string Cultureize(string value)
-        {
-            var normalized = value.Replace("  ", " ").Trim();
-            return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(normalized);
-        }
-
-        private static string CanonicalizeLeague(string value)
-            => CanonicalNameCatalog.CanonicalizeLeague(value);
-
-        private static string CanonicalizeTeam(string value)
-            => CanonicalNameCatalog.CanonicalizeTeam(value);
-
-        private static bool TryParseDecimal(string raw, out decimal value)
-            => decimal.TryParse(raw.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out value);
+        private static string NormalizeBaseUrl(string value) =>
+            value.TrimEnd('/') + "/";
 
         private static TimeZoneInfo ResolveChileTimeZone()
         {
@@ -516,42 +411,62 @@ namespace CornersMLData.Services
             }
         }
 
-        private sealed class PinnacleMatchMetadata
+        private static ArcadiaMarket[] GetUnitMarkets(
+            PinnacleApiCandidate candidate,
+            IEnumerable<ArcadiaMarket> markets,
+            params string[] units)
         {
-            public PinnacleMatchMetadata(
-                string sourceMatchId,
-                string league,
-                string homeTeam,
-                string awayTeam,
-                DateTime? matchDateLocal)
-            {
-                SourceMatchId = sourceMatchId;
-                League = league;
-                HomeTeam = homeTeam;
-                AwayTeam = awayTeam;
-                MatchDateLocal = matchDateLocal;
-            }
-
-            public string SourceMatchId { get; }
-            public string League { get; }
-            public string HomeTeam { get; }
-            public string AwayTeam { get; }
-            public DateTime? MatchDateLocal { get; }
+            var matchupIds = candidate.MarketMatchups
+                .Where(matchup => units.Any(unit => matchup.Units.Equals(unit, StringComparison.OrdinalIgnoreCase)))
+                .Select(matchup => matchup.Id)
+                .ToHashSet();
+            return markets.Where(market => matchupIds.Contains(market.MatchupId)).ToArray();
         }
 
-        private sealed class PinnacleMatchPageSnapshot
+        private sealed record PinnacleApiCandidate(
+            ArcadiaMatchup Parent,
+            IReadOnlyList<ArcadiaMatchup> MarketMatchups);
+
+        private sealed class ArcadiaMatchup
         {
-            public string Title { get; set; } = "";
-            public string Url { get; set; } = "";
-            public string BodyText { get; set; } = "";
-            public List<string> JsonLd { get; set; } = new();
+            public long Id { get; init; }
+            public long? ParentId { get; init; }
+            public string Units { get; init; } = string.Empty;
+            public bool IsLive { get; init; }
+            public string Status { get; init; } = string.Empty;
+            public DateTimeOffset StartTime { get; init; }
+            public ArcadiaLeague League { get; init; } = new();
+            public List<ArcadiaParticipant> Participants { get; init; } = new();
         }
 
-        private sealed class PinnacleMatchCandidate
+        private sealed class ArcadiaLeague
         {
-            public string SourceMatchId { get; set; } = "";
-            public string Url { get; set; } = "";
-            public string ListingText { get; set; } = "";
+            public string Name { get; init; } = string.Empty;
+            public string Group { get; init; } = string.Empty;
+        }
+
+        private sealed class ArcadiaParticipant
+        {
+            public string Alignment { get; init; } = string.Empty;
+            public string Name { get; init; } = string.Empty;
+        }
+
+        private sealed class ArcadiaMarket
+        {
+            public long MatchupId { get; init; }
+            public int Period { get; init; }
+            public string Status { get; init; } = string.Empty;
+            public string Type { get; init; } = string.Empty;
+            public string Side { get; init; } = string.Empty;
+            public bool IsAlternate { get; init; }
+            public List<ArcadiaPrice> Prices { get; init; } = new();
+        }
+
+        private sealed class ArcadiaPrice
+        {
+            public string Designation { get; init; } = string.Empty;
+            public decimal? Points { get; init; }
+            public decimal Price { get; init; }
         }
     }
 }

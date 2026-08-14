@@ -26,7 +26,7 @@ namespace CornersMLData.Controllers
         }
 
         /// <summary>
-        /// Scrapea partidos de futbol proximos desde Pinnacle y extrae mercados de corners totales y por equipo.
+        /// Scrapea partidos de futbol proximos desde Pinnacle y extrae corners, goles, tiros, tiros al arco y tarjetas cuando existan.
         /// </summary>
         /// <remarks>
         /// Recibe parametros por <c>query string</c>. Si <c>persist=true</c>, el endpoint guarda las cuotas nuevas en base
@@ -46,6 +46,7 @@ namespace CornersMLData.Controllers
 
             if (persist && response.Matches.Count > 0)
             {
+                await _pinnacleUpcomingOddsRepository.EnsureDatabaseObjectsAsync(cancellationToken);
                 response.PersistedCount = await _pinnacleUpcomingOddsRepository.SincronizarAsync(
                     response.Matches,
                     response.ScrapedAtUtc,

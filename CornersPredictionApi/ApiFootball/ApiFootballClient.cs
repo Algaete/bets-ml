@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -8,6 +9,8 @@ public sealed class ApiFootballClient
 {
     private readonly HttpClient _httpClient;
     private readonly ApiFootballOptions _options;
+    private readonly ConcurrentDictionary<string, JsonElement> _responseCache = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _requestGate = new(1, 1);
     private DateTimeOffset? _lastRequestAt;
 
     public ApiFootballClient(HttpClient httpClient, IOptions<ApiFootballOptions> options)
@@ -34,7 +37,7 @@ public sealed class ApiFootballClient
     }
 
     public Task<JsonElement> GetLeagueAsync(int leagueId, int season, CancellationToken cancellationToken) =>
-        GetAsync($"/leagues?id={leagueId}&season={season}", cancellationToken);
+        GetCachedAsync($"/leagues?id={leagueId}&season={season}", cancellationToken);
 
     public Task<JsonElement> GetFixturesAsync(
         int leagueId,
@@ -52,7 +55,7 @@ public sealed class ApiFootballClient
         {
             query += $"&to={dateTo:yyyy-MM-dd}";
         }
-        return GetAsync(query, cancellationToken);
+        return GetCachedAsync(query, cancellationToken);
     }
 
     public Task<JsonElement> GetFixturesForDateAsync(
@@ -60,14 +63,39 @@ public sealed class ApiFootballClient
         CancellationToken cancellationToken) =>
         GetAsync($"/fixtures?date={date:yyyy-MM-dd}&status=FT-AET-PEN", cancellationToken);
 
+    public Task<JsonElement> GetFixtureAsync(long fixtureId, CancellationToken cancellationToken) =>
+        GetAsync($"/fixtures?id={fixtureId}", cancellationToken);
+
+    public Task<JsonElement> GetUpcomingFixturesForDateAsync(
+        DateOnly date,
+        CancellationToken cancellationToken) =>
+        GetAsync(
+            $"/fixtures?date={date:yyyy-MM-dd}&timezone=America%2FSantiago",
+            cancellationToken);
+
     public Task<JsonElement> GetFixtureStatisticsAsync(long fixtureId, CancellationToken cancellationToken) =>
+        // API-Football can revise post-match statistics after initially marking a
+        // fixture FT. Always fetch a fresh snapshot so a reconciliation run does
+        // not reuse an earlier, incomplete response from the same process.
         GetAsync($"/fixtures/statistics?fixture={fixtureId}", cancellationToken);
 
     public Task<JsonElement> GetFixtureLineupsAsync(long fixtureId, CancellationToken cancellationToken) =>
-        GetAsync($"/fixtures/lineups?fixture={fixtureId}", cancellationToken);
+        GetCachedAsync($"/fixtures/lineups?fixture={fixtureId}", cancellationToken);
 
     public Task<JsonElement> GetStandingsAsync(int leagueId, int season, CancellationToken cancellationToken) =>
         GetAsync($"/standings?league={leagueId}&season={season}", cancellationToken);
+
+    private async Task<JsonElement> GetCachedAsync(string path, CancellationToken cancellationToken)
+    {
+        if (_responseCache.TryGetValue(path, out var cached))
+        {
+            return cached;
+        }
+
+        var response = await GetAsync(path, cancellationToken);
+        _responseCache[path] = response;
+        return response;
+    }
 
     private async Task<JsonElement> GetAsync(string path, CancellationToken cancellationToken)
     {
@@ -76,14 +104,42 @@ public sealed class ApiFootballClient
             throw new InvalidOperationException("API_FOOTBALL_KEY is not configured.");
         }
 
-        if (_lastRequestAt.HasValue && _options.RequestDelayMilliseconds > 0)
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var delay = TimeSpan.FromMilliseconds(_options.RequestDelayMilliseconds) -
-                (DateTimeOffset.UtcNow - _lastRequestAt.Value);
-            if (delay > TimeSpan.Zero)
+            try
             {
-                await Task.Delay(delay, cancellationToken);
+                return await GetOnceAsync(path, cancellationToken);
             }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested && attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException($"API-Football request retries were exhausted for {path}.");
+    }
+
+    private async Task<JsonElement> GetOnceAsync(string path, CancellationToken cancellationToken)
+    {
+        await _requestGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_lastRequestAt.HasValue && _options.RequestDelayMilliseconds > 0)
+            {
+                var delay = TimeSpan.FromMilliseconds(_options.RequestDelayMilliseconds) -
+                    (DateTimeOffset.UtcNow - _lastRequestAt.Value);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellationToken);
+                }
+            }
+            _lastRequestAt = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            _requestGate.Release();
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
@@ -93,10 +149,15 @@ public sealed class ApiFootballClient
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
 
-        _lastRequestAt = DateTimeOffset.UtcNow;
         DailyRemaining = ReadHeader(response, "x-ratelimit-requests-remaining");
         MinuteRemaining = ReadHeader(response, "x-ratelimit-remaining");
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var bodyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bodyTimeout.CancelAfter(TimeSpan.FromMinutes(5));
+        var body = await response.Content.ReadAsStringAsync(bodyTimeout.Token);
+        if ((int)response.StatusCode == StatusCodes.Status429TooManyRequests)
+        {
+            throw new ApiFootballQuotaExceededException(path);
+        }
         if (!response.IsSuccessStatusCode)
         {
             throw new InvalidOperationException(
@@ -157,5 +218,13 @@ public sealed class ApiFootballClient
         return int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
             ? number
             : null;
+    }
+}
+
+public sealed class ApiFootballQuotaExceededException : InvalidOperationException
+{
+    public ApiFootballQuotaExceededException(string path)
+        : base($"API-Football returned HTTP 429 for {path}.")
+    {
     }
 }

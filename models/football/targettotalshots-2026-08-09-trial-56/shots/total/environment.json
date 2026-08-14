@@ -1,0 +1,12 @@
+{
+  "created_at": "2026-08-09T12:41:25.901562-04:00",
+  "python": "3.10.20 (main, Mar  3 2026, 00:49:35) [Clang 17.0.0 (clang-1700.6.4.2)]",
+  "platform": "macOS-15.6.1-arm64-arm-64bit",
+  "packages": {
+    "catboost": "1.2.10",
+    "joblib": "1.5.3",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.7.2"
+  }
+}

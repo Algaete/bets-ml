@@ -45,7 +45,7 @@ BEGIN
         CONSTRAINT CK_BettingRecords_MarketType CHECK (MarketType IN ('TotalCorners', 'HomeCorners', 'AwayCorners', 'FirstHalfCorners', 'TotalShots', 'HomeShots', 'AwayShots', 'TotalShotsOnGoal', 'HomeShotsOnGoal', 'AwayShotsOnGoal', 'TotalGoals', 'HomeGoals', 'AwayGoals', 'Other')),
         CONSTRAINT CK_BettingRecords_BetSelection CHECK (BetSelection IN ('Over', 'Under', 'Home', 'Away', 'Other')),
         CONSTRAINT CK_BettingRecords_ConfidenceLevel CHECK (ConfidenceLevel IS NULL OR ConfidenceLevel IN ('Low', 'Medium', 'High', 'VeryHigh')),
-        CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot')),
+        CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot', 'AutomatedGoalsBot', 'AutomatedSogBot', 'AutomatedShotsBot', 'AutomatedModels2026Bot')),
         CONSTRAINT CK_BettingRecords_Line CHECK (Line >= 0),
         CONSTRAINT CK_BettingRecords_Odds CHECK (Odds > 1),
         CONSTRAINT CK_BettingRecords_Stake CHECK (Stake > 0),
@@ -160,7 +160,7 @@ END
 GO
 
 ALTER TABLE dbo.BettingRecords
-    ADD CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot'));
+    ADD CONSTRAINT CK_BettingRecords_PredictionModel CHECK (PredictionModel IN ('Manual', 'TotalCornersModel', 'OverUnderLineModel', 'ShotsOnGoalModel', 'GoalsModel', 'AutomatedCornersBot', 'AutomatedGoalsBot', 'AutomatedSogBot', 'AutomatedShotsBot', 'AutomatedModels2026Bot'));
 GO
 
 IF EXISTS

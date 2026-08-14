@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
+using CornersPrediction.Application.AutomatedCorners;
+using Microsoft.Extensions.Options;
 
 namespace CornersPredictionApi.ApiFootball;
 
@@ -7,7 +9,7 @@ public sealed class ApiFootballSyncService
 {
     private static readonly HashSet<int> WomensCompetitionIds = new()
     {
-        44, 64, 82, 254, 549, 640, 641, 649, 660, 666, 673, 725, 736,
+        44, 64, 82, 142, 254, 549, 640, 641, 649, 660, 666, 673, 725, 736,
         915, 918, 1013, 1103, 1117, 1136, 1182, 1189, 1229
     };
 
@@ -18,16 +20,25 @@ public sealed class ApiFootballSyncService
 
     private readonly ApiFootballClient _client;
     private readonly ApiFootballRepository _repository;
+    private readonly ApiFootballOptions _options;
     private readonly ILogger<ApiFootballSyncService> _logger;
+    private readonly IAutomatedBotPickSettlementUseCase _botPickSettlementUseCase;
+    private readonly SemaphoreSlim _databaseWriteGate;
 
     public ApiFootballSyncService(
         ApiFootballClient client,
         ApiFootballRepository repository,
+        IOptions<ApiFootballOptions> options,
+        IAutomatedBotPickSettlementUseCase botPickSettlementUseCase,
         ILogger<ApiFootballSyncService> logger)
     {
         _client = client;
         _repository = repository;
+        _options = options.Value;
+        _botPickSettlementUseCase = botPickSettlementUseCase;
         _logger = logger;
+        var databaseWriteParallelism = Math.Clamp(_options.DatabaseWriteParallelism, 1, 32);
+        _databaseWriteGate = new SemaphoreSlim(databaseWriteParallelism, databaseWriteParallelism);
     }
 
     public Task<ApiFootballStatusResult> GetStatusAsync(CancellationToken cancellationToken) =>
@@ -43,9 +54,18 @@ public sealed class ApiFootballSyncService
         ValidateDateRange(request.DateFrom, request.DateTo);
         var fixtures = new Dictionary<long, ApiFootballFixture>();
 
-        for (var date = request.DateFrom; date <= request.DateTo; date = date.AddDays(1))
+        var dates = Enumerable.Range(0, request.DateTo.DayNumber - request.DateFrom.DayNumber + 1)
+            .Select(offset => request.DateFrom.AddDays(offset))
+            .ToArray();
+        var dailyFixtureBatches = new List<IReadOnlyList<ApiFootballFixture>>(dates.Length);
+        foreach (var dateBatch in dates.Chunk(4))
         {
-            var dailyFixtures = ParseFixtures(await _client.GetFixturesForDateAsync(date, cancellationToken));
+            dailyFixtureBatches.AddRange(await Task.WhenAll(dateBatch.Select(async date =>
+                ParseFixtures(await _client.GetFixturesForDateAsync(date, cancellationToken)))));
+        }
+
+        foreach (var dailyFixtures in dailyFixtureBatches)
+        {
             foreach (var fixture in dailyFixtures.Where(fixture => FinishedStatuses.Contains(fixture.Status)))
             {
                 fixtures[fixture.FixtureId] = fixture;
@@ -96,18 +116,12 @@ public sealed class ApiFootballSyncService
             .Skip(request.CompetitionOffset)
             .Take(request.MaxCompetitions)
             .ToArray();
-        var rows = new List<ApiFootballBulkSyncRow>();
-        var consideredFixtures = 0;
-        var processedFixtures = 0;
-        var inserted = 0;
-        var updated = 0;
-        var skipped = 0;
-        var errors = 0;
-        var stoppedByQuota = false;
 
+        var workItems = new List<(ApiFootballCompetitionSummary Competition, int Fixtures)>();
+        var consideredFixtures = 0;
+        var stoppedByQuota = false;
         foreach (var competition in eligible)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             var fixtureCapacity = request.MaxTotalFixtures - consideredFixtures;
             if (fixtureCapacity <= 0)
             {
@@ -132,9 +146,96 @@ public sealed class ApiFootballSyncService
                 }
             }
 
-            try
+            consideredFixtures += requestedFixtures;
+            workItems.Add((competition, requestedFixtures));
+        }
+
+        var outcomes = new CompetitionSyncOutcome[workItems.Count];
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, workItems.Count),
+            new ParallelOptions
             {
-                consideredFixtures += requestedFixtures;
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Clamp(_options.CompetitionParallelism, 1, 12)
+            },
+            async (index, competitionCancellationToken) =>
+            {
+                var item = workItems[index];
+                outcomes[index] = await SyncCompetitionAsync(
+                    request,
+                    item.Competition,
+                    item.Fixtures,
+                    index + 1,
+                    workItems.Count,
+                    competitionCancellationToken);
+            });
+
+        var rows = outcomes.Select(outcome => outcome.Row).ToArray();
+        var processedFixtures = outcomes.Sum(outcome => outcome.Processed);
+        var inserted = outcomes.Sum(outcome => outcome.Inserted);
+        var updated = outcomes.Sum(outcome => outcome.Updated);
+        var skipped = outcomes.Sum(outcome => outcome.Skipped);
+        var errors = outcomes.Sum(outcome => outcome.Errors);
+        stoppedByQuota |= outcomes.Any(outcome => outcome.StoppedByQuota);
+
+        if (!request.DryRun && inserted + updated > 0)
+        {
+            await TrySettleBotPicksAsync(request.DateTo, cancellationToken);
+        }
+
+        return new ApiFootballBulkSyncResult(
+            request.DateFrom,
+            request.DateTo,
+            request.DryRun,
+            discovery.FinishedFixtures,
+            discovery.Competitions,
+            eligible.Length,
+            rows.Length,
+            processedFixtures,
+            inserted,
+            updated,
+            skipped,
+            errors,
+            stoppedByQuota,
+            _client.DailyRemaining,
+            _client.MinuteRemaining,
+            rows);
+    }
+
+    private async Task<CompetitionSyncOutcome> SyncCompetitionAsync(
+        ApiFootballBulkSyncRequest request,
+        ApiFootballCompetitionSummary competition,
+        int requestedFixtures,
+        int current,
+        int total,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "API-Football bulk sync competition {Current}/{Total}: LeagueId={LeagueId}, Season={Season}, Fixtures={Fixtures}",
+                current,
+                total,
+                competition.LeagueId,
+                competition.Season,
+                requestedFixtures);
+
+            ApiFootballSyncResult result;
+            if (!request.DryRun && requestedFixtures <= 2)
+            {
+                result = await SyncAsync(new ApiFootballSyncRequest(
+                    competition.LeagueId,
+                    competition.Season,
+                    DateFrom: request.DateFrom,
+                    DateTo: request.DateTo,
+                    MaxFixtures: requestedFixtures,
+                    DryRun: false,
+                    UpdateExisting: request.UpdateExisting,
+                    SyncStandings: request.SyncStandings,
+                    SyncLineups: request.SyncLineups), cancellationToken, settleBotPicks: false);
+            }
+            else
+            {
                 var probeFixtures = Math.Min(requestedFixtures, 2);
                 var probe = await SyncAsync(new ApiFootballSyncRequest(
                     competition.LeagueId,
@@ -145,29 +246,35 @@ public sealed class ApiFootballSyncService
                     DryRun: true,
                     UpdateExisting: request.UpdateExisting,
                     SyncStandings: false,
-                    SyncLineups: false), cancellationToken);
+                    SyncLineups: false), cancellationToken, settleBotPicks: false);
 
                 if (!probe.FixtureStatisticsCovered || probe.Processed <= probe.Skipped)
                 {
-                    skipped += requestedFixtures;
-                    errors += probe.Errors;
-                    rows.Add(new ApiFootballBulkSyncRow(
-                        competition.LeagueId,
-                        probe.DbLeague,
-                        competition.Country,
-                        competition.Season,
-                        competition.FinishedFixtures,
-                        requestedFixtures,
+                    return new CompetitionSyncOutcome(
+                        new ApiFootballBulkSyncRow(
+                            competition.LeagueId,
+                            probe.DbLeague,
+                            competition.Country,
+                            competition.Season,
+                            competition.FinishedFixtures,
+                            requestedFixtures,
+                            probe.Processed,
+                            0,
+                            0,
+                            requestedFixtures,
+                            probe.Errors,
+                            !probe.FixtureStatisticsCovered
+                                ? "NoStatisticsCoverage"
+                                : "NoCompleteFixtures"),
                         probe.Processed,
                         0,
                         0,
                         requestedFixtures,
                         probe.Errors,
-                        !probe.FixtureStatisticsCovered ? "NoStatisticsCoverage" : "NoCompleteFixtures"));
-                    continue;
+                        false);
                 }
 
-                var result = request.DryRun
+                result = request.DryRun
                     ? probe
                     : await SyncAsync(new ApiFootballSyncRequest(
                         competition.LeagueId,
@@ -178,13 +285,11 @@ public sealed class ApiFootballSyncService
                         DryRun: false,
                         UpdateExisting: request.UpdateExisting,
                         SyncStandings: request.SyncStandings,
-                        SyncLineups: request.SyncLineups), cancellationToken);
-                processedFixtures += result.Processed;
-                inserted += result.Inserted;
-                updated += result.Updated;
-                skipped += result.Skipped;
-                errors += result.Errors;
-                rows.Add(new ApiFootballBulkSyncRow(
+                        SyncLineups: request.SyncLineups), cancellationToken, settleBotPicks: false);
+            }
+
+            return new CompetitionSyncOutcome(
+                new ApiFootballBulkSyncRow(
                     competition.LeagueId,
                     result.DbLeague,
                     competition.Country,
@@ -196,19 +301,53 @@ public sealed class ApiFootballSyncService
                     result.Updated,
                     result.Skipped,
                     result.Errors,
-                    result.Errors > 0
-                        ? "Partial"
-                        : result.Processed <= result.Skipped ? "NoCompleteFixtures" : "Completed"));
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                errors++;
-                _logger.LogError(
-                    exception,
-                    "API-Football bulk sync failed for league {LeagueId} season {Season}",
+                    !result.FixtureStatisticsCovered
+                        ? "NoStatisticsCoverage"
+                        : result.Errors > 0
+                            ? "Partial"
+                            : result.Processed <= result.Skipped
+                                ? "NoCompleteFixtures"
+                                : "Completed"),
+                result.Processed,
+                result.Inserted,
+                result.Updated,
+                result.Skipped,
+                result.Errors,
+                false);
+        }
+        catch (ApiFootballQuotaExceededException exception)
+        {
+            return new CompetitionSyncOutcome(
+                new ApiFootballBulkSyncRow(
                     competition.LeagueId,
-                    competition.Season);
-                rows.Add(new ApiFootballBulkSyncRow(
+                    competition.League,
+                    competition.Country,
+                    competition.Season,
+                    competition.FinishedFixtures,
+                    requestedFixtures,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "QuotaExceeded",
+                    exception.Message),
+                0,
+                0,
+                0,
+                0,
+                0,
+                true);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError(
+                exception,
+                "API-Football bulk sync failed for league {LeagueId} season {Season}",
+                competition.LeagueId,
+                competition.Season);
+            return new CompetitionSyncOutcome(
+                new ApiFootballBulkSyncRow(
                     competition.LeagueId,
                     competition.League,
                     competition.Country,
@@ -221,32 +360,20 @@ public sealed class ApiFootballSyncService
                     0,
                     1,
                     "Error",
-                    exception.Message));
-            }
+                    exception.Message),
+                0,
+                0,
+                0,
+                0,
+                1,
+                false);
         }
-
-        return new ApiFootballBulkSyncResult(
-            request.DateFrom,
-            request.DateTo,
-            request.DryRun,
-            discovery.FinishedFixtures,
-            discovery.Competitions,
-            eligible.Length,
-            rows.Count,
-            processedFixtures,
-            inserted,
-            updated,
-            skipped,
-            errors,
-            stoppedByQuota,
-            _client.DailyRemaining,
-            _client.MinuteRemaining,
-            rows);
     }
 
     public async Task<ApiFootballSyncResult> SyncAsync(
         ApiFootballSyncRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool settleBotPicks = true)
     {
         Validate(request);
         await _repository.EnsureSchemaAsync(cancellationToken);
@@ -276,73 +403,110 @@ public sealed class ApiFootballSyncService
             .Take(request.MaxFixtures)
             .ToArray();
 
-        var rows = new List<ApiFootballSyncRow>();
+        var rows = new ApiFootballSyncRow[fixtures.Length];
         var inserted = 0;
         var updated = 0;
         var skipped = 0;
         var errors = 0;
         var processed = 0;
 
-        foreach (var fixture in fixtures)
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, fixtures.Length),
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Clamp(_options.FixtureParallelism, 1, 32)
+            },
+            async (index, fixtureCancellationToken) =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var fixture = fixtures[index];
             try
             {
                 if (!league.FixtureStatistics)
                 {
-                    skipped++;
-                    rows.Add(ToRow(fixture, "Skipped", "The league season does not cover fixture statistics."));
-                    continue;
+                    Interlocked.Increment(ref skipped);
+                    rows[index] = ToRow(
+                        fixture,
+                        "Skipped",
+                        "The league season does not cover fixture statistics.");
+                    return;
                 }
 
                 var matchData = new ApiFootballMatchData { Fixture = fixture };
                 ParseStatistics(
-                    await _client.GetFixtureStatisticsAsync(fixture.FixtureId, cancellationToken),
+                    await _client.GetFixtureStatisticsAsync(
+                        fixture.FixtureId,
+                        fixtureCancellationToken),
                     matchData);
                 if (request.SyncLineups && league.Lineups)
                 {
                     ParseLineups(
-                        await _client.GetFixtureLineupsAsync(fixture.FixtureId, cancellationToken),
+                        await _client.GetFixtureLineupsAsync(
+                            fixture.FixtureId,
+                            fixtureCancellationToken),
                         matchData);
                 }
-                processed++;
+                Interlocked.Increment(ref processed);
 
                 if (!matchData.HasRequiredStatistics)
                 {
-                    skipped++;
-                    rows.Add(ToRow(fixture, "Skipped", "Required corners, shots, shots on goal or possession are missing."));
-                    continue;
+                    Interlocked.Increment(ref skipped);
+                    rows[index] = ToRow(
+                        fixture,
+                        "Skipped",
+                        "Required corners, shots, shots on goal or possession are missing.");
+                    return;
                 }
 
                 if (request.DryRun)
                 {
-                    rows.Add(ToRow(fixture, "Ready", "Complete fixture; no database changes because DryRun=true."));
-                    continue;
+                    rows[index] = ToRow(
+                        fixture,
+                        "Ready",
+                        "Complete fixture; no database changes because DryRun=true.");
+                    return;
                 }
 
-                var persisted = await _repository.UpsertMatchAsync(
-                    matchData,
-                    dbLeague,
-                    IsKnockout(league, fixture.Round),
-                    request.UpdateExisting,
-                    cancellationToken);
+                await _databaseWriteGate.WaitAsync(fixtureCancellationToken);
+                ApiFootballPersistResult persisted;
+                try
+                {
+                    persisted = await _repository.UpsertMatchAsync(
+                        matchData,
+                        dbLeague,
+                        IsKnockout(league, fixture.Round),
+                        request.UpdateExisting,
+                        fixtureCancellationToken);
+                }
+                finally
+                {
+                    _databaseWriteGate.Release();
+                }
                 if (persisted.Action == "Inserted")
                 {
-                    inserted++;
+                    Interlocked.Increment(ref inserted);
                 }
                 else if (persisted.Action == "Updated")
                 {
-                    updated++;
+                    Interlocked.Increment(ref updated);
                 }
-                rows.Add(ToRow(fixture, persisted.Action, $"MatchHistory {persisted.Action.ToLowerInvariant()}.", persisted.MatchHistoryId));
+                rows[index] = ToRow(
+                    fixture,
+                    persisted.Action,
+                    $"MatchHistory {persisted.Action.ToLowerInvariant()}.",
+                    persisted.MatchHistoryId);
+            }
+            catch (ApiFootballQuotaExceededException)
+            {
+                throw;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                errors++;
+                Interlocked.Increment(ref errors);
                 _logger.LogError(exception, "API-Football fixture sync failed for {FixtureId}", fixture.FixtureId);
-                rows.Add(ToRow(fixture, "Error", exception.Message));
+                rows[index] = ToRow(fixture, "Error", exception.Message);
             }
-        }
+        });
 
         if (!request.DryRun && request.SyncStandings && league.Standings)
         {
@@ -352,12 +516,24 @@ public sealed class ApiFootballSyncService
                     request.LeagueId,
                     request.Season,
                     cancellationToken));
-                await _repository.UpsertStandingsAsync(
-                    request.LeagueId,
-                    request.Season,
-                    DateOnly.FromDateTime(DateTime.UtcNow),
-                    standings,
-                    cancellationToken);
+                await _databaseWriteGate.WaitAsync(cancellationToken);
+                try
+                {
+                    await _repository.UpsertStandingsAsync(
+                        request.LeagueId,
+                        request.Season,
+                        DateOnly.FromDateTime(DateTime.UtcNow),
+                        standings,
+                        cancellationToken);
+                }
+                finally
+                {
+                    _databaseWriteGate.Release();
+                }
+            }
+            catch (ApiFootballQuotaExceededException)
+            {
+                throw;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -383,7 +559,96 @@ public sealed class ApiFootballSyncService
             _client.MinuteRemaining,
             rows);
         await _repository.SaveRunAsync(result, startedAtUtc, cancellationToken);
+        if (settleBotPicks && !request.DryRun && inserted + updated > 0)
+        {
+            await TrySettleBotPicksAsync(request.DateTo, cancellationToken);
+        }
         return result;
+    }
+
+    internal async Task<ApiFootballSettlementFixtureSyncResult> SyncFixtureForSettlementAsync(
+        ApiFootballFixture fixture,
+        IReadOnlyCollection<string> marketTypes,
+        bool dryRun,
+        CancellationToken cancellationToken)
+    {
+        var league = ParseLeagueSeason(
+            await _client.GetLeagueAsync(fixture.LeagueId, fixture.Season, cancellationToken),
+            fixture.LeagueId,
+            fixture.Season);
+        var dbLeague = ResolveDefaultDbLeague(league);
+        var data = new ApiFootballMatchData { Fixture = fixture };
+        var needsStatistics = marketTypes.Any(marketType =>
+            !marketType.EndsWith("Goals", StringComparison.OrdinalIgnoreCase));
+        var statisticsMessage = string.Empty;
+
+        if (needsStatistics && league.FixtureStatistics)
+        {
+            ParseStatistics(
+                await _client.GetFixtureStatisticsAsync(fixture.FixtureId, cancellationToken),
+                data);
+        }
+        else if (needsStatistics)
+        {
+            statisticsMessage = " La competición no publica estadísticas avanzadas.";
+        }
+
+        var hasGoals = fixture.HomeGoals.HasValue && fixture.AwayGoals.HasValue;
+        var hasCorners = data.HomeCorners.HasValue && data.AwayCorners.HasValue;
+        var hasShots = data.HomeShots.HasValue && data.AwayShots.HasValue;
+        var hasShotsOnGoal = data.HomeShotsOnGoal.HasValue && data.AwayShotsOnGoal.HasValue;
+
+        if (dryRun)
+        {
+            return new ApiFootballSettlementFixtureSyncResult(
+                fixture.FixtureId,
+                null,
+                "Ready",
+                hasGoals,
+                hasCorners,
+                hasShots,
+                hasShotsOnGoal,
+                $"Partido final listo para sincronizar.{statisticsMessage}".Trim());
+        }
+
+        await _repository.UpsertLeagueSeasonAsync(league, dbLeague, cancellationToken);
+        var persisted = await _repository.UpsertMatchAsync(
+            data,
+            dbLeague,
+            IsKnockout(league, fixture.Round),
+            updateExisting: true,
+            cancellationToken);
+
+        return new ApiFootballSettlementFixtureSyncResult(
+            fixture.FixtureId,
+            persisted.MatchHistoryId,
+            persisted.Action,
+            hasGoals,
+            hasCorners,
+            hasShots,
+            hasShotsOnGoal,
+            $"MatchHistory {persisted.Action.ToLowerInvariant()}.{statisticsMessage}".Trim());
+    }
+
+    private async Task TrySettleBotPicksAsync(DateOnly? matchDateTo, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var settlement = await _botPickSettlementUseCase.SettleAsync(
+                new AutomatedBotPickSettlementRequest(matchDateTo, DryRun: false, MaxRows: 20000),
+                cancellationToken);
+            _logger.LogInformation(
+                "Automatic local Bot Picks settlement completed. Reviewed={Reviewed}, Settled={Settled}, Pending={Pending}",
+                settlement.ReviewedRows,
+                settlement.SettledRows,
+                settlement.StillPendingRows);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                exception,
+                "API-Football data was saved, but automatic Bot Picks settlement will need a retry");
+        }
     }
 
     private static void Validate(ApiFootballSyncRequest request)
@@ -437,9 +702,9 @@ public sealed class ApiFootballSyncService
         {
             throw new ArgumentException("MaxTotalFixtures must be between 1 and 7000.");
         }
-        if (request.MinimumDailyRemaining is < 100 or > 2000)
+        if (request.MinimumDailyRemaining is < 0 or > 2000)
         {
-            throw new ArgumentException("MinimumDailyRemaining must be between 100 and 2000.");
+            throw new ArgumentException("MinimumDailyRemaining must be between 0 and 2000.");
         }
     }
 
@@ -454,7 +719,7 @@ public sealed class ApiFootballSyncService
         string[] excludedTokens =
         {
             "Friendly", "Friendlies", "Women", " W League", "WSL", "Frauen", "Feminine",
-            "Femenil", "Youth", "Reserve", "Junior", "Primavera", "U17", "U18", "U19",
+            "Femenil", "Femenina", "Feminin", "Youth", "Reserve", "Junior", "Primavera", "U17", "U18", "U19",
             "U20", "U21", "U23", "U-17", "U-18", "U-19", "U-20", "U-21", "U-23",
             "Sub 17", "Sub 20", "Sub-17", "Sub-20"
         };
@@ -502,7 +767,7 @@ public sealed class ApiFootballSyncService
             ReadBool(coverage, "odds"));
     }
 
-    private static IReadOnlyList<ApiFootballFixture> ParseFixtures(JsonElement root)
+    internal static IReadOnlyList<ApiFootballFixture> ParseFixtures(JsonElement root)
     {
         var result = new List<ApiFootballFixture>();
         foreach (var row in root.GetProperty("response").EnumerateArray())
@@ -545,7 +810,7 @@ public sealed class ApiFootballSyncService
         return result;
     }
 
-    private static void ParseStatistics(JsonElement root, ApiFootballMatchData data)
+    internal static void ParseStatistics(JsonElement root, ApiFootballMatchData data)
     {
         foreach (var row in root.GetProperty("response").EnumerateArray())
         {
@@ -630,7 +895,12 @@ public sealed class ApiFootballSyncService
     }
 
     private static string ResolveDefaultDbLeague(ApiFootballLeagueSeason league) =>
-        (league.Country, league.LeagueName) switch
+        ApiFootballLeagueNameMapper.Resolve(league.Country, league.LeagueName);
+
+    internal static class ApiFootballLeagueNameMapper
+    {
+        public static string Resolve(string country, string leagueName) =>
+        (country, leagueName) switch
         {
             ("Brazil", "Serie A") => "Brasileirão",
             ("Brazil", "Serie B") => "Brasileirão Serie B",
@@ -678,8 +948,9 @@ public sealed class ApiFootballSyncService
             ("World", "UEFA Europa Conference League") => "UEFA Conference League",
             ("World", "CONMEBOL Libertadores") => "Copa Libertadores",
             ("World", "CONMEBOL Sudamericana") => "Copa Sudamericana",
-            _ => $"{league.LeagueName} ({league.Country})"
+            _ => $"{leagueName} ({country})"
         };
+    }
 
     private static bool IsKnockout(ApiFootballLeagueSeason league, string round) =>
         league.CompetitionType.Equals("Cup", StringComparison.OrdinalIgnoreCase) &&
@@ -733,4 +1004,13 @@ public sealed class ApiFootballSyncService
     {
         if (isHome) home(value); else away(value);
     }
+
+    private sealed record CompetitionSyncOutcome(
+        ApiFootballBulkSyncRow Row,
+        int Processed,
+        int Inserted,
+        int Updated,
+        int Skipped,
+        int Errors,
+        bool StoppedByQuota);
 }

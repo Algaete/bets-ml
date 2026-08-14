@@ -1,0 +1,25 @@
+{
+  "status": "active_candidate",
+  "model_version": "home-corners-2026-08-09-trial-1840",
+  "target": "TargetHomeCorners",
+  "market": "corners",
+  "artifact_role": "deployment_full_refit",
+  "preferred_model_file": "modelo_deployment_full.cbm",
+  "fallback_model_file": "modelo_deployment_full.joblib",
+  "metadata_file": "model_metadata.json",
+  "runtime_file": "inference.py",
+  "trained_rows": 134941,
+  "trained_through": "2026-08-07",
+  "source_best_trial": 1840,
+  "dataset_sha256": "a9e8310f81818121e4b28c0469302cfbe778ccd5cf9436b5369cefc995d65d58",
+  "sha256": {
+    "modelo_deployment_full.joblib": "787e78719db0db7d13acf3d5bf35fba9984229d2628b2a2588ce331bcaebc7c8",
+    "modelo_deployment_full.cbm": "3413d42541c279c6af97c1a401535570e3c2a685b52e11936f7031ef73012504",
+    "model_metadata.json": "cde14ba4a2eb40a60b6bf85584fce6af7fd08420dfb78e49c32f0ad62c70ac37",
+    "deployment_smoke_fixture.json": "9b888bdb3a8608eeea0e8675b20edebc62f45ee6e7745b2adc8bc3263b4d29dd",
+    "requirements-inference.txt": "db26caf6970eecae5c349834173dec7a3d3848b6c02bd78c995a53a3ad872e21",
+    "environment.json": "97bb1245f4de28cfb1521f426d28c486dc98edfe1c469a97d6a897d2acacf163",
+    "inference.py": "1e74ff9950d172095ae17dbbbbdfab9b968ba6fd4bca7641226950d9d7b2bdff",
+    "reference_evaluation.json": "8cf8fa4cfb299b70242aec0568e5bebbc8bd3e9f6660f05fbd1da1ab002900ea"
+  }
+}

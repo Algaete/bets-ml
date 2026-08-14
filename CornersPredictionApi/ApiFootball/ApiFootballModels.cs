@@ -7,6 +7,9 @@ public sealed class ApiFootballOptions
     public string BaseUrl { get; init; } = "https://v3.football.api-sports.io";
     public string? ApiKey { get; init; }
     public int RequestDelayMilliseconds { get; init; } = 250;
+    public int FixtureParallelism { get; init; } = 8;
+    public int CompetitionParallelism { get; init; } = 4;
+    public int DatabaseWriteParallelism { get; init; } = 8;
     public int TimeoutSeconds { get; init; } = 45;
 }
 
@@ -22,9 +25,74 @@ public sealed record ApiFootballSyncRequest(
     bool SyncStandings = true,
     bool SyncLineups = true);
 
+public sealed record ApiFootballBotPickReconciliationRequest(
+    DateOnly? DateFrom = null,
+    DateOnly? DateTo = null,
+    int MaxSelections = 5000,
+    bool DryRun = false);
+
+public sealed record ApiFootballBotPickReconciliationResult(
+    DateOnly? DateFrom,
+    DateOnly DateTo,
+    bool DryRun,
+    int InitialReviewed,
+    int InitialSettled,
+    int PendingAfterLocalSettlement,
+    int FixtureDatesQueried,
+    int FixturesDiscovered,
+    int MatchedSelections,
+    int UniqueMatchedFixtures,
+    int SyncedFixtures,
+    int LinkedSelections,
+    int UnmatchedSelections,
+    int AmbiguousSelections,
+    int MissingMarketStatistics,
+    int FinalReviewed,
+    int FinalSettled,
+    int FinalWon,
+    int FinalLost,
+    int FinalPush,
+    int StillPending,
+    string? DailyRemaining,
+    string? MinuteRemaining,
+    IReadOnlyList<ApiFootballBotPickReconciliationRow> Rows);
+
+public sealed record ApiFootballBotPickReconciliationRow(
+    long SelectionId,
+    string BotKey,
+    string MarketType,
+    DateTime MatchDate,
+    string HomeTeam,
+    string AwayTeam,
+    long? FixtureId,
+    long? MatchHistoryId,
+    string MatchStatus,
+    double? Confidence,
+    string Result,
+    string Message);
+
 public sealed record ApiFootballDiscoveryRequest(
     DateOnly DateFrom,
     DateOnly DateTo);
+
+public sealed record ApiFootballUpcomingSyncRequest(
+    DateOnly DateFrom,
+    DateOnly DateTo);
+
+public sealed record ApiFootballUpcomingSyncResult(
+    DateOnly DateFrom,
+    DateOnly DateTo,
+    int DiscoveredFixtures,
+    int EligibleFixtures,
+    int ExcludedFixtures,
+    int PersistedFixtures,
+    string? DailyRemaining,
+    string? MinuteRemaining,
+    IReadOnlyList<ApiFootballUpcomingDailySummary> Daily);
+
+public sealed record ApiFootballUpcomingDailySummary(
+    DateOnly Date,
+    int Fixtures);
 
 public sealed record ApiFootballDiscoveryResult(
     DateOnly DateFrom,
@@ -90,6 +158,36 @@ public sealed record ApiFootballBulkSyncRow(
     int Errors,
     string Status,
     string? Message = null);
+
+public sealed record ApiFootballHistoricalBatchRequest(
+    DateOnly? Month = null,
+    int? CompetitionOffset = null,
+    int MaxCompetitions = 500,
+    int MaxFixturesPerCompetition = 1000,
+    int MaxTotalFixtures = 7000,
+    int MinimumDailyRemaining = 5);
+
+public sealed record ApiFootballHistoricalBatchState(
+    string Status,
+    bool IsRunning,
+    DateOnly Month,
+    int CompetitionOffset,
+    DateOnly NextMonth,
+    int NextCompetitionOffset,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    int? DiscoveredFixtures,
+    int? EligibleCompetitions,
+    int? ProcessedCompetitions,
+    int? ProcessedFixtures,
+    int? Inserted,
+    int? Updated,
+    int? Skipped,
+    int? Errors,
+    bool? StoppedByQuota,
+    string? DailyRemaining,
+    string? MinuteRemaining,
+    string Message);
 
 public sealed record ApiFootballStatusResult(
     string Plan,
@@ -226,3 +324,32 @@ internal sealed record ApiFootballStanding(
     string? Description);
 
 internal sealed record ApiFootballPersistResult(string Action, long MatchHistoryId);
+
+internal sealed record ApiFootballSettlementFixtureSyncResult(
+    long FixtureId,
+    long? MatchHistoryId,
+    string Action,
+    bool HasGoals,
+    bool HasCorners,
+    bool HasShots,
+    bool HasShotsOnGoal,
+    string Message);
+
+internal sealed record ApiFootballHistoricalCheckpoint(
+    DateTime Month,
+    int CompetitionOffset,
+    string Status,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    int? DiscoveredFixtures,
+    int? EligibleCompetitions,
+    int? ProcessedCompetitions,
+    int? ProcessedFixtures,
+    int? Inserted,
+    int? Updated,
+    int? Skipped,
+    int? Errors,
+    bool? StoppedByQuota,
+    string? DailyRemaining,
+    string? MinuteRemaining,
+    string? Message);

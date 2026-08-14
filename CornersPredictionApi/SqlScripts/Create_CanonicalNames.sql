@@ -222,6 +222,31 @@ BEGIN
 
     IF OBJECT_ID(N'dbo.MatchHistory', N'U') IS NOT NULL
     BEGIN
+        ;WITH CanonicalDuplicates AS
+        (
+            SELECT
+                Id,
+                rn = ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        MatchDate,
+                        dbo.fn_CanonicalTeamName(COALESCE(NULLIF(StandardizedHomeTeam, N''), HomeTeam)),
+                        dbo.fn_CanonicalTeamName(COALESCE(NULLIF(StandardizedAwayTeam, N''), AwayTeam)),
+                        ISNULL(NULLIF(HomeTeamGender, N''), N'M'),
+                        ISNULL(NULLIF(AwayTeamGender, N''), N'M')
+                    ORDER BY
+                        CASE WHEN HomeCorners IS NOT NULL AND AwayCorners IS NOT NULL THEN 0 ELSE 1 END,
+                        CASE WHEN HomeShots IS NOT NULL AND AwayShots IS NOT NULL THEN 0 ELSE 1 END,
+                        UpdatedAtUtc DESC,
+                        Id DESC
+                )
+            FROM dbo.MatchHistory
+        )
+        DELETE mh
+        FROM dbo.MatchHistory mh
+        INNER JOIN CanonicalDuplicates duplicate ON duplicate.Id = mh.Id
+        WHERE duplicate.rn > 1;
+
         UPDATE mh
         SET
             League = canonical.LeagueName,

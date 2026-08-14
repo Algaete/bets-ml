@@ -15,9 +15,6 @@ public sealed class CornersPipelineApiClient
     public Task<RobotPanelStepResultViewModel> RunMatchHistoryAsync(int days, CancellationToken cancellationToken) =>
         PostStepAsync("/api/corners-pipeline/match-history", new RobotPanelStepRequestViewModel { Days = days }, cancellationToken);
 
-    public Task<RobotPanelStepResultViewModel> RunWorldCupMatchHistoryAsync(int days, CancellationToken cancellationToken) =>
-        PostStepAsync("/api/corners-pipeline/world-cup-match-history", new RobotPanelStepRequestViewModel { Days = days }, cancellationToken);
-
     public Task<RobotPanelStepResultViewModel> RunUpcomingMatchesAsync(int days, CancellationToken cancellationToken) =>
         PostStepAsync("/api/corners-pipeline/upcoming-matches", new RobotPanelStepRequestViewModel { Days = days }, cancellationToken);
 
@@ -27,16 +24,59 @@ public sealed class CornersPipelineApiClient
     public Task<RobotPanelStepResultViewModel> RunBetanoOddsAsync(CancellationToken cancellationToken) =>
         PostStepAsync("/api/corners-pipeline/betano-odds", body: null, cancellationToken);
 
-    public Task<RobotPanelStepResultViewModel> RunBotsAsync(bool excludeExistingSelections, CancellationToken cancellationToken) =>
+    public async Task<ApiFootballHistoricalBatchViewModel> GetApiFootballHistoricalBatchAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.GetAsync(
+            "/api/api-football/historical-batch",
+            cancellationToken);
+        return await ReadResponseAsync<ApiFootballHistoricalBatchViewModel>(response, cancellationToken);
+    }
+
+    public async Task<ApiFootballHistoricalBatchViewModel> StartApiFootballHistoricalBatchAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            "/api/api-football/historical-batch",
+            new { },
+            cancellationToken);
+        return await ReadResponseAsync<ApiFootballHistoricalBatchViewModel>(response, cancellationToken);
+    }
+
+    public async Task<RobotPanelBotAvailabilityViewModel> GetBotAvailabilityAsync(
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.GetAsync(
+            $"/api/corners-pipeline/bots/availability?batchSize={batchSize}",
+            cancellationToken);
+        return await ReadResponseAsync<RobotPanelBotAvailabilityViewModel>(response, cancellationToken);
+    }
+
+    public Task<RobotPanelStepResultViewModel> RunBotsAsync(
+        bool excludeExistingSelections,
+        int batchNumber,
+        int batchSize,
+        bool runBotC,
+        CancellationToken cancellationToken) =>
         PostStepAsync(
             "/api/corners-pipeline/bots",
-            new RobotPanelBotsRequestViewModel { ExcludeExistingSelections = excludeExistingSelections },
+            new RobotPanelBotsRequestViewModel
+            {
+                ExcludeExistingSelections = excludeExistingSelections,
+                BatchNumber = batchNumber,
+                BatchSize = batchSize,
+                RunBotC = runBotC
+            },
             cancellationToken);
 
     public async Task<RobotPanelRunResultViewModel> RunFullPipelineAsync(
         int matchHistoryDays,
         int upcomingDays,
         bool excludeExistingSelections,
+        int botBatchNumber,
+        int botBatchSize,
+        bool runBotC,
         CancellationToken cancellationToken)
     {
         var response = await _httpClient.PostAsJsonAsync(
@@ -45,7 +85,10 @@ public sealed class CornersPipelineApiClient
             {
                 MatchHistoryDays = matchHistoryDays,
                 UpcomingDays = upcomingDays,
-                ExcludeExistingSelections = excludeExistingSelections
+                ExcludeExistingSelections = excludeExistingSelections,
+                BotBatchNumber = botBatchNumber,
+                BotBatchSize = botBatchSize,
+                RunBotC = runBotC
             },
             cancellationToken);
 

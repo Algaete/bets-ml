@@ -1,4 +1,5 @@
 using CornersPrediction.Application.MatchHistory;
+using CornersMLData.Data;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPredictionApi.Controllers.MatchHistory;
@@ -124,6 +125,7 @@ public sealed class MatchHistoryController : ControllerBase
         [FromQuery] string? awayTeam,
         [FromQuery] string? teamGender,
         [FromQuery] double? baseLocalAwayPrediction,
+        [FromQuery] DateOnly? beforeDate,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(homeTeam) || string.IsNullOrWhiteSpace(awayTeam))
@@ -133,12 +135,15 @@ public sealed class MatchHistoryController : ControllerBase
 
         try
         {
+            var canonicalHomeTeam = CanonicalNameCatalog.CanonicalizeTeam(homeTeam);
+            var canonicalAwayTeam = CanonicalNameCatalog.CanonicalizeTeam(awayTeam);
             var context = await _getPredictionContextUseCase.GetAsync(
-                homeTeam,
-                awayTeam,
+                canonicalHomeTeam,
+                canonicalAwayTeam,
                 league,
                 teamGender,
                 baseLocalAwayPrediction,
+                beforeDate,
                 cancellationToken);
 
             return Ok(context);

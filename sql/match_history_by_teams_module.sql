@@ -21,8 +21,8 @@ BEGIN
     (
         SELECT TOP (1) tm.StandardizedTeam
         FROM dbo.TeamMapping tm
-        WHERE tm.SourceTeam = @HomeTeam
-           OR tm.StandardizedTeam = @HomeTeam
+        WHERE tm.SourceTeam COLLATE Latin1_General_100_CI_AI = @HomeTeam COLLATE Latin1_General_100_CI_AI
+           OR tm.StandardizedTeam COLLATE Latin1_General_100_CI_AI = @HomeTeam COLLATE Latin1_General_100_CI_AI
         ORDER BY
             CASE WHEN @League IS NOT NULL AND tm.League = @League THEN 0 ELSE 1 END,
             tm.StandardizedTeam
@@ -32,8 +32,8 @@ BEGIN
     (
         SELECT TOP (1) tm.StandardizedTeam
         FROM dbo.TeamMapping tm
-        WHERE tm.SourceTeam = @AwayTeam
-           OR tm.StandardizedTeam = @AwayTeam
+        WHERE tm.SourceTeam COLLATE Latin1_General_100_CI_AI = @AwayTeam COLLATE Latin1_General_100_CI_AI
+           OR tm.StandardizedTeam COLLATE Latin1_General_100_CI_AI = @AwayTeam COLLATE Latin1_General_100_CI_AI
         ORDER BY
             CASE WHEN @League IS NOT NULL AND tm.League = @League THEN 0 ELSE 1 END,
             tm.StandardizedTeam
@@ -42,15 +42,15 @@ BEGIN
     SET @HomeStandard = dbo.fn_CanonicalTeamName(COALESCE(@HomeStandard, @HomeTeam));
     SET @AwayStandard = dbo.fn_CanonicalTeamName(COALESCE(@AwayStandard, @AwayTeam));
 
-    ;WITH NormalizedMatches AS
+    ;WITH ValidMatches AS
     (
         SELECT
             mh.Id,
-            League = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedLeague)), ''), mh.League),
+            League = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedLeague)), ''), mh.League) COLLATE Latin1_General_100_CI_AI,
             mh.Season,
             mh.MatchDate,
-            HomeTeam = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedHomeTeam)), ''), mh.HomeTeam),
-            AwayTeam = COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedAwayTeam)), ''), mh.AwayTeam),
+            HomeTeam = dbo.fn_CanonicalTeamName(COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedHomeTeam)), ''), mh.HomeTeam)) COLLATE Latin1_General_100_CI_AI,
+            AwayTeam = dbo.fn_CanonicalTeamName(COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedAwayTeam)), ''), mh.AwayTeam)) COLLATE Latin1_General_100_CI_AI,
             mh.HomeGoals,
             mh.AwayGoals,
             mh.HomeCorners,
@@ -65,10 +65,45 @@ BEGIN
             mh.HomeFormation,
             mh.AwayFormation,
             mh.CreatedAtUtc,
-            mh.UpdatedAtUtc
+            mh.UpdatedAtUtc,
+            mh.ApiFootballFixtureId
         FROM dbo.MatchHistory mh
-        WHERE mh.HomeTeamGender = @TeamGender
-          AND mh.AwayTeamGender = @TeamGender
+        WHERE ISNULL(NULLIF(mh.HomeTeamGender, ''), 'M') = @TeamGender
+          AND ISNULL(NULLIF(mh.AwayTeamGender, ''), 'M') = @TeamGender
+          AND mh.HomeCorners IS NOT NULL
+          AND mh.AwayCorners IS NOT NULL
+          AND mh.HomeCorners + mh.AwayCorners > 0
+          AND
+          (
+              COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedHomeTeam)), ''), mh.HomeTeam) COLLATE Latin1_General_100_CI_AI IN (@HomeStandard, @AwayStandard)
+              OR COALESCE(NULLIF(LTRIM(RTRIM(mh.StandardizedAwayTeam)), ''), mh.AwayTeam) COLLATE Latin1_General_100_CI_AI IN (@HomeStandard, @AwayStandard)
+          )
+    ),
+    RankedMatches AS
+    (
+        SELECT
+            DuplicateRank = ROW_NUMBER() OVER
+            (
+                PARTITION BY MatchDate, HomeTeam, AwayTeam
+                ORDER BY
+                    CASE WHEN ApiFootballFixtureId IS NOT NULL THEN 0 ELSE 1 END,
+                    CASE
+                        WHEN HomeShots IS NOT NULL AND AwayShots IS NOT NULL
+                         AND HomeShotsOnGoal IS NOT NULL AND AwayShotsOnGoal IS NOT NULL
+                         AND HomePossession IS NOT NULL AND AwayPossession IS NOT NULL THEN 0
+                        ELSE 1
+                    END,
+                    COALESCE(UpdatedAtUtc, CreatedAtUtc) DESC,
+                    Id DESC
+            ),
+            *
+        FROM ValidMatches
+    ),
+    NormalizedMatches AS
+    (
+        SELECT *
+        FROM RankedMatches
+        WHERE DuplicateRank = 1
     ),
     CandidateMatches AS
     (
@@ -134,7 +169,8 @@ BEGIN
             nm.HomeFormation,
             nm.AwayFormation,
             nm.CreatedAtUtc,
-            nm.UpdatedAtUtc
+            nm.UpdatedAtUtc,
+            nm.ApiFootballFixtureId
         FROM NormalizedMatches nm
         WHERE nm.HomeTeam = @HomeStandard
            OR nm.AwayTeam = @HomeStandard
@@ -203,10 +239,37 @@ BEGIN
             nm.HomeFormation,
             nm.AwayFormation,
             nm.CreatedAtUtc,
-            nm.UpdatedAtUtc
+            nm.UpdatedAtUtc,
+            nm.ApiFootballFixtureId
         FROM NormalizedMatches nm
         WHERE nm.HomeTeam = @AwayStandard
            OR nm.AwayTeam = @AwayStandard
+    ),
+    RankedCandidateMatches AS
+    (
+        SELECT
+            CandidateDuplicateRank = ROW_NUMBER() OVER
+            (
+                PARTITION BY EquipoCondicion, MatchDate
+                ORDER BY
+                    CASE WHEN ApiFootballFixtureId IS NOT NULL THEN 0 ELSE 1 END,
+                    CASE
+                        WHEN TirosEquipo IS NOT NULL AND TirosRival IS NOT NULL
+                         AND TirosPuertaEquipo IS NOT NULL AND TirosPuertaRival IS NOT NULL
+                         AND PosesionEquipo IS NOT NULL AND PosesionRival IS NOT NULL THEN 0
+                        ELSE 1
+                    END,
+                    COALESCE(UpdatedAtUtc, CreatedAtUtc) DESC,
+                    Id DESC
+            ),
+            *
+        FROM CandidateMatches
+    ),
+    DistinctCandidateMatches AS
+    (
+        SELECT *
+        FROM RankedCandidateMatches
+        WHERE CandidateDuplicateRank = 1
     ),
     HistoryBuckets AS
     (
@@ -214,7 +277,7 @@ BEGIN
             TipoHistorial = CAST('ULTIMOS_10_GENERAL' AS NVARCHAR(30)),
             RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
-        FROM CandidateMatches
+        FROM DistinctCandidateMatches
 
         UNION ALL
 
@@ -222,7 +285,7 @@ BEGIN
             TipoHistorial = CAST('ULTIMOS_10_LOCAL' AS NVARCHAR(30)),
             RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
-        FROM CandidateMatches
+        FROM DistinctCandidateMatches
         WHERE CondicionReal = 'LOCAL'
 
         UNION ALL
@@ -231,7 +294,7 @@ BEGIN
             TipoHistorial = CAST('ULTIMOS_10_VISITA' AS NVARCHAR(30)),
             RnHistorial = ROW_NUMBER() OVER (PARTITION BY EquipoCondicion ORDER BY MatchDate DESC, Id DESC),
             *
-        FROM CandidateMatches
+        FROM DistinctCandidateMatches
         WHERE CondicionReal = 'VISITA'
     )
     SELECT

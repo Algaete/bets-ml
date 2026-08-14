@@ -46,6 +46,103 @@ public sealed class AutomatedCornersApiClient
         return updatedSelection ?? throw new InvalidOperationException("Status update returned an empty response.");
     }
 
+    public async Task<BotPickSelectionViewModel> ResolveSelectionAsync(
+        long id,
+        ResolveBotPickViewModel request,
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.PutAsJsonAsync(
+            $"/api/automated-corners/selections/{id}/resolve",
+            request,
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Settlement failed with {(int)response.StatusCode}."
+                    : errorBody);
+        }
+
+        var updatedSelection = await response.Content.ReadFromJsonAsync<BotPickSelectionViewModel>(cancellationToken);
+        return updatedSelection ?? throw new InvalidOperationException("Settlement returned an empty response.");
+    }
+
+    public async Task<BotPickSettlementResponseViewModel> SettlePendingAsync(
+        SettlePendingBotPicksViewModel request,
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            "/api/automated-corners/settle",
+            new
+            {
+                MatchDateTo = request.MatchDateTo?.ToString("yyyy-MM-dd"),
+                DryRun = false,
+                request.MaxRows,
+                request.BotKey,
+                request.MarketFamily
+            },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Pending settlement failed with {(int)response.StatusCode}."
+                    : errorBody);
+        }
+
+        var settlement = await response.Content.ReadFromJsonAsync<BotPickSettlementResponseViewModel>(cancellationToken);
+        return settlement ?? throw new InvalidOperationException("Pending settlement returned an empty response.");
+    }
+
+    public async Task<ReconcileAvailableBotPicksResponseViewModel> ReconcileAvailableAsync(
+        ReconcileAvailableBotPicksViewModel request,
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            "/api/api-football/reconcile-bot-picks",
+            new
+            {
+                DateFrom = request.DateFrom?.ToString("yyyy-MM-dd"),
+                DateTo = request.DateTo?.ToString("yyyy-MM-dd"),
+                request.MaxSelections,
+                request.DryRun
+            },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Bot Pick reconciliation failed with {(int)response.StatusCode}."
+                    : errorBody);
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<ReconcileAvailableBotPicksResponseViewModel>(
+            cancellationToken);
+        return result ?? throw new InvalidOperationException("Bot Pick reconciliation returned an empty response.");
+    }
+
+    public async Task DeleteSelectionAsync(long id, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.DeleteAsync(
+            $"/api/automated-corners/selections/{id}",
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Delete failed with {(int)response.StatusCode}."
+                    : errorBody);
+        }
+    }
+
     private static string BuildQuery(BotPickFiltersViewModel filters)
     {
         var query = new List<string>();
@@ -53,6 +150,7 @@ public sealed class AutomatedCornersApiClient
         Add(query, "dateTo", filters.DateTo?.ToString("yyyy-MM-dd"));
         Add(query, "status", filters.Status);
         Add(query, "league", filters.League);
+        Add(query, "source", filters.Bookmaker);
         Add(query, "marketType", filters.MarketType);
 
         if (filters.OnlyPending)

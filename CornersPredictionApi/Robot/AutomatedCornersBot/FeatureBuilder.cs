@@ -43,7 +43,12 @@ public sealed class FeatureBuilder
             ["Big3Diff"] = homeBig3 - awayBig3,
             ["IsKnockout"] = IsLikelyKnockoutCompetition(odds.EffectiveLeague) ? 1 : 0,
             ["BettingLine"] = Convert.ToDouble(odds.LineValue, CultureInfo.InvariantCulture),
-            ["GoalsLine"] = 2.5d,
+            ["GoalsLine"] = odds.MarketType == "GoalsTotal"
+                ? Convert.ToDouble(odds.LineValue, CultureInfo.InvariantCulture)
+                : 2.5d,
+            ["ShotsOnGoalLine"] = odds.MarketType == "ShotsOnTargetTotal"
+                ? Convert.ToDouble(odds.LineValue, CultureInfo.InvariantCulture)
+                : 8.5d,
             ["HomeIsCountry"] = 0,
             ["AwayIsCountry"] = 0,
             ["CountryDiff"] = 0

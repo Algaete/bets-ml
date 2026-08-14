@@ -40,9 +40,31 @@ public sealed class ApiFootballRepository
                 return;
             }
 
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+            const string schemaProbe = """
+SELECT CASE WHEN
+    OBJECT_ID(N'dbo.ApiFootballTeams', N'U') IS NOT NULL
+    AND OBJECT_ID(N'dbo.ApiFootballLeagueSeasons', N'U') IS NOT NULL
+    AND OBJECT_ID(N'dbo.LeagueStandingSnapshots', N'U') IS NOT NULL
+    AND OBJECT_ID(N'dbo.ApiFootballSyncRuns', N'U') IS NOT NULL
+    AND OBJECT_ID(N'dbo.ApiFootballHistoricalCheckpoint', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.MatchHistory', N'DataSource') IS NOT NULL
+    AND COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballFixtureId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballLeagueId') IS NOT NULL
+    AND COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballUpdatedAtUtc') IS NOT NULL
+THEN 1 ELSE 0 END;
+""";
+            var schemaExists = await connection.ExecuteScalarAsync<int>(
+                new CommandDefinition(schemaProbe, cancellationToken: cancellationToken));
+            if (schemaExists == 1)
+            {
+                await EnsureSettlementEvidenceSchemaAsync(connection, cancellationToken);
+                _schemaReady = true;
+                return;
+            }
+
             var scriptPath = Path.Combine(_environment.ContentRootPath, "SqlScripts", "ApiFootballIntegration.sql");
             var script = await File.ReadAllTextAsync(scriptPath, cancellationToken);
-            await using var connection = await OpenConnectionAsync(cancellationToken);
             foreach (var batch in SplitSqlBatches(script))
             {
                 await connection.ExecuteAsync(new CommandDefinition(
@@ -50,11 +72,76 @@ public sealed class ApiFootballRepository
                     commandTimeout: 180,
                     cancellationToken: cancellationToken));
             }
+            await EnsureSettlementEvidenceSchemaAsync(connection, cancellationToken);
             _schemaReady = true;
         }
         finally
         {
             SchemaLock.Release();
+        }
+    }
+
+    private async Task EnsureSettlementEvidenceSchemaAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballGoalsAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballGoalsAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballCornersAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballCornersAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballShotsAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballShotsAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballShotsOnGoalAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballShotsOnGoalAvailable BIT NULL;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeCorners' AND is_nullable = 0)
+BEGIN
+    DROP INDEX IF EXISTS IX_MatchHistory_BotPickSettlement ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_StdHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_StdAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_RawHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_RawAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_StdHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_StdAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_RawHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_RawAway ON dbo.MatchHistory;
+END;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeCorners' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeCorners INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayCorners' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayCorners INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeShots' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeShots INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayShots' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayShots INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeShotsOnGoal' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeShotsOnGoal INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayShotsOnGoal' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayShotsOnGoal INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomePossession' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomePossession DECIMAL(5,2) NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayPossession' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayPossession DECIMAL(5,2) NULL;
+
+""";
+        await connection.ExecuteAsync(new CommandDefinition(
+            sql,
+            commandTimeout: 300,
+            cancellationToken: cancellationToken));
+
+        var indexScriptPath = Path.Combine(
+            _environment.ContentRootPath,
+            "SqlScripts",
+            "MatchHistoryPerformanceIndexes.sql");
+        if (File.Exists(indexScriptPath))
+        {
+            var indexScript = await File.ReadAllTextAsync(indexScriptPath, cancellationToken);
+            await connection.ExecuteAsync(new CommandDefinition(
+                indexScript,
+                commandTimeout: 600,
+                cancellationToken: cancellationToken));
         }
     }
 
@@ -188,11 +275,13 @@ VALUES
         if (existingId.HasValue)
         {
             id = existingId.Value;
-            action = updateExisting ? "Updated" : "Existing";
-            if (updateExisting)
+            if (!updateExisting)
             {
-                await UpdateCoreFieldsAsync(connection, id, data, cancellationToken);
+                return new ApiFootballPersistResult("Existing", id);
             }
+
+            action = "Updated";
+            await UpdateCoreFieldsAsync(connection, id, data, cancellationToken);
         }
         else
         {
@@ -312,6 +401,72 @@ VALUES
         }, cancellationToken: cancellationToken));
     }
 
+    internal async Task<ApiFootballHistoricalCheckpoint> GetHistoricalCheckpointAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureSchemaAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        const string sql = """
+SELECT
+    MonthStart AS Month,
+    CompetitionOffset,
+    Status,
+    StartedAtUtc,
+    CompletedAtUtc,
+    DiscoveredFixtures,
+    EligibleCompetitions,
+    ProcessedCompetitions,
+    ProcessedFixtures,
+    Inserted,
+    Updated,
+    Skipped,
+    Errors,
+    StoppedByQuota,
+    DailyRemaining,
+    MinuteRemaining,
+    Message
+FROM dbo.ApiFootballHistoricalCheckpoint WITH (NOLOCK)
+WHERE CheckpointId = 1;
+""";
+        return await connection.QuerySingleAsync<ApiFootballHistoricalCheckpoint>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken));
+    }
+
+    internal async Task SaveHistoricalCheckpointAsync(
+        ApiFootballHistoricalCheckpoint checkpoint,
+        CancellationToken cancellationToken)
+    {
+        await EnsureSchemaAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        const string sql = """
+UPDATE dbo.ApiFootballHistoricalCheckpoint
+SET MonthStart = @Month,
+    CompetitionOffset = @CompetitionOffset,
+    Status = @Status,
+    StartedAtUtc = @StartedAtUtc,
+    CompletedAtUtc = @CompletedAtUtc,
+    DiscoveredFixtures = @DiscoveredFixtures,
+    EligibleCompetitions = @EligibleCompetitions,
+    ProcessedCompetitions = @ProcessedCompetitions,
+    ProcessedFixtures = @ProcessedFixtures,
+    Inserted = @Inserted,
+    Updated = @Updated,
+    Skipped = @Skipped,
+    Errors = @Errors,
+    StoppedByQuota = @StoppedByQuota,
+    DailyRemaining = @DailyRemaining,
+    MinuteRemaining = @MinuteRemaining,
+    Message = @Message,
+    UpdatedAtUtc = SYSUTCDATETIME()
+WHERE CheckpointId = 1;
+""";
+        await connection.ExecuteAsync(new CommandDefinition(
+            sql,
+            checkpoint,
+            commandTimeout: 60,
+            cancellationToken: cancellationToken));
+    }
+
     private async Task<SqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqlConnection(_connectionString);
@@ -332,13 +487,15 @@ WHERE ApiFootballFixtureId=@FixtureId
    OR SourceMatchId=@FixtureId
    OR
    (
-       MatchDate=CAST(@MatchDate AS DATE)
+       MatchDate BETWEEN DATEADD(DAY, -1, CAST(@MatchDate AS DATE))
+                     AND DATEADD(DAY, 1, CAST(@MatchDate AS DATE))
        AND dbo.fn_CanonicalTeamName(COALESCE(NULLIF(StandardizedHomeTeam,''),HomeTeam)) COLLATE Latin1_General_100_CI_AI=
            dbo.fn_CanonicalTeamName(@HomeTeam) COLLATE Latin1_General_100_CI_AI
        AND dbo.fn_CanonicalTeamName(COALESCE(NULLIF(StandardizedAwayTeam,''),AwayTeam)) COLLATE Latin1_General_100_CI_AI=
            dbo.fn_CanonicalTeamName(@AwayTeam) COLLATE Latin1_General_100_CI_AI
    )
 ORDER BY CASE WHEN ApiFootballFixtureId=@FixtureId THEN 0 WHEN SourceMatchId=@FixtureId THEN 1 ELSE 2 END,
+         ABS(DATEDIFF(DAY, MatchDate, CAST(@MatchDate AS DATE))),
          CASE WHEN dbo.fn_CanonicalLeagueName(COALESCE(NULLIF(StandardizedLeague,''),League)) COLLATE Latin1_General_100_CI_AI=
                         dbo.fn_CanonicalLeagueName(@League) COLLATE Latin1_General_100_CI_AI THEN 0 ELSE 1 END,
          Id DESC;
@@ -398,6 +555,10 @@ WHERE Id=@Id;
         const string sql = """
 UPDATE dbo.MatchHistory SET DataSource='API-Football', ApiFootballFixtureId=@FixtureId,
  ApiFootballLeagueId=@LeagueId, ApiFootballHomeTeamId=@HomeTeamId, ApiFootballAwayTeamId=@AwayTeamId,
+ ApiFootballGoalsAvailable=@GoalsAvailable,
+ ApiFootballCornersAvailable=@CornersAvailable,
+ ApiFootballShotsAvailable=@ShotsAvailable,
+ ApiFootballShotsOnGoalAvailable=@ShotsOnGoalAvailable,
  FixtureRound=@Round, FixtureStatus=@Status, VenueName=@VenueName, VenueCity=@VenueCity, Referee=@Referee,
  HomeHalfTimeGoals=@HomeHalfTimeGoals, AwayHalfTimeGoals=@AwayHalfTimeGoals,
  HomeFouls=@HomeFouls, AwayFouls=@AwayFouls, HomeOffsides=@HomeOffsides, AwayOffsides=@AwayOffsides,
@@ -414,6 +575,10 @@ WHERE Id=@Id;
             LeagueId = data.Fixture.LeagueId,
             HomeTeamId = data.Fixture.HomeTeamId,
             AwayTeamId = data.Fixture.AwayTeamId,
+            GoalsAvailable = data.Fixture.HomeGoals.HasValue && data.Fixture.AwayGoals.HasValue,
+            CornersAvailable = data.HomeCorners.HasValue && data.AwayCorners.HasValue,
+            ShotsAvailable = data.HomeShots.HasValue && data.AwayShots.HasValue,
+            ShotsOnGoalAvailable = data.HomeShotsOnGoal.HasValue && data.AwayShotsOnGoal.HasValue,
             data.Fixture.Round,
             data.Fixture.Status,
             data.Fixture.VenueName,

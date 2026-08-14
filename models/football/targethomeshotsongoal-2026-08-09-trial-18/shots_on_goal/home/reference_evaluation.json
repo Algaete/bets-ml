@@ -1,0 +1,53 @@
+{
+  "status": "complete",
+  "run_directory": "/Users/alfonsogaeterodriguez/Desktop/RepoML/artefactos/2026-08-09/shots_on_goal/resultados/targethomeshotsongoal/targethomeshotsongoal_search",
+  "mode": "search",
+  "target": "TargetHomeShotsOnGoal",
+  "market": "shots_on_goal",
+  "dataset_rows": 134941,
+  "dataset_sha256": "a9e8310f81818121e4b28c0469302cfbe778ccd5cf9436b5369cefc995d65d58",
+  "split": {
+    "train_years": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "validation_year": 2025,
+    "test_year": 2026,
+    "test_status": "evaluated_after_freeze"
+  },
+  "best_trial": 18,
+  "best_cv_score": 1.8581518898845535,
+  "trials_goal": 60,
+  "trials_attempted": 60,
+  "trial_counts": {
+    "COMPLETE": 56,
+    "PRUNED": 4,
+    "FAIL": 0,
+    "RUNNING": 0,
+    "WAITING": 0
+  },
+  "family": "CatBoost",
+  "feature_set": "all",
+  "feature_count": 60,
+  "temporal_decay": 0.3,
+  "validation_metrics": {
+    "mae": 1.8400466124393904,
+    "rmse": 2.3464218906025733,
+    "r2": 0.13024851209499388,
+    "median_ae": 1.533225374949116,
+    "mean_poisson_deviance": 1.2220532704339642
+  },
+  "test_metrics": {
+    "mae": 1.8760732398306286,
+    "rmse": 2.3812932404401024,
+    "r2": 0.12101604972504076,
+    "median_ae": 1.5970020308232264,
+    "mean_poisson_deviance": 1.2342947306308791
+  },
+  "elapsed_seconds": 1998.3
+}

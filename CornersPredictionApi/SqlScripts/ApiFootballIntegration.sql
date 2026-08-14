@@ -1,6 +1,47 @@
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
+-- A finished fixture may expose goals without advanced statistics. NULL means
+-- "not supplied/verified" and must never be replaced with a synthetic zero.
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballGoalsAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballGoalsAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballCornersAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballCornersAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballShotsAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballShotsAvailable BIT NULL;
+IF COL_LENGTH(N'dbo.MatchHistory', N'ApiFootballShotsOnGoalAvailable') IS NULL
+    ALTER TABLE dbo.MatchHistory ADD ApiFootballShotsOnGoalAvailable BIT NULL;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeCorners' AND is_nullable = 0)
+BEGIN
+    DROP INDEX IF EXISTS IX_MatchHistory_BotPickSettlement ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_StdHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_StdAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_RawHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_PredictionContext_RawAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_StdHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_StdAway ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_RawHome ON dbo.MatchHistory;
+    DROP INDEX IF EXISTS IX_MatchHistory_AsOf_RawAway ON dbo.MatchHistory;
+END;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeCorners' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeCorners INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayCorners' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayCorners INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeShots' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeShots INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayShots' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayShots INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomeShotsOnGoal' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomeShotsOnGoal INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayShotsOnGoal' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayShotsOnGoal INT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'HomePossession' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN HomePossession DECIMAL(5,2) NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.MatchHistory') AND name = N'AwayPossession' AND is_nullable = 0)
+    ALTER TABLE dbo.MatchHistory ALTER COLUMN AwayPossession DECIMAL(5,2) NULL;
+
 IF COL_LENGTH('dbo.MatchHistory', 'DataSource') IS NULL
     ALTER TABLE dbo.MatchHistory ADD DataSource NVARCHAR(40) NULL;
 IF COL_LENGTH('dbo.MatchHistory', 'ApiFootballFixtureId') IS NULL
@@ -117,9 +158,6 @@ CROSS APPLY
     WHERE candidate.Id <> source.Id
       AND candidate.ApiFootballFixtureId IS NULL
       AND candidate.MatchDate = source.MatchDate
-      AND candidate.Season = source.Season
-      AND candidate.CanonicalLeague COLLATE Latin1_General_100_CI_AI =
-          dbo.fn_CanonicalLeagueName(COALESCE(NULLIF(source.StandardizedLeague, ''), source.League)) COLLATE Latin1_General_100_CI_AI
       AND candidate.CanonicalHomeTeam COLLATE Latin1_General_100_CI_AI =
           dbo.fn_CanonicalTeamName(COALESCE(NULLIF(source.StandardizedHomeTeam, ''), source.HomeTeam)) COLLATE Latin1_General_100_CI_AI
       AND candidate.CanonicalAwayTeam COLLATE Latin1_General_100_CI_AI =
@@ -328,6 +366,43 @@ BEGIN
         StartedAtUtc DATETIME2(0) NOT NULL,
         CompletedAtUtc DATETIME2(0) NOT NULL
     );
+END;
+
+IF OBJECT_ID('dbo.ApiFootballHistoricalCheckpoint', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ApiFootballHistoricalCheckpoint
+    (
+        CheckpointId TINYINT NOT NULL
+            CONSTRAINT PK_ApiFootballHistoricalCheckpoint PRIMARY KEY
+            CONSTRAINT CK_ApiFootballHistoricalCheckpoint_Singleton CHECK (CheckpointId = 1),
+        MonthStart DATE NOT NULL,
+        CompetitionOffset INT NOT NULL,
+        Status NVARCHAR(30) NOT NULL,
+        StartedAtUtc DATETIME2(3) NULL,
+        CompletedAtUtc DATETIME2(3) NULL,
+        DiscoveredFixtures INT NULL,
+        EligibleCompetitions INT NULL,
+        ProcessedCompetitions INT NULL,
+        ProcessedFixtures INT NULL,
+        Inserted INT NULL,
+        Updated INT NULL,
+        Skipped INT NULL,
+        Errors INT NULL,
+        StoppedByQuota BIT NULL,
+        DailyRemaining NVARCHAR(30) NULL,
+        MinuteRemaining NVARCHAR(30) NULL,
+        Message NVARCHAR(1000) NULL,
+        UpdatedAtUtc DATETIME2(3) NOT NULL
+            CONSTRAINT DF_ApiFootballHistoricalCheckpoint_Updated DEFAULT (SYSUTCDATETIME())
+    );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.ApiFootballHistoricalCheckpoint WHERE CheckpointId = 1)
+BEGIN
+    INSERT dbo.ApiFootballHistoricalCheckpoint
+        (CheckpointId, MonthStart, CompetitionOffset, Status, Message)
+    VALUES
+        (1, '2024-05-01', 542, N'Ready', N'Checkpoint recuperado de la sincronizacion historica anterior.');
 END;
 
 UPDATE leagueSeason

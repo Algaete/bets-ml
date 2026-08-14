@@ -1,0 +1,43 @@
+{
+  "status": "complete",
+  "run_directory": "/Users/alfonsogaeterodriguez/Desktop/RepoML/artefactos/2026-08-08/corners/resultados/targethomecorners/home_corners_search",
+  "mode": "search",
+  "target": "TargetHomeCorners",
+  "dataset_rows": 134941,
+  "dataset_sha256": "a9e8310f81818121e4b28c0469302cfbe778ccd5cf9436b5369cefc995d65d58",
+  "split": {
+    "train_years": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "validation_year": 2025,
+    "test_year": 2026,
+    "test_status": "evaluated_after_freeze"
+  },
+  "best_trial": 1840,
+  "best_cv_score": 2.214203931811184,
+  "family": "CatBoost",
+  "feature_set": "all",
+  "feature_count": 60,
+  "temporal_decay": 0.3,
+  "validation_metrics": {
+    "mae": 2.1878666921745076,
+    "rmse": 2.796558327458895,
+    "r2": 0.0678846663899485,
+    "median_ae": 1.836680844262995,
+    "mean_poisson_deviance": 1.5279531973496323
+  },
+  "test_metrics": {
+    "mae": 2.1858147832254478,
+    "rmse": 2.8277775300229795,
+    "r2": 0.06871919302042473,
+    "median_ae": 1.7999176838728328,
+    "mean_poisson_deviance": 1.5212890950611262
+  },
+  "elapsed_seconds": 61.27
+}

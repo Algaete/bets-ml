@@ -1,0 +1,175 @@
+{
+  "tolerance": 1e-08,
+  "cases": [
+    {
+      "case_id": "home-corners-1",
+      "features": {
+        "IsKnockout": 0,
+        "HomeHistoricBig3": 0,
+        "AwayHistoricBig3": 1,
+        "HomeAvgShotsFor5": 14.4,
+        "HomeAvgShotsFor10": 13.7,
+        "HomeMedianShotsFor10": 10.0,
+        "HomeAvgShotsAgainst10": 15.1,
+        "HomeAvgHomeCornersFor5": 3.6,
+        "HomeAvgHomeCornersAgainst5": 3.4,
+        "HomeAvgHomeGoalsFor5": 2.0,
+        "HomeAvgHomeGoalsAgainst5": 1.2,
+        "AwayAvgShotsFor5": 12.2,
+        "AwayAvgShotsFor10": 11.2,
+        "AwayMedianShotsFor10": 11.0,
+        "AwayAvgShotsAgainst10": 13.2,
+        "AwayAvgAwayCornersFor5": 6.6,
+        "AwayAvgAwayCornersAgainst5": 5.6,
+        "AwayAvgAwayGoalsFor5": 0.6,
+        "AwayAvgAwayGoalsAgainst5": 0.8,
+        "League": "Premier Division (Ireland)",
+        "HomeTeam": "Waterford",
+        "AwayTeam": "Shelbourne",
+        "HomeFormationStyle": "unknown",
+        "AwayFormationStyle": "unknown"
+      },
+      "expected": {
+        "prediction_raw": 12.864585697031112,
+        "prediction_clipped": 12.864585697031112,
+        "prediction_rounded": 13
+      }
+    },
+    {
+      "case_id": "home-corners-2",
+      "features": {
+        "IsKnockout": 0,
+        "HomeHistoricBig3": 0,
+        "AwayHistoricBig3": 0,
+        "HomeAvgShotsFor5": 10.8,
+        "HomeAvgShotsFor10": 12.6,
+        "HomeMedianShotsFor10": 10.0,
+        "HomeAvgShotsAgainst10": 16.5,
+        "HomeAvgHomeCornersFor5": 3.8,
+        "HomeAvgHomeCornersAgainst5": 5.8,
+        "HomeAvgHomeGoalsFor5": 1.0,
+        "HomeAvgHomeGoalsAgainst5": 1.8,
+        "AwayAvgShotsFor5": 14.4,
+        "AwayAvgShotsFor10": 15.9,
+        "AwayMedianShotsFor10": 13.0,
+        "AwayAvgShotsAgainst10": 13.3,
+        "AwayAvgAwayCornersFor5": 5.6,
+        "AwayAvgAwayCornersAgainst5": 6.0,
+        "AwayAvgAwayGoalsFor5": 2.6,
+        "AwayAvgAwayGoalsAgainst5": 1.2,
+        "League": "Allsvenskan",
+        "HomeTeam": "Halmstad",
+        "AwayTeam": "Sirius",
+        "HomeFormationStyle": "unknown",
+        "AwayFormationStyle": "unknown"
+      },
+      "expected": {
+        "prediction_raw": 15.945304422829377,
+        "prediction_clipped": 15.945304422829377,
+        "prediction_rounded": 16
+      }
+    },
+    {
+      "case_id": "home-corners-3",
+      "features": {
+        "IsKnockout": 0,
+        "HomeHistoricBig3": 1,
+        "AwayHistoricBig3": 0,
+        "HomeAvgShotsFor5": 16.2,
+        "HomeAvgShotsFor10": 20.5,
+        "HomeMedianShotsFor10": 11.0,
+        "HomeAvgShotsAgainst10": 7.7,
+        "HomeAvgHomeCornersFor5": 9.8,
+        "HomeAvgHomeCornersAgainst5": 1.8,
+        "HomeAvgHomeGoalsFor5": 0.6,
+        "HomeAvgHomeGoalsAgainst5": 0.8,
+        "AwayAvgShotsFor5": 14.4,
+        "AwayAvgShotsFor10": 13.2,
+        "AwayMedianShotsFor10": 12.0,
+        "AwayAvgShotsAgainst10": 12.8,
+        "AwayAvgAwayCornersFor5": 3.6,
+        "AwayAvgAwayCornersAgainst5": 4.8,
+        "AwayAvgAwayGoalsFor5": 1.2,
+        "AwayAvgAwayGoalsAgainst5": 0.6,
+        "League": "Argentina - Primera División",
+        "HomeTeam": "Boca Juniors",
+        "AwayTeam": "Estudiantes L.P.",
+        "HomeFormationStyle": "unknown",
+        "AwayFormationStyle": "unknown"
+      },
+      "expected": {
+        "prediction_raw": 8.264042963002886,
+        "prediction_clipped": 8.264042963002886,
+        "prediction_rounded": 8
+      }
+    },
+    {
+      "case_id": "home-corners-4",
+      "features": {
+        "IsKnockout": 0,
+        "HomeHistoricBig3": 0,
+        "AwayHistoricBig3": 0,
+        "HomeAvgShotsFor5": 18.2,
+        "HomeAvgShotsFor10": 15.9,
+        "HomeMedianShotsFor10": 12.0,
+        "HomeAvgShotsAgainst10": 14.0,
+        "HomeAvgHomeCornersFor5": 3.2,
+        "HomeAvgHomeCornersAgainst5": 3.2,
+        "HomeAvgHomeGoalsFor5": 1.0,
+        "HomeAvgHomeGoalsAgainst5": 0.8,
+        "AwayAvgShotsFor5": 9.4,
+        "AwayAvgShotsFor10": 10.8,
+        "AwayMedianShotsFor10": 13.0,
+        "AwayAvgShotsAgainst10": 16.3,
+        "AwayAvgAwayCornersFor5": 2.4,
+        "AwayAvgAwayCornersAgainst5": 7.6,
+        "AwayAvgAwayGoalsFor5": 1.0,
+        "AwayAvgAwayGoalsAgainst5": 1.8,
+        "League": "Liga 1 Peru",
+        "HomeTeam": "Comerciantes Unidos",
+        "AwayTeam": "Cusco",
+        "HomeFormationStyle": "unknown",
+        "AwayFormationStyle": "unknown"
+      },
+      "expected": {
+        "prediction_raw": 10.896642468110711,
+        "prediction_clipped": 10.896642468110711,
+        "prediction_rounded": 11
+      }
+    },
+    {
+      "case_id": "home-corners-5",
+      "features": {
+        "IsKnockout": 0,
+        "HomeHistoricBig3": 1,
+        "AwayHistoricBig3": 0,
+        "HomeAvgShotsFor5": 13.6,
+        "HomeAvgShotsFor10": 11.4,
+        "HomeMedianShotsFor10": 10.0,
+        "HomeAvgShotsAgainst10": 12.8,
+        "HomeAvgHomeCornersFor5": 5.6,
+        "HomeAvgHomeCornersAgainst5": 3.0,
+        "HomeAvgHomeGoalsFor5": 2.4,
+        "HomeAvgHomeGoalsAgainst5": 0.6,
+        "AwayAvgShotsFor5": 9.4,
+        "AwayAvgShotsFor10": 9.8,
+        "AwayMedianShotsFor10": 11.5,
+        "AwayAvgShotsAgainst10": 15.7,
+        "AwayAvgAwayCornersFor5": 3.2,
+        "AwayAvgAwayCornersAgainst5": 8.8,
+        "AwayAvgAwayGoalsFor5": 1.0,
+        "AwayAvgAwayGoalsAgainst5": 3.2,
+        "League": "1. Lig (Turkey)",
+        "HomeTeam": "Boluspor",
+        "AwayTeam": "Manisa F.K.",
+        "HomeFormationStyle": "unknown",
+        "AwayFormationStyle": "unknown"
+      },
+      "expected": {
+        "prediction_raw": 8.59737119953165,
+        "prediction_clipped": 8.59737119953165,
+        "prediction_rounded": 9
+      }
+    }
+  ]
+}

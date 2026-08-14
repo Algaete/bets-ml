@@ -41,15 +41,6 @@ public sealed class RobotPanelController : Controller
             cancellationToken);
 
     [HttpPost]
-    public Task<IActionResult> RunWorldCupMatchHistory(
-        [FromBody] RobotPanelStepRequestViewModel request,
-        CancellationToken cancellationToken) =>
-        ExecuteStepAsync(
-            () => _cornersPipelineApiClient.RunWorldCupMatchHistoryAsync(NormalizeDays(request.Days), cancellationToken),
-            "world cup match history",
-            cancellationToken);
-
-    [HttpPost]
     public Task<IActionResult> RunUpcomingMatches(
         [FromBody] RobotPanelStepRequestViewModel request,
         CancellationToken cancellationToken) =>
@@ -72,14 +63,67 @@ public sealed class RobotPanelController : Controller
             "betano odds",
             cancellationToken);
 
+    [HttpGet]
+    public async Task<IActionResult> ApiFootballHistoricalStatus(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Json(await _cornersPipelineApiClient.GetApiFootballHistoricalBatchAsync(cancellationToken));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load the API-Football historical batch state");
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = BuildExecutionErrorMessage("API-Football historical status", exception) });
+        }
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> StartApiFootballHistorical(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Json(await _cornersPipelineApiClient.StartApiFootballHistoricalBatchAsync(cancellationToken));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not start the API-Football historical batch");
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = BuildExecutionErrorMessage("API-Football historical batch", exception) });
+        }
+    }
+
     [HttpPost]
     public Task<IActionResult> RunBots(
         [FromBody] RobotPanelBotsRequestViewModel? request,
         CancellationToken cancellationToken) =>
         ExecuteStepAsync(
-            () => _cornersPipelineApiClient.RunBotsAsync(request?.ExcludeExistingSelections ?? false, cancellationToken),
+            () => _cornersPipelineApiClient.RunBotsAsync(
+                request?.ExcludeExistingSelections ?? false,
+                Math.Max(1, request?.BatchNumber ?? 1),
+                NormalizeBatchSize(request?.BatchSize ?? 100),
+                request?.RunBotC ?? true,
+                cancellationToken),
             "bot execution",
             cancellationToken);
+
+    [HttpGet]
+    public async Task<IActionResult> BotAvailability(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Json(await _cornersPipelineApiClient.GetBotAvailabilityAsync(100, cancellationToken));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load bot odds availability from the MVC app");
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = BuildExecutionErrorMessage("bot availability request", exception) });
+        }
+    }
 
     [HttpPost]
     public async Task<IActionResult> RunFullPipeline(
@@ -92,6 +136,9 @@ public sealed class RobotPanelController : Controller
                 matchHistoryDays: NormalizeDays(request.MatchHistoryDays),
                 upcomingDays: NormalizeDays(request.UpcomingDays),
                 excludeExistingSelections: request.ExcludeExistingSelections,
+                botBatchNumber: Math.Max(1, request.BotBatchNumber),
+                botBatchSize: NormalizeBatchSize(request.BotBatchSize),
+                runBotC: request.RunBotC,
                 cancellationToken);
 
             return Json(result);
@@ -179,4 +226,7 @@ public sealed class RobotPanelController : Controller
 
         return Math.Min(days.Value, 30);
     }
+
+    private static int NormalizeBatchSize(int batchSize) =>
+        Math.Clamp(batchSize <= 0 ? 100 : batchSize, 1, 100);
 }

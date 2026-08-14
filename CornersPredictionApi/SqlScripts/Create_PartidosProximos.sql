@@ -1,6 +1,3 @@
-USE [res]
-GO
-
 IF OBJECT_ID(N'dbo.PartidosProximos', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.PartidosProximos
@@ -17,6 +14,10 @@ BEGIN
         TotalTeams INT NULL,
         HomeTeamPosition INT NULL,
         AwayTeamPosition INT NULL,
+        DataSource VARCHAR(40) NOT NULL
+            CONSTRAINT DF_PartidosProximos_DataSource DEFAULT ('Legacy'),
+        ExternalFixtureId BIGINT NULL,
+        FixtureStatus VARCHAR(20) NULL,
         FechaRegistro DATETIME2(3) NOT NULL
             CONSTRAINT DF_PartidosProximos_FechaRegistro DEFAULT (SYSUTCDATETIME()),
         FechaActualizacion DATETIME2(3) NOT NULL
@@ -25,10 +26,46 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH(N'dbo.PartidosProximos', N'DataSource') IS NULL
+BEGIN
+    ALTER TABLE dbo.PartidosProximos
+    ADD DataSource VARCHAR(40) NOT NULL
+        CONSTRAINT DF_PartidosProximos_DataSource DEFAULT ('Legacy') WITH VALUES;
+END
+GO
+
+IF COL_LENGTH(N'dbo.PartidosProximos', N'ExternalFixtureId') IS NULL
+BEGIN
+    ALTER TABLE dbo.PartidosProximos
+    ADD ExternalFixtureId BIGINT NULL;
+END
+GO
+
+IF COL_LENGTH(N'dbo.PartidosProximos', N'FixtureStatus') IS NULL
+BEGIN
+    ALTER TABLE dbo.PartidosProximos
+    ADD FixtureStatus VARCHAR(20) NULL;
+END
+GO
+
 IF COL_LENGTH(N'dbo.PartidosProximos', N'TotalTeams') IS NULL
 BEGIN
     ALTER TABLE dbo.PartidosProximos
     ADD TotalTeams INT NULL;
+END
+GO
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE [name] = N'UX_PartidosProximos_Source_ExternalFixtureId'
+      AND [object_id] = OBJECT_ID(N'dbo.PartidosProximos')
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_PartidosProximos_Source_ExternalFixtureId
+        ON dbo.PartidosProximos (DataSource, ExternalFixtureId)
+        WHERE ExternalFixtureId IS NOT NULL;
 END
 GO
 
@@ -70,7 +107,10 @@ CREATE OR ALTER PROCEDURE dbo.sp_UpsertPartidoProximo
     @EsKnockout BIT,
     @TotalTeams INT = NULL,
     @HomeTeamPosition INT = NULL,
-    @AwayTeamPosition INT = NULL
+    @AwayTeamPosition INT = NULL,
+    @DataSource VARCHAR(40) = 'Manual',
+    @ExternalFixtureId BIGINT = NULL,
+    @FixtureStatus VARCHAR(20) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -90,6 +130,32 @@ BEGIN
     IF NULLIF(LTRIM(RTRIM(@Genero)), '') IS NULL
         THROW 50005, 'Genero es obligatorio.', 1;
 
+    SET @DataSource = COALESCE(NULLIF(LTRIM(RTRIM(@DataSource)), ''), 'Manual');
+
+    -- If a fixture was rescheduled and a legacy row already exists at the new
+    -- date, keep the API-Football identity and remove only that duplicate row.
+    IF @ExternalFixtureId IS NOT NULL
+       AND EXISTS
+       (
+           SELECT 1
+           FROM dbo.PartidosProximos
+           WHERE DataSource = @DataSource
+             AND ExternalFixtureId = @ExternalFixtureId
+       )
+    BEGIN
+        DELETE duplicateRow
+        FROM dbo.PartidosProximos duplicateRow
+        WHERE duplicateRow.FechaPartido = @FechaPartido
+          AND duplicateRow.EquipoLocal = LTRIM(RTRIM(@EquipoLocal))
+          AND duplicateRow.EquipoVisita = LTRIM(RTRIM(@EquipoVisita))
+          AND duplicateRow.Liga = LTRIM(RTRIM(@Liga))
+          AND NOT
+          (
+              duplicateRow.DataSource = @DataSource
+              AND duplicateRow.ExternalFixtureId = @ExternalFixtureId
+          );
+    END;
+
     MERGE dbo.PartidosProximos WITH (HOLDLOCK) AS Target
     USING
     (
@@ -102,19 +168,38 @@ BEGIN
             @EsKnockout AS EsKnockout,
             @TotalTeams AS TotalTeams,
             @HomeTeamPosition AS HomeTeamPosition,
-            @AwayTeamPosition AS AwayTeamPosition
+            @AwayTeamPosition AS AwayTeamPosition,
+            @DataSource AS DataSource,
+            @ExternalFixtureId AS ExternalFixtureId,
+            NULLIF(LTRIM(RTRIM(@FixtureStatus)), '') AS FixtureStatus
     ) AS Source
-    ON  Target.FechaPartido = Source.FechaPartido
-    AND Target.EquipoLocal = Source.EquipoLocal
-    AND Target.EquipoVisita = Source.EquipoVisita
-    AND Target.Liga = Source.Liga
+    ON
+    (
+        Source.ExternalFixtureId IS NOT NULL
+        AND Target.DataSource = Source.DataSource
+        AND Target.ExternalFixtureId = Source.ExternalFixtureId
+    )
+    OR
+    (
+        Target.FechaPartido = Source.FechaPartido
+        AND Target.EquipoLocal = Source.EquipoLocal
+        AND Target.EquipoVisita = Source.EquipoVisita
+        AND Target.Liga = Source.Liga
+    )
     WHEN MATCHED THEN
         UPDATE SET
+            Target.FechaPartido = Source.FechaPartido,
+            Target.EquipoLocal = Source.EquipoLocal,
+            Target.EquipoVisita = Source.EquipoVisita,
+            Target.Liga = Source.Liga,
             Target.Genero = Source.Genero,
             Target.EsKnockout = Source.EsKnockout,
             Target.TotalTeams = Source.TotalTeams,
             Target.HomeTeamPosition = Source.HomeTeamPosition,
             Target.AwayTeamPosition = Source.AwayTeamPosition,
+            Target.DataSource = Source.DataSource,
+            Target.ExternalFixtureId = Source.ExternalFixtureId,
+            Target.FixtureStatus = Source.FixtureStatus,
             Target.FechaActualizacion = SYSUTCDATETIME()
     WHEN NOT MATCHED THEN
         INSERT
@@ -128,6 +213,9 @@ BEGIN
             TotalTeams,
             HomeTeamPosition,
             AwayTeamPosition,
+            DataSource,
+            ExternalFixtureId,
+            FixtureStatus,
             FechaRegistro,
             FechaActualizacion
         )
@@ -142,6 +230,9 @@ BEGIN
             Source.TotalTeams,
             Source.HomeTeamPosition,
             Source.AwayTeamPosition,
+            Source.DataSource,
+            Source.ExternalFixtureId,
+            Source.FixtureStatus,
             SYSUTCDATETIME(),
             SYSUTCDATETIME()
         );

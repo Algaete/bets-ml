@@ -36,12 +36,17 @@ public sealed class PredictionApiClient
         string homeTeam,
         string awayTeam,
         string teamGender,
+        DateOnly? beforeDate,
         CancellationToken cancellationToken)
     {
         var query = $"/api/matches/prediction-context?homeTeam={Uri.EscapeDataString(homeTeam)}&awayTeam={Uri.EscapeDataString(awayTeam)}&teamGender={Uri.EscapeDataString(teamGender)}";
         if (!string.IsNullOrWhiteSpace(league))
         {
             query += $"&league={Uri.EscapeDataString(league)}";
+        }
+        if (beforeDate is DateOnly cutoff)
+        {
+            query += $"&beforeDate={cutoff:yyyy-MM-dd}";
         }
 
         using var response = await _httpClient.GetAsync(query, cancellationToken);
@@ -86,6 +91,21 @@ public sealed class PredictionApiClient
             ?? throw new InvalidOperationException("Corners prediction response was empty.");
     }
 
+    public async Task<MultiMarketPredictionDto> PredictMultiMarketAsync(
+        IReadOnlyDictionary<string, object?> features,
+        CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.PostAsJsonAsync("/predict/shots-on-goal", features, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"Multi-market prediction request failed ({(int)response.StatusCode}): {error}");
+        }
+
+        return (await response.Content.ReadFromJsonAsync<MultiMarketPredictionDto>(JsonOptions, cancellationToken))
+            ?? throw new InvalidOperationException("Multi-market prediction response was empty.");
+    }
+
     public async Task<OverUnderPredictionResultDto?> PredictOverUnderAsync(
         IReadOnlyDictionary<string, object?> features,
         CancellationToken cancellationToken)
@@ -101,6 +121,10 @@ public sealed class PredictionApiClient
             }
 
             return await response.Content.ReadFromJsonAsync<OverUnderPredictionResultDto>(JsonOptions, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {

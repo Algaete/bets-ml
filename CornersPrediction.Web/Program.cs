@@ -134,6 +134,14 @@ builder.Services.AddHttpClient<MatchHistoryApiClient>((services, client) =>
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 
+builder.Services.AddHttpClient<NewGenerationPredictionApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(2);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
 builder.Services.AddHttpClient<BettingApiClient>((services, client) =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
@@ -160,6 +168,15 @@ builder.Services.AddHttpClient<AutomatedCornersApiClient>((services, client) =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(10);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
+builder.Services.AddHttpClient<RecommendationAutomationApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(2);
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 
@@ -167,7 +184,8 @@ builder.Services.AddHttpClient<CornersPipelineApiClient>((services, client) =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromMinutes(30);
+    // Each backend pipeline step owns its timeout; a global client timeout can cancel a valid full run.
+    client.Timeout = Timeout.InfiniteTimeSpan;
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 

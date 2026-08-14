@@ -15,6 +15,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
     private const string AwayHistoryType = "ULTIMOS_10_VISITA";
 
     private readonly IMatchHistoryRepository _repository;
+    private readonly Dictionary<string, PredictionContextDto> _requestCache = new(StringComparer.OrdinalIgnoreCase);
 
     public GetPredictionContextUseCase(IMatchHistoryRepository repository)
     {
@@ -27,6 +28,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
         string? league,
         string? teamGender,
         double? baseLocalAwayPrediction,
+        DateOnly? beforeDate,
         CancellationToken cancellationToken)
     {
         Validate(homeTeam, awayTeam);
@@ -35,13 +37,28 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
         var trimmedAwayTeam = awayTeam.Trim();
         var normalizedLeague = string.IsNullOrWhiteSpace(league) ? null : league.Trim();
         var normalizedTeamGender = TeamGenderOptions.Normalize(teamGender);
+        var cacheKey = string.Join(
+            "|",
+            trimmedHomeTeam,
+            trimmedAwayTeam,
+            normalizedLeague ?? string.Empty,
+            normalizedTeamGender,
+            baseLocalAwayPrediction?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            beforeDate?.ToString("yyyy-MM-dd") ?? string.Empty);
+        if (_requestCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
 
         var recentMatches = (await _repository.GetRecentAsync(
             trimmedHomeTeam,
             trimmedAwayTeam,
             normalizedLeague,
             normalizedTeamGender,
-            cancellationToken)).ToArray();
+            beforeDate,
+            cancellationToken))
+            .Where(match => beforeDate is null || match.MatchDate < beforeDate.Value)
+            .ToArray();
 
         var homeGeneralMatches = TakeHistoryBucket(
             recentMatches,
@@ -64,10 +81,22 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             AwayHistoryType,
             () => TakeRecentForTeamCondition(recentMatches, trimmedAwayTeam, mustBeHome: false));
 
-        var homeGeneralStats = CalculateRecentStats(trimmedHomeTeam, "General", homeGeneralMatches);
-        var homeAsHomeStats = CalculateRecentStats(trimmedHomeTeam, "Home", homeAsHomeMatches);
-        var awayGeneralStats = CalculateRecentStats(trimmedAwayTeam, "General", awayGeneralMatches);
-        var awayAsAwayStats = CalculateRecentStats(trimmedAwayTeam, "Away", awayAsAwayMatches);
+        if (homeAsHomeMatches.Count == 0)
+        {
+            homeAsHomeMatches = homeGeneralMatches;
+        }
+
+        if (awayAsAwayMatches.Count == 0)
+        {
+            awayAsAwayMatches = awayGeneralMatches;
+        }
+
+        // The DTO exposes up to 20 rows for Bot C's 5/10/20 feature windows.
+        // Legacy A/B summaries remain based on the latest 10, preserving their behaviour.
+        var homeGeneralStats = CalculateRecentStats(trimmedHomeTeam, "General", homeGeneralMatches.Take(10).ToArray());
+        var homeAsHomeStats = CalculateRecentStats(trimmedHomeTeam, "Home", homeAsHomeMatches.Take(10).ToArray());
+        var awayGeneralStats = CalculateRecentStats(trimmedAwayTeam, "General", awayGeneralMatches.Take(10).ToArray());
+        var awayAsAwayStats = CalculateRecentStats(trimmedAwayTeam, "Away", awayAsAwayMatches.Take(10).ToArray());
 
         var summary = new MatchHistorySummaryDto(
             homeGeneralStats,
@@ -79,13 +108,15 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             summary,
             baseLocalAwayPrediction);
 
-        return new PredictionContextDto(
+        var result = new PredictionContextDto(
             summary,
             comparison,
             homeGeneralMatches.Select(MatchHistoryMapper.ToDto).ToArray(),
             homeAsHomeMatches.Select(MatchHistoryMapper.ToDto).ToArray(),
             awayGeneralMatches.Select(MatchHistoryMapper.ToDto).ToArray(),
             awayAsAwayMatches.Select(MatchHistoryMapper.ToDto).ToArray());
+        _requestCache[cacheKey] = result;
+        return result;
     }
 
     public static TeamRecentStatsDto CalculateRecentStats(
@@ -281,7 +312,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             .Select(group => group.First())
             .OrderByDescending(match => match.MatchDate)
             .ThenByDescending(match => match.Id)
-            .Take(10)
+            .Take(20)
             .ToArray();
     }
 
@@ -301,7 +332,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             .OrderBy(match => match.HistoryRank ?? int.MaxValue)
             .ThenByDescending(match => match.MatchDate)
             .ThenByDescending(match => match.Id)
-            .Take(10)
+            .Take(20)
             .ToArray();
 
         return bucketMatches.Length > 0 ? bucketMatches : fallback();
@@ -319,7 +350,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             .Where(match => IsTeamHome(match, teamName) == mustBeHome)
             .OrderByDescending(match => match.MatchDate)
             .ThenByDescending(match => match.Id)
-            .Take(10)
+            .Take(20)
             .ToArray();
     }
 
@@ -331,7 +362,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
 
     private static bool TeamNameEquals(string left, string right)
     {
-        return left.Trim().Equals(right.Trim(), StringComparison.OrdinalIgnoreCase);
+        return TeamNameMatcher.AreEquivalent(left, right);
     }
 
     private static bool MatchTextEquals(string? left, string right)
@@ -363,7 +394,7 @@ public sealed class GetPredictionContextUseCase : IGetPredictionContextUseCase
             throw new ArgumentException("Away team is required.");
         }
 
-        if (homeTeam.Equals(awayTeam, StringComparison.OrdinalIgnoreCase))
+        if (TeamNameMatcher.AreEquivalent(homeTeam, awayTeam))
         {
             throw new ArgumentException("Home team and away team must be different.");
         }

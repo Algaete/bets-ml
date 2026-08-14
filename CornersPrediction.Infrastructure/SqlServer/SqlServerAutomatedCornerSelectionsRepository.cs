@@ -16,6 +16,8 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
             s.AutomationVersion,
             s.Source,
             s.SourceMatchId,
+            s.ApiFootballFixtureId,
+            s.MatchHistoryId,
             s.SourceUrl,
             s.MatchDate,
             MatchDay = CAST(s.MatchDate AS DATE),
@@ -55,6 +57,13 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
             s.ActualHomeCorners,
             s.ActualAwayCorners,
             s.ActualTotalCorners,
+            s.SettlementActualValue,
+            s.SettlementFactor,
+            s.SettlementReason,
+            s.SettlementSource,
+            s.SettlementMatchStatus,
+            s.LastSettlementCheckReason,
+            s.LastSettlementCheckAtUtc,
             s.ProfitLoss,
             s.YieldPct,
             s.DecisionReason,
@@ -85,6 +94,7 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         AddParameter(parameters, supportedParameters, "DateTo", filters.DateTo, DbType.Date);
         AddParameter(parameters, supportedParameters, "Status", filters.Status, DbType.String, size: 20);
         AddParameter(parameters, supportedParameters, "League", filters.League, DbType.String, size: 200);
+        AddParameter(parameters, supportedParameters, "Source", filters.Source, DbType.String, size: 50);
         AddParameter(parameters, supportedParameters, "MarketType", filters.MarketType, DbType.String, size: 50);
         AddParameter(parameters, supportedParameters, "OnlyPending", filters.OnlyPending, DbType.Boolean);
 
@@ -110,6 +120,12 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
                 row.Status.Equals("Pending", StringComparison.OrdinalIgnoreCase));
         }
 
+        if (!supportedParameters.Contains("Source") && !string.IsNullOrWhiteSpace(filters.Source))
+        {
+            filteredRows = filteredRows.Where(row =>
+                row.Source.Equals(filters.Source.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
         if (!supportedParameters.Contains("MarketType") && !string.IsNullOrWhiteSpace(filters.MarketType))
         {
             filteredRows = filteredRows.Where(row =>
@@ -127,19 +143,39 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         await using var connection = new SqlConnection(_connectionString);
         var parameters = new DynamicParameters();
         parameters.Add("AutomatedCornerBetSelectionId", id, DbType.Int64);
-        parameters.Add("Status", request.Status, DbType.String, size: 20);
-        parameters.Add("ActualHomeCorners", request.ActualHomeCorners, DbType.Int32);
-        parameters.Add("ActualAwayCorners", request.ActualAwayCorners, DbType.Int32);
-        parameters.Add("ActualTotalCorners", request.ActualTotalCorners, DbType.Int32);
 
-        var updateCommand = new CommandDefinition(
-            "dbo.sp_UpdateAutomatedCornerBetSelectionStatus",
-            parameters,
-            commandType: CommandType.StoredProcedure,
-            commandTimeout: 300,
-            cancellationToken: cancellationToken);
+        CommandDefinition updateCommand;
+        if (request.Status.Equals("Void", StringComparison.OrdinalIgnoreCase))
+        {
+            parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
+            updateCommand = new CommandDefinition(
+                "dbo.sp_VoidAutomatedCornerBetSelection",
+                parameters,
+                commandType: CommandType.StoredProcedure,
+                commandTimeout: 300,
+                cancellationToken: cancellationToken);
+        }
+        else
+        {
+            parameters.Add("Status", request.Status, DbType.String, size: 20);
+            parameters.Add("ActualHomeCorners", request.ActualHomeCorners, DbType.Int32);
+            parameters.Add("ActualAwayCorners", request.ActualAwayCorners, DbType.Int32);
+            parameters.Add("ActualTotalCorners", request.ActualTotalCorners, DbType.Int32);
+            updateCommand = new CommandDefinition(
+                "dbo.sp_UpdateAutomatedCornerBetSelectionStatus",
+                parameters,
+                commandType: CommandType.StoredProcedure,
+                commandTimeout: 300,
+                cancellationToken: cancellationToken);
+        }
 
         await connection.ExecuteAsync(updateCommand);
+
+        if (request.Status.Equals("Void", StringComparison.OrdinalIgnoreCase) &&
+            parameters.Get<int>("RowsAffected") == 0)
+        {
+            throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
+        }
 
         var selectCommand = new CommandDefinition(
             SelectSelectionByIdSql,
@@ -148,6 +184,102 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         var updatedSelection = await connection.QuerySingleOrDefaultAsync<AutomatedCornerSelectionDto>(selectCommand);
 
         return updatedSelection ?? throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
+    }
+
+    public async Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        int actualValue,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        var parameters = new DynamicParameters();
+        parameters.Add("AutomatedCornerBetSelectionId", id, DbType.Int64);
+        parameters.Add("ActualValue", actualValue, DbType.Int32);
+        parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "dbo.sp_ResolveAutomatedCornerBetSelection",
+            parameters,
+            commandType: CommandType.StoredProcedure,
+            commandTimeout: 300,
+            cancellationToken: cancellationToken));
+
+        if (parameters.Get<int>("RowsAffected") == 0)
+        {
+            throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
+        }
+
+        var selectCommand = new CommandDefinition(
+            SelectSelectionByIdSql,
+            new { Id = id },
+            cancellationToken: cancellationToken);
+        var updatedSelection = await connection.QuerySingleOrDefaultAsync<AutomatedCornerSelectionDto>(selectCommand);
+
+        return updatedSelection ?? throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
+    }
+
+    public async Task<AutomatedCornerSelectionDto> LinkMatchAsync(
+        long id,
+        long matchHistoryId,
+        long apiFootballFixtureId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        var affected = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE selection
+            SET
+                MatchHistoryId = history.Id,
+                ApiFootballFixtureId = history.ApiFootballFixtureId,
+                LastSettlementCheckReason = N'Pendiente de liquidar: partido enlazado mediante auditoría API-Football.',
+                LastSettlementCheckAtUtc = SYSUTCDATETIME(),
+                UpdatedAtUtc = SYSUTCDATETIME()
+            FROM dbo.AutomatedCornerBetSelections selection
+            INNER JOIN dbo.MatchHistory history
+                ON history.Id = @MatchHistoryId
+               AND history.ApiFootballFixtureId = @ApiFootballFixtureId
+            WHERE selection.AutomatedCornerBetSelectionId = @Id
+              AND selection.Status = N'Pending';
+            """,
+            new
+            {
+                Id = id,
+                MatchHistoryId = matchHistoryId,
+                ApiFootballFixtureId = apiFootballFixtureId
+            },
+            commandTimeout: 300,
+            cancellationToken: cancellationToken));
+
+        if (affected == 0)
+        {
+            throw new InvalidOperationException(
+                $"Selection {id} is not pending, does not exist, or MatchHistory {matchHistoryId} does not belong to API-Football fixture {apiFootballFixtureId}.");
+        }
+
+        var updatedSelection = await connection.QuerySingleOrDefaultAsync<AutomatedCornerSelectionDto>(
+            new CommandDefinition(
+                SelectSelectionByIdSql,
+                new { Id = id },
+                cancellationToken: cancellationToken));
+
+        return updatedSelection ?? throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
+    }
+
+    public async Task<bool> DeleteAsync(long id, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        var parameters = new DynamicParameters();
+        parameters.Add("AutomatedCornerBetSelectionId", id, DbType.Int64);
+        parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "dbo.sp_DeleteAutomatedCornerBetSelection",
+            parameters,
+            commandType: CommandType.StoredProcedure,
+            commandTimeout: 300,
+            cancellationToken: cancellationToken));
+
+        return parameters.Get<int>("RowsAffected") > 0;
     }
 
     private static void AddParameter(

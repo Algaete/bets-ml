@@ -177,6 +177,17 @@
                                        asp-route-teamGender="@match.TeamGenderForPrediction">
                                         @T("UpcomingMatches.Predict")
                                     </a>
+                                    <a class="btn btn-sm btn-outline-primary"
+                                       asp-controller="NewGenerationPrediction"
+                                       asp-action="Index"
+                                       asp-route-homeTeam="@match.EquipoLocal"
+                                       asp-route-awayTeam="@match.EquipoVisita"
+                                       asp-route-league="@match.Liga"
+                                       asp-route-season="@match.FechaPartido.Year"
+                                       asp-route-matchDate="@match.FechaPartido.ToString("yyyy-MM-dd")"
+                                       asp-route-isKnockout="@match.EsKnockout">
+                                        @T("UpcomingMatches.PredictNewGeneration")
+                                    </a>
                                 </div>
                             </article>
                         }

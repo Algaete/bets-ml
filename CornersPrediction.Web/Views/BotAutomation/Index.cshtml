@@ -1,0 +1,611 @@
+@model CornersPrediction.Web.Models.BotAutomation.BotAutomationIndexViewModel
+@using System.Text.Json
+@{
+    ViewData["Title"] = "Bots y procesos";
+    var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+}
+
+<style>
+    .automation-hero { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; }
+    .automation-hero h1 { color:var(--text-main); }
+    .automation-hero .text-body-secondary { color:var(--text-muted) !important; }
+    .automation-tabs { display:flex; gap:.5rem; border-bottom:1px solid var(--border-color); margin-bottom:1.25rem; }
+    .automation-tab { border:0; border-bottom:3px solid transparent; background:transparent; color:var(--text-muted); padding:.75rem 1rem; font-weight:700; }
+    .automation-tab:hover,.automation-tab:focus-visible { color:var(--text-main); }
+    .automation-tab.active { border-bottom-color:var(--accent-ml); color:var(--accent-ml); }
+    .automation-panel[hidden] { display:none !important; }
+    .automation-card { border:1px solid var(--border-color); border-radius:1rem; background:var(--card-bg); color:var(--text-main); padding:1.15rem; box-shadow:var(--shadow-card); }
+    .automation-card h1,.automation-card h2,.automation-card h3,.automation-card h4,.automation-card h5,.automation-card h6 { color:var(--text-main); }
+    .automation-card .text-body-secondary,.automation-panel .text-body-secondary { color:var(--text-muted) !important; }
+    .bot-definition-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:1rem; }
+    .bot-definition-card { border:1px solid var(--border-color); border-radius:1rem; padding:1rem; background:var(--card-bg); color:var(--text-main); box-shadow:var(--shadow-card); }
+    .bot-key { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem; padding:.2rem .45rem; border-radius:.4rem; background:var(--ml-soft); color:var(--accent-ml); }
+    .strategy-pill,.market-pill { display:inline-flex; align-items:center; border:1px solid var(--border-color); border-radius:999px; padding:.2rem .55rem; font-size:.75rem; font-weight:700; background:var(--card-bg-soft); color:var(--text-main); margin:.12rem; }
+    .job-progress { height:.55rem; min-width:130px; }
+    .automation-panel .progress { background:var(--card-bg-soft); }
+    .automation-panel .progress-bar { background:linear-gradient(90deg,var(--accent-ml),var(--accent-ml-secondary)); }
+    .job-status { display:inline-flex; border-radius:999px; padding:.2rem .55rem; font-size:.75rem; font-weight:800; }
+    .job-status-running { color:var(--accent-ml); background:var(--ml-soft); }
+    .job-status-completed { color:var(--success); background:color-mix(in srgb,var(--success) 16%,transparent); }
+    .job-status-failed { color:var(--danger); background:color-mix(in srgb,var(--danger) 16%,transparent); }
+    .job-status-queued { color:var(--warning); background:color-mix(in srgb,var(--warning) 16%,transparent); }
+    .job-status-cancelled { color:var(--text-muted); background:color-mix(in srgb,var(--neutral) 18%,transparent); }
+    .bot-editor { border:1px solid var(--accent-ml); box-shadow:0 18px 45px var(--ml-soft); }
+    .optional-field label::after { content:' opcional'; font-size:.68rem; color:var(--text-muted); font-weight:400; }
+    .metric-mini { min-width:105px; }
+    .strategy-details { border-top:1px solid var(--border-color); margin-top:.8rem; padding-top:.8rem; }
+    .strategy-details summary { color:var(--accent-ml); cursor:pointer; font-weight:800; }
+    .strategy-section { border:1px solid var(--border-color); border-radius:.75rem; background:var(--card-bg-soft); padding:.75rem; margin-top:.75rem; }
+    .strategy-section h4 { font-size:.82rem; margin-bottom:.45rem; }
+    .strategy-list { margin:0; padding-left:1.1rem; font-size:.78rem; color:var(--text-muted); }
+    .strategy-config-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.4rem .75rem; }
+    .strategy-config-item { min-width:0; font-size:.75rem; }
+    .strategy-config-item span { display:block; color:var(--text-muted); overflow-wrap:anywhere; }
+    .strategy-config-item strong { color:var(--text-main); }
+    .strategy-config-value { white-space:pre-wrap; overflow-wrap:anywhere; }
+    .strategy-json { min-height:260px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem; }
+    .table-automation td { vertical-align:middle; }
+    .automation-panel .table-responsive { background:var(--card-bg); }
+    .automation-panel .form-check-input:checked { background-color:var(--accent-ml) !important; border-color:var(--accent-ml) !important; }
+    .automation-panel .form-check-input:disabled { opacity:.65; }
+    :root[data-theme="dark"] .automation-panel .form-select { background-image:url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23A3A3A3' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
+    :root[data-theme="dark"] .automation-panel input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1); opacity:.85; }
+    @@media (max-width: 767px) { .automation-hero { flex-direction:column; } .table-automation { min-width:980px; } }
+</style>
+
+<div class="container-fluid py-4 px-lg-4">
+    <div class="automation-hero mb-4">
+        <div>
+            <div class="text-uppercase small fw-bold text-info mb-1">Automatización persistente</div>
+            <h1 class="h3 mb-2">Bots y procesos</h1>
+            <p class="text-body-secondary mb-0">
+                Ejecuta recomendaciones en segundo plano, revisa su progreso y administra las reglas de cada bot.
+            </p>
+        </div>
+        <a class="btn btn-outline-primary" asp-controller="BotPicks" asp-action="Index">Ver Bot Picks</a>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Model.LoadError))
+    {
+        <div class="alert alert-danger" role="alert">
+            No se pudo cargar el mantenedor: @Model.LoadError
+        </div>
+    }
+
+    <div id="AutomationNotice" class="alert d-none" role="status"></div>
+
+    <div class="automation-tabs" role="tablist">
+        <button class="automation-tab active" type="button" data-automation-tab="jobs">Procesos</button>
+        <button class="automation-tab" type="button" data-automation-tab="bots">Mantenedor de bots</button>
+    </div>
+
+    <section id="JobsPanel" class="automation-panel">
+        <div class="row g-4 mb-4">
+            <div class="col-xl-4">
+                <div class="automation-card h-100">
+                    <h2 class="h5">Nueva ejecución</h2>
+                    <p class="small text-body-secondary">
+                        El proceso queda guardado en Azure SQL y continúa por lotes aunque se reinicie la API.
+                    </p>
+                    <form id="JobForm" class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label" for="JobName">Nombre</label>
+                            <input class="form-control" id="JobName" maxlength="150" placeholder="Ej. Backfill junio-agosto Bot C" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="DateFrom">Desde</label>
+                            <input class="form-control" id="DateFrom" type="date" value="@Model.DefaultDateFrom.ToString("yyyy-MM-dd")" required />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="DateTo">Hasta</label>
+                            <input class="form-control" id="DateTo" type="date" value="@Model.DefaultDateTo.ToString("yyyy-MM-dd")" required />
+                        </div>
+                        <div class="col-12 d-flex flex-wrap gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" id="HistoricalRangeButton" type="button">Desde 19 jun 2026</button>
+                            <button class="btn btn-sm btn-outline-secondary" id="TodayRangeButton" type="button">Próximos 7 días</button>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="JobMode">Modo</label>
+                            <select class="form-select" id="JobMode">
+                                <option value="HistoricalBackfill">Histórico: crea picks pendientes</option>
+                                <option value="Live">En vivo: cuotas próximas</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-label">Bots habilitados</div>
+                            <div id="JobBotOptions" class="d-flex flex-wrap gap-3"></div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-label">Mercados</div>
+                            <div class="d-flex flex-wrap gap-3">
+                                @foreach (var market in new[] { "CORNERS", "GOALS", "SHOTS", "SOG" })
+                                {
+                                    <label class="form-check">
+                                        <input class="form-check-input job-market" type="checkbox" value="@market" checked />
+                                        <span class="form-check-label">@market</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="BatchSize">Partidos por lote</label>
+                            <input class="form-control" id="BatchSize" type="number" min="1" max="100" value="25" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="MaxAttempts">Reintentos</label>
+                            <input class="form-control" id="MaxAttempts" type="number" min="1" max="10" value="3" />
+                        </div>
+                        <div class="col-12">
+                            <button class="btn btn-primary w-100" id="EnqueueButton" type="submit">Guardar y ejecutar</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="col-xl-8">
+                <div class="automation-card h-100">
+                    <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+                        <div>
+                            <h2 class="h5 mb-1">Ejecuciones</h2>
+                            <div class="small text-body-secondary">Se actualiza automáticamente cada 8 segundos.</div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="RefreshJobsButton" type="button">Actualizar</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-automation mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Proceso</th>
+                                    <th>Estado</th>
+                                    <th>Avance</th>
+                                    <th>Resultado</th>
+                                    <th>Actualizado</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="JobsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="BotsPanel" class="automation-panel" hidden>
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+                <h2 class="h5 mb-1">Catálogo ejecutable</h2>
+                <p class="small text-body-secondary mb-0">
+                    Una estrategia base define el algoritmo. Los parámetros opcionales reemplazan sus umbrales heredados.
+                </p>
+            </div>
+            <button class="btn btn-primary" id="NewBotButton" type="button">Crear bot</button>
+        </div>
+
+        <div class="alert alert-info small">
+            Puedes crear variantes reales de A, B o Modelos 2026. Para agregar una señal completamente nueva —por ejemplo lesiones,
+            clima o noticias— primero se implementa esa estrategia en código y luego queda disponible aquí para configurarla.
+        </div>
+
+        <div id="BotCards" class="bot-definition-grid mb-4"></div>
+
+        <div id="BotEditor" class="automation-card bot-editor" hidden>
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h3 class="h5 mb-1" id="BotEditorTitle">Crear bot</h3>
+                    <div class="small text-body-secondary">Deja un umbral vacío para heredar el valor de la estrategia base.</div>
+                </div>
+                <button class="btn-close" id="CloseBotEditorButton" type="button" aria-label="Cerrar"></button>
+            </div>
+            <form id="BotForm" class="row g-3">
+                <input id="BotIsNew" type="hidden" value="true" />
+                <div class="col-md-4">
+                    <label class="form-label" for="BotKey">Clave única</label>
+                    <input class="form-control text-uppercase" id="BotKey" maxlength="50" pattern="[A-Za-z0-9][A-Za-z0-9_-]*" required placeholder="MI_BOT_01" />
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label" for="BotDisplayName">Nombre visible</label>
+                    <input class="form-control" id="BotDisplayName" maxlength="120" required />
+                </div>
+                <div class="col-12">
+                    <label class="form-label" for="BotDescription">Descripción</label>
+                    <textarea class="form-control" id="BotDescription" rows="2" maxlength="1000"></textarea>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="BotBaseStrategy">Estrategia base</label>
+                    <select class="form-select" id="BotBaseStrategy">
+                        <option value="MODELS_2026">Modelos 2026: 12 modelos ML</option>
+                        <option value="LEGACY_EMPIRICAL">ML legacy + calibración empírica</option>
+                        <option value="LEGACY_A">Legacy A: configuración actual</option>
+                        <option value="LEGACY_B">Legacy B: conservador</option>
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <label class="form-check form-switch mb-2">
+                        <input class="form-check-input" id="BotIsEnabled" type="checkbox" checked />
+                        <span class="form-check-label">Habilitado para ejecutar</span>
+                    </label>
+                </div>
+                <div class="col-12" id="BotStrategyConfigurationGroup">
+                    <label class="form-label" for="BotStrategyConfiguration">Configuración completa del Pick Selector</label>
+                    <textarea class="form-control strategy-json" id="BotStrategyConfiguration" spellcheck="false" aria-describedby="BotStrategyConfigurationHelp"></textarea>
+                    <div class="form-text" id="BotStrategyConfigurationHelp">
+                        JSON versionado con ventanas, shrinkage, calibración, calidad, pesos y thresholds. Los pesos de decisión y calidad deben sumar 1,0.
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="form-label">Mercados que puede evaluar</div>
+                    <div class="d-flex flex-wrap gap-3">
+                        @foreach (var market in new[] { "CORNERS", "GOALS", "SHOTS", "SOG" })
+                        {
+                            <label class="form-check">
+                                <input class="form-check-input bot-market" type="checkbox" value="@market" checked />
+                                <span class="form-check-label">@market</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+                <div class="col-12 small text-body-secondary">
+                    Los umbrales rápidos siguientes controlan A/B. En estrategias Modelos 2026, edge, EV,
+                    divergencia de contexto y cuota mínima reemplazan los campos equivalentes del JSON; el resto se administra en la configuración completa.
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotMinEdge">Edge mínimo</label>
+                    <input class="form-control" id="BotMinEdge" type="number" min="0" max="1" step="0.001" placeholder="0.035" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotMinEv">EV mínimo</label>
+                    <input class="form-control" id="BotMinEv" type="number" min="0" max="10" step="0.001" placeholder="0.030" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotMinDistance">Distancia a línea</label>
+                    <input class="form-control" id="BotMinDistance" type="number" min="0" max="100" step="0.01" placeholder="0.35" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotMaxContext">Diferencia contexto máx.</label>
+                    <input class="form-control" id="BotMaxContext" type="number" min="0" max="100" step="0.01" placeholder="1.75" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotMinOdds">Cuota mínima exclusiva</label>
+                    <input class="form-control" id="BotMinOdds" type="number" min="1" max="100" step="0.01" placeholder="1.60" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotProbabilityLift">Lift sobre prob. implícita</label>
+                    <input class="form-control" id="BotProbabilityLift" type="number" min="0" max="1" step="0.001" placeholder="0.10" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotStakeMultiplier">Multiplicador stake</label>
+                    <input class="form-control" id="BotStakeMultiplier" type="number" min="0.01" max="10" step="0.01" placeholder="1.00" />
+                </div>
+                <div class="col-sm-6 col-lg-3 optional-field">
+                    <label class="form-label" for="BotAllowDisagreement">Desacuerdo de modelos</label>
+                    <select class="form-select" id="BotAllowDisagreement">
+                        <option value="">Heredar</option>
+                        <option value="true">Permitir</option>
+                        <option value="false">No permitir</option>
+                    </select>
+                </div>
+                <div class="col-12 d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" id="CancelBotButton" type="button">Cancelar</button>
+                    <button class="btn btn-primary" id="SaveBotButton" type="submit">Guardar bot</button>
+                </div>
+            </form>
+        </div>
+    </section>
+</div>
+
+<script>
+(() => {
+    let bots = @Html.Raw(JsonSerializer.Serialize(Model.Bots, jsonOptions));
+    let jobs = @Html.Raw(JsonSerializer.Serialize(Model.Jobs, jsonOptions));
+    const notice = document.getElementById('AutomationNotice');
+    const botEditor = document.getElementById('BotEditor');
+    const terminalStatuses = new Set(['Completed', 'Failed', 'Cancelled']);
+    const endpoints = {
+        bots: '@Url.Action("Bots", "BotAutomation")',
+        jobs: '@Url.Action("Jobs", "BotAutomation")',
+        enqueue: '@Url.Action("EnqueueJob", "BotAutomation")',
+        saveBot: '@Url.Action("SaveBot", "BotAutomation")',
+        cancelJob: '@Url.Action("CancelJob", "BotAutomation")',
+        deleteBot: '@Url.Action("DeleteBot", "BotAutomation")'
+    };
+
+    const escapeHtml = value => String(value ?? '')
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    const nullableNumber = id => {
+        const value = document.getElementById(id).value.trim();
+        return value === '' ? null : Number(value);
+    };
+    const selectedValues = selector => [...document.querySelectorAll(selector)]
+        .filter(input => input.checked).map(input => input.value);
+    const localDateIso = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    const setCheckedValues = (selector, values) => {
+        const set = new Set(values || []);
+        document.querySelectorAll(selector).forEach(input => input.checked = set.has(input.value));
+    };
+    const showNotice = (message, type = 'success') => {
+        notice.className = `alert alert-${type}`;
+        notice.textContent = message;
+        notice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+    const readResponse = async response => {
+        if (response.ok) {
+            if (response.status === 204) return null;
+            return await response.json();
+        }
+        let message = `HTTP ${response.status}`;
+        try {
+            const body = await response.json();
+            message = body.error || body.detail || body.title || message;
+        } catch { }
+        throw new Error(message);
+    };
+    const fetchJson = async (url, options = {}) => readResponse(await fetch(url, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options
+    }));
+
+    document.querySelectorAll('[data-automation-tab]').forEach(button => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('[data-automation-tab]').forEach(item => item.classList.toggle('active', item === button));
+            const jobsActive = button.dataset.automationTab === 'jobs';
+            document.getElementById('JobsPanel').hidden = !jobsActive;
+            document.getElementById('BotsPanel').hidden = jobsActive;
+        });
+    });
+
+    const renderBotOptions = () => {
+        const enabledBots = bots.filter(bot => bot.isEnabled);
+        document.getElementById('JobBotOptions').innerHTML = enabledBots.length
+            ? enabledBots.map(bot => `
+                <label class="form-check">
+                    <input class="form-check-input job-bot" type="checkbox" value="${escapeHtml(bot.botKey)}" ${bot.botKey === 'C2026' ? 'checked' : ''} />
+                    <span class="form-check-label">${escapeHtml(bot.displayName)}</span>
+                </label>`).join('')
+            : '<span class="text-danger small">No hay bots habilitados.</span>';
+    };
+
+    const inherited = value => value === null || value === undefined ? 'Heredado' : String(value);
+    const prettyName = value => String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+    const renderList = values => `<ul class="strategy-list">${(values || []).map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>`;
+    const renderStrategyManifest = bot => {
+        const manifest = bot.strategyManifest;
+        if (!manifest) return '';
+        const config = manifest.configuration || {};
+        const featureGroups = Object.entries(manifest.featureGroups || {}).map(([group, features]) => `
+            <div class="strategy-section"><h4>${escapeHtml(group)}</h4>${renderList(features)}</div>`).join('');
+        const displayConfigValue = value => value && typeof value === 'object'
+            ? JSON.stringify(value, null, 2)
+            : String(value);
+        const configuration = Object.entries(config).map(([key, value]) => `
+            <div class="strategy-config-item"><span>${escapeHtml(prettyName(key))}</span><strong class="strategy-config-value">${escapeHtml(displayConfigValue(value))}</strong></div>`).join('');
+        return `<details class="strategy-details">
+            <summary>Ver cálculo exhaustivo de este bot</summary>
+            <div class="strategy-section">
+                <h4>${escapeHtml(manifest.strategyName)} · ${escapeHtml(manifest.decisionEngineType)}</h4>
+                <div class="small text-body-secondary">${escapeHtml(manifest.probabilityPolicy)}</div>
+                <div class="small text-body-secondary mt-2">Los valores de “Configuración efectiva” ya incluyen las sobrescrituras rápidas de edge, EV, cuota y tolerancia contextual del formulario.</div>
+            </div>
+            <div class="strategy-section"><h4>Flujo exacto</h4>${renderList(manifest.pipeline)}</div>
+            <div class="strategy-section"><h4>Configuración efectiva</h4><div class="strategy-config-grid">${configuration}</div></div>
+            <div class="strategy-section"><h4>Mercados soportados</h4><div>${(manifest.supportedMarkets || []).map(value => `<span class="market-pill">${escapeHtml(value)}</span>`).join('')}</div></div>
+            <div class="strategy-section"><h4>Features calculadas</h4></div>${featureGroups}
+            <div class="strategy-section"><h4>Reglas para aprobar</h4>${renderList(manifest.approvalRules)}</div>
+            <div class="strategy-section"><h4>Protecciones contra data leakage</h4>${renderList(manifest.dataLeakageGuards)}</div>
+            <div class="strategy-section"><h4>Persistencia y liquidación</h4>${renderList(manifest.persistenceAndSettlement)}</div>
+        </details>`;
+    };
+    const renderBots = () => {
+        document.getElementById('BotCards').innerHTML = bots.length ? bots.map(bot => `
+            <article class="bot-definition-card">
+                <div class="d-flex justify-content-between gap-3 mb-2">
+                    <div>
+                        <span class="bot-key">${escapeHtml(bot.botKey)}</span>
+                        <h3 class="h6 mt-2 mb-1">${escapeHtml(bot.displayName)}</h3>
+                    </div>
+                    <span class="badge ${bot.isEnabled ? 'text-bg-success' : 'text-bg-secondary'} align-self-start">${bot.isEnabled ? 'Habilitado' : 'Deshabilitado'}</span>
+                </div>
+                <p class="small text-body-secondary">${escapeHtml(bot.description || 'Sin descripción')}</p>
+                <div class="mb-2">
+                    <span class="strategy-pill">${escapeHtml(bot.baseStrategy)}</span>
+                    ${bot.usesMachineLearning ? '<span class="strategy-pill">ML 2026</span>' : '<span class="strategy-pill">Legacy</span>'}
+                    ${bot.isBuiltIn ? '<span class="strategy-pill">Integrado</span>' : '<span class="strategy-pill">Personalizado</span>'}
+                </div>
+                <div class="mb-3">${(bot.marketFamilies || []).map(market => `<span class="market-pill">${escapeHtml(market)}</span>`).join('')}</div>
+                <div class="row g-2 small mb-3">
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Edge mín.</span><strong>${inherited(bot.minEdge)}</strong></div>
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">EV mín.</span><strong>${inherited(bot.minExpectedValue)}</strong></div>
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Distancia</span><strong>${inherited(bot.minDistanceToLine)}</strong></div>
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Cuota mín.</span><strong>${inherited(bot.minOddsExclusive)}</strong></div>
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Stake ×</span><strong>${inherited(bot.stakeMultiplier)}</strong></div>
+                    <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Desacuerdo</span><strong>${bot.allowModelDisagreement == null ? 'Heredado' : (bot.allowModelDisagreement ? 'Sí' : 'No')}</strong></div>
+                </div>
+                ${renderStrategyManifest(bot)}
+                <div class="d-flex flex-wrap gap-2">
+                    <button class="btn btn-sm btn-outline-primary" type="button" data-edit-bot="${escapeHtml(bot.botKey)}">Editar</button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-clone-bot="${escapeHtml(bot.botKey)}">Clonar</button>
+                    ${bot.isBuiltIn ? '' : `<button class="btn btn-sm btn-outline-danger" type="button" data-delete-bot="${escapeHtml(bot.botKey)}">Eliminar</button>`}
+                </div>
+            </article>`).join('') : '<div class="text-body-secondary">No hay bots configurados.</div>';
+
+        document.querySelectorAll('[data-edit-bot]').forEach(button => button.addEventListener('click', () => openBotEditor(findBot(button.dataset.editBot), false)));
+        document.querySelectorAll('[data-clone-bot]').forEach(button => button.addEventListener('click', () => openBotEditor(findBot(button.dataset.cloneBot), true)));
+        document.querySelectorAll('[data-delete-bot]').forEach(button => button.addEventListener('click', () => deleteBot(button.dataset.deleteBot)));
+        renderBotOptions();
+    };
+
+    const progressPercent = job => job.totalBatches && job.totalBatches > 0
+        ? Math.min(100, Math.round(job.processedBatches * 100 / job.totalBatches)) : 0;
+    const statusClass = status => `job-status job-status-${String(status || 'queued').toLowerCase()}`;
+    const renderJobs = () => {
+        const body = document.getElementById('JobsTableBody');
+        body.innerHTML = jobs.length ? jobs.map(job => {
+            const progress = progressPercent(job);
+            const canCancel = !terminalStatuses.has(job.status);
+            return `<tr>
+                <td>
+                    <div class="fw-semibold">${escapeHtml(job.name)}</div>
+                    <div class="small text-body-secondary">${escapeHtml(job.mode)} · ${escapeHtml(job.dateFrom)} a ${escapeHtml(job.dateTo)}</div>
+                    <div class="small">${(job.botKeys || []).map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
+                </td>
+                <td><span class="${statusClass(job.status)}">${escapeHtml(job.status)}</span>${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
+                <td>
+                    <div class="d-flex align-items-center gap-2"><div class="progress job-progress flex-grow-1"><div class="progress-bar" style="width:${progress}%"></div></div><span class="small">${progress}%</span></div>
+                    <div class="small text-body-secondary">${job.processedBatches}/${job.totalBatches ?? '?'} lotes · siguiente ${job.nextBatchNumber}</div>
+                </td>
+                <td class="small"><strong>${job.selectedMatches}</strong> picks<br>${job.insertedRows} nuevos · ${job.updatedRows} actualizados<br>${job.errorMatches} errores</td>
+                <td class="small">${new Date(job.updatedAtUtc).toLocaleString('es-CL')}</td>
+                <td>${canCancel ? `<button class="btn btn-sm btn-outline-danger" type="button" data-cancel-job="${job.recommendationJobId}">Cancelar</button>` : ''}</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="6" class="text-center text-body-secondary py-4">No hay procesos guardados.</td></tr>';
+        document.querySelectorAll('[data-cancel-job]').forEach(button => button.addEventListener('click', () => cancelJob(button.dataset.cancelJob)));
+    };
+
+    const findBot = key => bots.find(bot => bot.botKey.toUpperCase() === String(key).toUpperCase());
+    const setInput = (id, value) => document.getElementById(id).value = value ?? '';
+    const openBotEditor = (bot = null, clone = false) => {
+        const isNew = !bot || clone;
+        document.getElementById('BotEditorTitle').textContent = clone ? `Clonar ${bot.displayName}` : (bot ? `Editar ${bot.displayName}` : 'Crear bot');
+        document.getElementById('BotIsNew').value = String(isNew);
+        setInput('BotKey', isNew ? '' : bot.botKey);
+        document.getElementById('BotKey').readOnly = !isNew;
+        setInput('BotDisplayName', clone ? `${bot.displayName} copia` : bot?.displayName);
+        setInput('BotDescription', bot?.description);
+        setInput('BotBaseStrategy', bot?.baseStrategy || 'MODELS_2026');
+        document.getElementById('BotIsEnabled').checked = bot?.isEnabled ?? true;
+        setCheckedValues('.bot-market', bot?.marketFamilies || ['CORNERS', 'GOALS', 'SHOTS', 'SOG']);
+        setInput('BotMinEdge', bot?.minEdge);
+        setInput('BotMinEv', bot?.minExpectedValue);
+        setInput('BotMinDistance', bot?.minDistanceToLine);
+        setInput('BotMaxContext', bot?.maxContextDifference);
+        setInput('BotMinOdds', bot?.minOddsExclusive);
+        setInput('BotProbabilityLift', bot?.minProbabilityLiftOverImplied);
+        setInput('BotStakeMultiplier', bot?.stakeMultiplier);
+        setInput('BotAllowDisagreement', bot?.allowModelDisagreement == null ? '' : String(bot.allowModelDisagreement));
+        let strategyJson = bot?.strategyConfigurationJson || '';
+        if (strategyJson) {
+            try { strategyJson = JSON.stringify(JSON.parse(strategyJson), null, 2); } catch { }
+        } else if (bot?.strategyManifest?.configuration) {
+            strategyJson = JSON.stringify(bot.strategyManifest.configuration, null, 2);
+        }
+        setInput('BotStrategyConfiguration', strategyJson);
+        updateStrategyConfigurationVisibility();
+        botEditor.hidden = false;
+        botEditor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    const closeBotEditor = () => botEditor.hidden = true;
+
+    const refreshBots = async () => {
+        bots = await fetchJson(endpoints.bots);
+        renderBots();
+    };
+    const refreshJobs = async (quiet = false) => {
+        try {
+            jobs = await fetchJson(endpoints.jobs);
+            renderJobs();
+        } catch (error) {
+            if (!quiet) showNotice(error.message, 'danger');
+        }
+    };
+
+    document.getElementById('JobForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = document.getElementById('EnqueueButton');
+        const botKeys = selectedValues('.job-bot');
+        const marketFamilies = selectedValues('.job-market');
+        if (!botKeys.length || !marketFamilies.length) return showNotice('Selecciona al menos un bot y un mercado.', 'warning');
+        button.disabled = true;
+        button.textContent = 'Guardando…';
+        try {
+            await fetchJson(endpoints.enqueue, { method: 'POST', body: JSON.stringify({
+                name: document.getElementById('JobName').value || null,
+                dateFrom: document.getElementById('DateFrom').value,
+                dateTo: document.getElementById('DateTo').value,
+                mode: document.getElementById('JobMode').value,
+                botKeys, marketFamilies,
+                batchSize: Number(document.getElementById('BatchSize').value),
+                maxAttempts: Number(document.getElementById('MaxAttempts').value)
+            })});
+            showNotice('Proceso guardado. El worker comenzará a ejecutarlo por lotes.', 'success');
+            await refreshJobs();
+        } catch (error) { showNotice(error.message, 'danger'); }
+        finally { button.disabled = false; button.textContent = 'Guardar y ejecutar'; }
+    });
+
+    document.getElementById('BotForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const markets = selectedValues('.bot-market');
+        if (!markets.length) return showNotice('Selecciona al menos un mercado para el bot.', 'warning');
+        const button = document.getElementById('SaveBotButton');
+        button.disabled = true;
+        try {
+            const disagreement = document.getElementById('BotAllowDisagreement').value;
+            const strategyField = document.getElementById('BotStrategyConfiguration');
+            let strategyConfigurationJson = null;
+            if (['MODELS_2026', 'LEGACY_EMPIRICAL'].includes(document.getElementById('BotBaseStrategy').value) && strategyField.value.trim()) {
+                try { strategyConfigurationJson = JSON.stringify(JSON.parse(strategyField.value)); }
+                catch { return showNotice('La configuración del Pick Selector no es un JSON válido.', 'warning'); }
+            }
+            await fetchJson(endpoints.saveBot, { method: 'POST', body: JSON.stringify({
+                isNew: document.getElementById('BotIsNew').value === 'true',
+                botKey: document.getElementById('BotKey').value.trim().toUpperCase(),
+                displayName: document.getElementById('BotDisplayName').value.trim(),
+                description: document.getElementById('BotDescription').value.trim(),
+                baseStrategy: document.getElementById('BotBaseStrategy').value,
+                isEnabled: document.getElementById('BotIsEnabled').checked,
+                marketFamilies: markets,
+                minEdge: nullableNumber('BotMinEdge'), minExpectedValue: nullableNumber('BotMinEv'),
+                minDistanceToLine: nullableNumber('BotMinDistance'), maxContextDifference: nullableNumber('BotMaxContext'),
+                minOddsExclusive: nullableNumber('BotMinOdds'), minProbabilityLiftOverImplied: nullableNumber('BotProbabilityLift'),
+                stakeMultiplier: nullableNumber('BotStakeMultiplier'),
+                allowModelDisagreement: disagreement === '' ? null : disagreement === 'true',
+                strategyConfigurationJson
+            })});
+            closeBotEditor();
+            await refreshBots();
+            showNotice('Bot guardado. Sus reglas se usarán en las próximas ejecuciones.', 'success');
+        } catch (error) { showNotice(error.message, 'danger'); }
+        finally { button.disabled = false; }
+    });
+
+    const cancelJob = async id => {
+        if (!confirm('¿Cancelar este proceso? Los lotes ya guardados no se eliminan.')) return;
+        try {
+            await fetchJson(`${endpoints.cancelJob}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+            await refreshJobs(); showNotice('Proceso cancelado.', 'success');
+        } catch (error) { showNotice(error.message, 'danger'); }
+    };
+    const deleteBot = async key => {
+        if (!confirm(`¿Eliminar el bot ${key}? Esta acción no borra sus picks históricos.`)) return;
+        try {
+            await fetchJson(`${endpoints.deleteBot}?botKey=${encodeURIComponent(key)}`, { method: 'DELETE' });
+            await refreshBots(); showNotice('Bot personalizado eliminado.', 'success');
+        } catch (error) { showNotice(error.message, 'danger'); }
+    };
+
+    document.getElementById('NewBotButton').addEventListener('click', () => openBotEditor());
+    const updateStrategyConfigurationVisibility = () => {
+        document.getElementById('BotStrategyConfigurationGroup').hidden = !['MODELS_2026', 'LEGACY_EMPIRICAL'].includes(document.getElementById('BotBaseStrategy').value);
+    };
+    document.getElementById('BotBaseStrategy').addEventListener('change', updateStrategyConfigurationVisibility);
+    document.getElementById('CloseBotEditorButton').addEventListener('click', closeBotEditor);
+    document.getElementById('CancelBotButton').addEventListener('click', closeBotEditor);
+    document.getElementById('RefreshJobsButton').addEventListener('click', () => refreshJobs());
+    document.getElementById('HistoricalRangeButton').addEventListener('click', () => {
+        document.getElementById('DateFrom').value = '2026-06-19';
+        document.getElementById('DateTo').value = localDateIso(new Date());
+        document.getElementById('JobMode').value = 'HistoricalBackfill';
+    });
+    document.getElementById('TodayRangeButton').addEventListener('click', () => {
+        const today = new Date();
+        const future = new Date(today); future.setDate(today.getDate() + 7);
+        document.getElementById('DateFrom').value = localDateIso(today);
+        document.getElementById('DateTo').value = localDateIso(future);
+        document.getElementById('JobMode').value = 'Live';
+    });
+
+    renderBots();
+    renderJobs();
+    window.setInterval(() => { if (!document.hidden) refreshJobs(true); }, 8000);
+})();
+</script>

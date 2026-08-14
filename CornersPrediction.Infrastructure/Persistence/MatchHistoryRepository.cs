@@ -172,24 +172,34 @@ public sealed class MatchHistoryRepository : IMatchHistoryRepository
         string awayTeam,
         string? league,
         string teamGender,
+        DateOnly? beforeDate,
         CancellationToken cancellationToken)
     {
-        var homeMatches = await _dbContext.MatchHistoryItems
+        var homeQuery = _dbContext.MatchHistoryItems
             .AsNoTracking()
             .Where(item => item.HomeTeam == homeTeam)
-            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league)
-            .OrderByDescending(item => item.MatchDate)
-            .ThenByDescending(item => item.Id)
-            .Take(10)
-            .ToListAsync(cancellationToken);
-
-        var awayMatches = await _dbContext.MatchHistoryItems
+            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league);
+        var awayQuery = _dbContext.MatchHistoryItems
             .AsNoTracking()
             .Where(item => item.AwayTeam == awayTeam)
-            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league)
+            .Where(item => string.IsNullOrWhiteSpace(league) || item.League == league);
+
+        if (beforeDate is DateOnly cutoff)
+        {
+            homeQuery = homeQuery.Where(item => item.MatchDate < cutoff);
+            awayQuery = awayQuery.Where(item => item.MatchDate < cutoff);
+        }
+
+        var homeMatches = await homeQuery
             .OrderByDescending(item => item.MatchDate)
             .ThenByDescending(item => item.Id)
-            .Take(10)
+            .Take(30)
+            .ToListAsync(cancellationToken);
+
+        var awayMatches = await awayQuery
+            .OrderByDescending(item => item.MatchDate)
+            .ThenByDescending(item => item.Id)
+            .Take(30)
             .ToListAsync(cancellationToken);
 
         foreach (var item in homeMatches)

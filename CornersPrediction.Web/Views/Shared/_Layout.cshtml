@@ -55,6 +55,10 @@
                         <span class="sidebar-icon">PR</span>
                         <span>@UiText.T(language, "Nav.Predictions")</span>
                     </a>
+                    <a class="sidebar-link @(activeController == "NewGenerationPrediction" ? "active" : "")" asp-area="" asp-controller="NewGenerationPrediction" asp-action="Index">
+                        <span class="sidebar-icon">26</span>
+                        <span>Modelos 2026</span>
+                    </a>
                     <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
                         <span class="sidebar-icon">MH</span>
                         <span>@UiText.T(language, "Nav.MatchHistory")</span>
@@ -76,6 +80,10 @@
                     <a class="sidebar-link @(activeController == "RobotPanel" ? "active" : "")" asp-area="" asp-controller="RobotPanel" asp-action="Index">
                         <span class="sidebar-icon">RB</span>
                         <span>@UiText.T(language, "Nav.RobotPanel")</span>
+                    </a>
+                    <a class="sidebar-link @(activeController == "BotAutomation" ? "active" : "")" asp-area="" asp-controller="BotAutomation" asp-action="Index">
+                        <span class="sidebar-icon">BA</span>
+                        <span>Bots y procesos</span>
                     </a>
                     <a class="sidebar-link @(activeController == "UserAdmin" ? "active" : "")" asp-area="" asp-controller="UserAdmin" asp-action="Index">
                         <span class="sidebar-icon">UA</span>

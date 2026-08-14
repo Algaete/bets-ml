@@ -94,6 +94,22 @@ public sealed class BettingController : Controller
     {
         var selectedCurrency = NormalizeCurrency(currencyCode);
         var currentBankroll = await _bettingApiClient.GetCurrentBankrollAsync(selectedCurrency, cancellationToken);
+        var normalizedKellyStrategy = NormalizeOption(kellyStrategy, BettingOptions.KellyStrategies, "None");
+        var effectiveStake = stake.GetValueOrDefault();
+
+        if (!normalizedKellyStrategy.Equals("None", StringComparison.OrdinalIgnoreCase) &&
+            estimatedProbabilityPercent is > 0m and <= 100m &&
+            odds is > 1m &&
+            currentBankroll > 0m)
+        {
+            effectiveStake = CalculateKellyStake(
+                currentBankroll,
+                odds.Value,
+                estimatedProbabilityPercent.Value,
+                normalizedKellyStrategy,
+                selectedCurrency);
+        }
+
         return View(new BettingRecordFormViewModel
         {
             CurrencyCode = selectedCurrency,
@@ -107,9 +123,9 @@ public sealed class BettingController : Controller
             BetSelection = NormalizeOption(betSelection, BettingOptions.BetSelections, "Over"),
             Line = line.GetValueOrDefault(),
             Odds = odds.GetValueOrDefault(),
-            Stake = stake.GetValueOrDefault(),
+            Stake = effectiveStake,
             EstimatedProbabilityPercent = estimatedProbabilityPercent,
-            KellyStrategy = NormalizeOption(kellyStrategy, BettingOptions.KellyStrategies, "None"),
+            KellyStrategy = normalizedKellyStrategy,
             ConfidenceLevel = NormalizeOption(confidenceLevel, BettingOptions.ConfidenceLevels, string.Empty),
             PredictionModel = NormalizeOption(predictionModel, BettingOptions.PredictionModels, "Manual"),
             Notes = notes,
@@ -351,5 +367,34 @@ public sealed class BettingController : Controller
 
         return options.FirstOrDefault(item =>
             item.Equals(value, StringComparison.OrdinalIgnoreCase)) ?? fallback;
+    }
+
+    private static decimal CalculateKellyStake(
+        decimal bankroll,
+        decimal decimalOdds,
+        decimal probabilityPercent,
+        string strategy,
+        string currencyCode)
+    {
+        var probability = probabilityPercent / 100m;
+        var netOdds = decimalOdds - 1m;
+        var fullKellyFraction = ((netOdds * probability) - (1m - probability)) / netOdds;
+        if (fullKellyFraction <= 0m)
+        {
+            return 0m;
+        }
+
+        var multiplier = strategy switch
+        {
+            "Kelly" => 1m,
+            "HalfKelly" => 0.5m,
+            "QuarterKelly" => 0.25m,
+            _ => 0m
+        };
+        var rawStake = bankroll * fullKellyFraction * multiplier;
+
+        return currencyCode.Equals("CLP", StringComparison.OrdinalIgnoreCase)
+            ? decimal.Round(rawStake, 0, MidpointRounding.AwayFromZero)
+            : decimal.Round(rawStake, 2, MidpointRounding.AwayFromZero);
     }
 }

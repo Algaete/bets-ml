@@ -2,81 +2,263 @@
 
 @{
     var language = UiText.GetLanguage(Context);
-    ViewData["Title"] = UiText.T(language, "BotPicks.Title");
+    ViewData["Title"] = Model.Market.Title;
     var dateFrom = Model.Filters.DateFrom?.ToString("yyyy-MM-dd");
     var dateTo = Model.Filters.DateTo?.ToString("yyyy-MM-dd");
+    var selectedMonth = Model.Filters.DateFrom?.ToString("yyyy-MM");
     var selectedStatus = Model.Filters.Status ?? string.Empty;
+    var selectedBookmaker = Model.Filters.Bookmaker ?? string.Empty;
     var selectedMarketType = Model.Filters.MarketType ?? string.Empty;
     var canUpdateResults = User.IsInRole("Admin");
+    var marketFamily = Model.Market.Key;
+    var isCornersMarket = marketFamily == "corners";
 }
 
-<div class="betting-hero mb-4">
+<div class="betting-hero bot-picks-hero mb-3">
     <div>
-        <div class="text-muted small text-uppercase fw-semibold">@UiText.T(language, "BotPicks.Eyebrow")</div>
-        <h1 class="h3 mb-1">@UiText.T(language, "BotPicks.Title")</h1>
-        <p class="text-muted mb-0">@UiText.T(language, "BotPicks.Description")</p>
+        <div class="text-muted small text-uppercase fw-semibold">@Model.Market.Eyebrow</div>
+        <h1 class="h3 mb-1">@Model.Market.Title</h1>
+        <p class="text-muted mb-0">@Model.Market.Description</p>
     </div>
-    <div class="d-flex flex-wrap gap-2">
+    <div class="bot-picks-hero-actions">
+        <div class="bot-picks-bankroll-settings" aria-label="Configuración de simulación">
         <label class="bot-picks-bankroll-control">
-            <span>Bankroll inicial</span>
+            <span>Bankroll inicial (u)</span>
             <input id="BotPicksInitialBankroll" class="form-control form-control-sm" type="number" min="0" step="0.01" value="100" />
         </label>
-        <button id="RefreshBotPicksButton" class="btn btn-outline-secondary" type="button">Refresh</button>
+        <label class="bot-picks-bankroll-control">
+            <span>Moneda apuesta</span>
+            <select id="BotPicksBetCurrency" class="form-select form-select-sm">
+                <option value="CLP">CLP</option>
+                <option value="USD">USD</option>
+                <option value="AUD">AUD</option>
+            </select>
+        </label>
+        <label class="bot-picks-bankroll-control">
+            <span>Stake plano</span>
+            <input id="BotPicksFlatBetStake" class="form-control form-control-sm" type="number" min="0.01" step="1" value="1" />
+        </label>
+        </div>
+        @if (canUpdateResults)
+        {
+            <div class="bot-picks-bulk-actions" aria-label="Liquidación automática">
+                <button id="SettleLocalBotPicksButton" class="btn btn-primary" type="button"
+                        title="Liquida todos los bots y mercados usando únicamente MatchHistory">
+                    Liquidar desde MatchHistory
+                </button>
+                <button id="SettlePendingBotPicksButton" class="btn btn-outline-success" type="button"
+                        title="Para los pendientes: busca el partido en API-Football, sincroniza MatchHistory y vuelve a liquidar">
+                    Completar faltantes
+                </button>
+            </div>
+        }
+        <button id="RefreshBotPicksButton" class="btn btn-outline-secondary" type="button">Actualizar</button>
     </div>
 </div>
 
-<div id="BotPicksError" class="alert alert-danger d-none" role="alert"></div>
+<div class="bot-picks-command-bar mb-4">
+    <nav class="bot-market-switcher" aria-label="Mercado de Bot Picks">
+        @foreach (var marketLink in new[]
+        {
+            (Key: "corners", Label: "Córners"),
+            (Key: "goals", Label: "Goles"),
+            (Key: "shots", Label: "Tiros"),
+            (Key: "sog", Label: "Tiros al arco")
+        })
+        {
+            <a class="bot-market-switcher-link @(marketFamily == marketLink.Key ? "is-active" : "")"
+               aria-current="@(marketFamily == marketLink.Key ? "page" : null)"
+               asp-controller="BotPicks"
+               asp-action="Index"
+               asp-route-market="@marketLink.Key"
+               asp-route-DateFrom="@dateFrom"
+               asp-route-DateTo="@dateTo"
+               asp-route-Status="@selectedStatus"
+               asp-route-League="@Model.Filters.League"
+               asp-route-Bookmaker="@selectedBookmaker">@marketLink.Label</a>
+        }
+    </nav>
+    <nav class="bot-picks-section-nav" aria-label="Secciones de Bot Picks">
+        <a href="#BotPicksSummary">Resumen</a>
+        <a href="#BotPicksRecommendations">Recomendaciones</a>
+        <a href="#BotPicksDataScience">Laboratorio</a>
+    </nav>
+</div>
 
-<section class="metric-grid mb-4" aria-label="Bot picks summary">
-    <div class="metric-tile">
-        <div class="metric-label">Total apuestas</div>
+<div id="BotPicksError" class="alert alert-danger d-none" role="alert"></div>
+<div id="BotPicksSettlementResult" class="alert alert-success d-none" role="status"></div>
+
+@if (marketFamily == "goals")
+{
+    <div class="alert alert-info bot-picks-settlement-help" role="note">
+        <strong>Liquidación asiática:</strong> escribe los goles totales reales y pulsa <strong>Liquidar</strong>.
+        El sistema calcula automáticamente ganancia completa, media ganancia, devolución, media pérdida o pérdida completa.
+        Ejemplo: Under 2,25 con 2 goles = media ganancia; Over 2,25 con 2 goles = media pérdida.
+    </div>
+}
+
+<div class="bot-picks-tabs-heading">
+    <div>
+        <h2 class="h6 mb-1">Bot del resumen</h2>
+        <p class="text-muted small mb-0">Cambia las estadísticas de arriba; la tabla tiene su propio filtro y muestra todos por defecto.</p>
+    </div>
+</div>
+<section class="bot-picks-tabs mb-3" role="tablist" aria-label="Bot activo para el resumen">
+    <button class="bot-picks-tab" type="button" role="tab" data-bot-tab="" aria-selected="false">
+        <span class="bot-picks-tab-label">Comparar todos</span>
+        <span id="BotPicksTabAllCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-a" type="button" role="tab" data-bot-tab="A" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot A Actual</span>
+        <span id="BotPicksTabACount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-b" type="button" role="tab" data-bot-tab="B" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot B Conservador</span>
+        <span id="BotPicksTabBCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-c" type="button" role="tab" data-bot-tab="C" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot C · Modelos 2026</span>
+        <span id="BotPicksTabCCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-d" type="button" role="tab" data-bot-tab="D" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot D · Brecha de nivel</span>
+        <span id="BotPicksTabDCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-e" type="button" role="tab" data-bot-tab="E" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot E · Calibración empírica</span>
+        <span id="BotPicksTabECount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-f" type="button" role="tab" data-bot-tab="F" aria-selected="false">
+        <span class="bot-picks-tab-label">Bot F · Legacy calibrado</span>
+        <span id="BotPicksTabFCount" class="bot-picks-tab-count">...</span>
+    </button>
+    <button class="bot-picks-tab bot-picks-tab-legacy" type="button" role="tab" data-bot-tab="Legacy" aria-selected="false">
+        <span class="bot-picks-tab-label">Otros / Legacy</span>
+        <span id="BotPicksTabLegacyCount" class="bot-picks-tab-count">...</span>
+    </button>
+</section>
+
+<div id="BotPicksSelectBotSummary" class="alert alert-info d-none mb-4" role="note">
+    Selecciona un bot para abrir su resumen financiero. La comparación, la tabla y el laboratorio siguen disponibles para todos.
+</div>
+
+<aside id="BotPicksBotContext" class="bot-picks-context-card mb-4" aria-live="polite">
+    <div>
+        <span class="bot-picks-context-eyebrow">Cómo leer el bot activo</span>
+        <strong id="BotPicksBotContextTitle">...</strong>
+        <p id="BotPicksBotContextText" class="mb-0">...</p>
+    </div>
+    <span id="BotPicksBotContextSample" class="bot-ds-sample-badge">Sin muestra</span>
+</aside>
+
+<section id="BotPicksProductionPlan" class="bot-production-plan mb-4" aria-label="Plan productivo del bot activo">
+    <div class="bot-production-plan-copy">
+        <div class="text-uppercase fw-semibold">Plan productivo piloto</div>
+        <h2>Una apuesta principal por partido y mercado</h2>
+        @if (isCornersMarket)
+        {
+            <p>Pinnacle o Betano, cuota mínima 1.60. Prioridad córners local 1u; si no existe, córners visita 0.5u. El resto queda en monitoreo.</p>
+        }
+        else
+        {
+            <p>Pinnacle o Betano, cuota mínima 1.60. Se prioriza la señal de @Model.Market.UnitLabel con mayor score y se registra 1u por partido.</p>
+        }
+    </div>
+    <div class="bot-production-plan-stats">
+        <div class="bot-production-stat bot-production-stat-primary">
+            <span>Para apostar 1u</span>
+            <strong id="BotPicksPlanOneUnit">...</strong>
+        </div>
+        <div class="bot-production-stat bot-production-stat-secondary">
+            <span>Para apostar 0.5u</span>
+            <strong id="BotPicksPlanHalfUnit">...</strong>
+        </div>
+        <div class="bot-production-stat bot-production-stat-monitor">
+            <span>Monitoreo pendiente</span>
+            <strong id="BotPicksPlanMonitoring">...</strong>
+        </div>
+    </div>
+</section>
+
+<div id="BotPicksSummary" class="bot-picks-anchor"></div>
+<div id="BotPicksPerBotSummary">
+<div class="bot-summary-heading mb-3">
+    <div>
+        <h2 id="BotPicksSummaryTitle" class="h6 mb-1">Resumen del período por bot</h2>
+        <div id="BotPicksSummaryScope" class="text-muted small">Todos los indicadores respetan el bot activo, las fechas y los filtros aplicados.</div>
+    </div>
+    <div class="d-flex flex-wrap justify-content-end gap-2">
+        <span id="BotPicksSummarySample" class="bot-ds-sample-badge">Sin muestra</span>
+        <span id="BotPicksSummaryPeriod" class="bot-period-badge">...</span>
+    </div>
+</div>
+
+<section class="metric-grid bot-picks-metric-grid mb-4" aria-label="Resumen estadístico de Bot Picks">
+    <div class="metric-tile bot-metric-total">
+        <div class="metric-label">Picks simulados del bot</div>
         <div id="BotPicksTotal" class="metric-value">...</div>
     </div>
-    <div class="metric-tile">
+    <div class="metric-tile bot-metric-pending">
         <div class="metric-label">Pendientes</div>
         <div id="BotPicksPending" class="metric-value">...</div>
     </div>
-    <div class="metric-tile">
+    <div class="metric-tile bot-metric-won">
         <div class="metric-label">Ganadas</div>
         <div id="BotPicksWon" class="metric-value">...</div>
     </div>
-    <div class="metric-tile">
+    <div class="metric-tile bot-metric-lost">
         <div class="metric-label">Perdidas</div>
         <div id="BotPicksLost" class="metric-value">...</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Void</div>
+        <div class="metric-label">Push / Void</div>
         <div id="BotPicksVoid" class="metric-value">...</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Profit/Loss</div>
+        <div class="metric-label">Resultado del período · todos a 1u</div>
         <div id="BotPicksProfitLoss" class="metric-value">...</div>
+        <div id="BotPicksProfitLossHelp" class="metric-footnote">Sólo picks ganados y perdidos</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Yield %</div>
+        <div class="metric-label">Yield del período · todos a 1u</div>
         <div id="BotPicksYieldPct" class="metric-value">...</div>
+        <div id="BotPicksYieldHelp" class="metric-footnote">Resultado ÷ unidades apostadas</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Bankroll actual</div>
+        <div class="metric-label">Saldo siguiendo el plan recomendado</div>
+        <div id="BotPicksRecommendedBankroll" class="metric-value">...</div>
+        <div id="BotPicksRecommendedUnits" class="metric-footnote">Saldo inicial + resultado del plan</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">Saldo apostando todos los picks</div>
         <div id="BotPicksBankroll" class="metric-value">...</div>
-    </div>
-    <div class="metric-tile">
-        <div class="metric-label">Bankroll Kelly aprox</div>
-        <div id="BotPicksKellyBankroll" class="metric-value">...</div>
-        <div id="BotPicksKellyUnits" class="metric-footnote">Confianza redondeada</div>
-    </div>
-    <div class="metric-tile">
-        <div class="metric-label">Bankroll 1/4 Kelly aprox</div>
-        <div id="BotPicksQuarterKellyBankroll" class="metric-value">...</div>
-        <div id="BotPicksQuarterKellyUnits" class="metric-footnote">25% de Kelly aprox</div>
+        <div id="BotPicksAllUnits" class="metric-footnote">Saldo inicial + resultado apostando 1u en cada pick</div>
     </div>
 </section>
 
-<section class="bot-comparison-grid mb-4" aria-label="Bot A/B comparison">
-    <div class="bot-comparison-card bot-comparison-card-a">
+<section class="surface-panel bot-bankroll-chart-panel mb-4" aria-labelledby="BotPicksBankrollChartTitle">
+    <div class="bot-bankroll-chart-heading">
+        <div>
+            <h2 id="BotPicksBankrollChartTitle" class="h6 mb-1">Evolución del saldo</h2>
+            <div class="text-muted small">Cada punto agrega un pick resuelto del período, ordenado por fecha. Los pendientes no cambian el saldo.</div>
+        </div>
+        <div class="bot-bankroll-chart-values" aria-label="Saldos finales del gráfico">
+            <span><i class="bot-chart-dot bot-chart-dot-recommended"></i>Plan recomendado <strong id="BotPicksChartRecommendedValue">...</strong></span>
+            <span><i class="bot-chart-dot bot-chart-dot-all"></i>Todos a 1u <strong id="BotPicksChartAllValue">...</strong></span>
+        </div>
+    </div>
+    <div id="BotPicksBankrollChartEmpty" class="alert alert-light border d-none mb-0">Aún no hay picks resueltos para graficar en este período.</div>
+    <div id="BotPicksBankrollChartWrap" class="bot-bankroll-chart-wrap">
+        <svg id="BotPicksBankrollChart" viewBox="0 0 1000 320" role="img" aria-label="Gráfico de evolución del saldo"></svg>
+    </div>
+</section>
+</div>
+
+<section class="bot-comparison-grid mb-4" aria-label="Comparación por bot del período">
+    <div class="bot-comparison-card bot-comparison-card-a" data-summary-bot="A" role="button" tabindex="0" aria-label="Ver estadísticas del Bot A">
         <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
-                <div class="metric-label">Bot A Actual + historico</div>
+                <div class="metric-label">Bot A Actual</div>
                 <div id="BotPicksBotATotal" class="bot-comparison-total">...</div>
             </div>
             <span class="bot-badge bot-badge-a">Bot A</span>
@@ -86,8 +268,9 @@
             <span id="BotPicksBotAProfit">P/L ...</span>
             <span id="BotPicksBotAYield">Yield ...</span>
         </div>
+        <span id="BotPicksBotASample" class="bot-comparison-sample">Sin muestra</span>
     </div>
-    <div class="bot-comparison-card bot-comparison-card-b">
+    <div class="bot-comparison-card bot-comparison-card-b" data-summary-bot="B" role="button" tabindex="0" aria-label="Ver estadísticas del Bot B">
         <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
                 <div class="metric-label">Bot B Conservador</div>
@@ -100,106 +283,268 @@
             <span id="BotPicksBotBProfit">P/L ...</span>
             <span id="BotPicksBotBYield">Yield ...</span>
         </div>
+        <span id="BotPicksBotBSample" class="bot-comparison-sample">Sin muestra</span>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-c" data-summary-bot="C" role="button" tabindex="0" aria-label="Ver estadísticas del Bot C">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Bot C · Modelos 2026</div>
+                <div id="BotPicksBotCTotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-c">Bot C</span>
+        </div>
+        <div id="BotPicksBotCRecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotCProfit">P/L ...</span>
+            <span id="BotPicksBotCYield">Yield ...</span>
+        </div>
+        <span id="BotPicksBotCSample" class="bot-comparison-sample">Sin muestra</span>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-d" data-summary-bot="D" role="button" tabindex="0" aria-label="Ver estadísticas del Bot D">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Bot D · Brecha de nivel</div>
+                <div id="BotPicksBotDTotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-d">Bot D</span>
+        </div>
+        <div id="BotPicksBotDRecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotDProfit">P/L ...</span>
+            <span id="BotPicksBotDYield">Yield ...</span>
+        </div>
+        <span id="BotPicksBotDSample" class="bot-comparison-sample">Sin muestra</span>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-e" data-summary-bot="E" role="button" tabindex="0" aria-label="Ver estadísticas del Bot E">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Bot E · Calibración empírica</div>
+                <div id="BotPicksBotETotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-e">Bot E</span>
+        </div>
+        <div id="BotPicksBotERecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotEProfit">P/L ...</span>
+            <span id="BotPicksBotEYield">Yield ...</span>
+        </div>
+        <span id="BotPicksBotESample" class="bot-comparison-sample">Sin muestra</span>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-f" data-summary-bot="F" role="button" tabindex="0" aria-label="Ver estadísticas del Bot F">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div><div class="metric-label">Bot F · Legacy ML calibrado</div><div id="BotPicksBotFTotal" class="bot-comparison-total">...</div></div>
+            <span class="bot-badge bot-badge-f">Bot F</span>
+        </div>
+        <div id="BotPicksBotFRecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer"><span id="BotPicksBotFProfit">P/L ...</span><span id="BotPicksBotFYield">Yield ...</span></div>
+        <span id="BotPicksBotFSample" class="bot-comparison-sample">Sin muestra</span>
+    </div>
+    <div class="bot-comparison-card bot-comparison-card-legacy" data-summary-bot="Legacy" role="button" tabindex="0" aria-label="Ver estadísticas de bots legacy">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+                <div class="metric-label">Otros / Legacy</div>
+                <div id="BotPicksBotLegacyTotal" class="bot-comparison-total">...</div>
+            </div>
+            <span class="bot-badge bot-badge-legacy">Legacy</span>
+        </div>
+        <div id="BotPicksBotLegacyRecord" class="bot-comparison-record">...</div>
+        <div class="bot-comparison-footer">
+            <span id="BotPicksBotLegacyProfit">P/L ...</span>
+            <span id="BotPicksBotLegacyYield">Yield ...</span>
+        </div>
+        <span id="BotPicksBotLegacySample" class="bot-comparison-sample">Sin muestra</span>
     </div>
 </section>
 
-<form id="BotPicksFilters" class="surface-panel mb-4">
+<details class="surface-panel bot-picks-collapsible mb-4">
+    <summary>
+        <span>
+            <strong>Historial mensual</strong>
+            <small>Comparación por bot y mes</small>
+        </span>
+        <span aria-hidden="true">Abrir</span>
+    </summary>
+    <div class="bot-picks-collapsible-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <div class="text-muted small">Cada fila pertenece a un bot y calcula su yield mensual: resultado del mes ÷ stake resuelto del mes.</div>
+        </div>
+        <span class="badge text-bg-light">W / L / V / P · P/L · Yield</span>
+    </div>
+    <div id="BotPicksMonthlyHistoryLoading" class="text-muted small">Cargando historial mensual...</div>
+    <div id="BotPicksMonthlyHistoryEmpty" class="alert alert-light border d-none mb-0">Aún no hay meses con recomendaciones.</div>
+    <div id="BotPicksMonthlyHistoryWrap" class="table-responsive d-none">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Mes</th>
+                    <th>Bot</th>
+                    <th class="text-end">Apuestas</th>
+                    <th class="text-end">W / L / Push / V / P</th>
+                    <th class="text-end">Stake resuelto</th>
+                    <th class="text-end">P/L</th>
+                    <th class="text-end">Yield del mes</th>
+                </tr>
+            </thead>
+            <tbody id="BotPicksMonthlyHistoryBody"></tbody>
+        </table>
+    </div>
+    </div>
+</details>
+
+<div id="BotPicksRecommendations" class="bot-picks-anchor"></div>
+<form id="BotPicksFilters" class="surface-panel mb-3">
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="market" value="@marketFamily" />
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <div>
             <h2 class="h6 mb-1">Filtros</h2>
-            <div class="text-muted small">Fecha, liga, estado, mercado y busqueda local. La version del bot se cambia con las pestanas de abajo.</div>
+            <div class="text-muted small">Estos filtros afectan la tabla y el resumen. El bot del resumen se elige arriba; la tabla puede filtrarse por separado.</div>
         </div>
-        <div class="d-flex gap-2">
-            <a class="btn btn-sm btn-outline-secondary" asp-controller="BotPicks" asp-action="Index">Clear</a>
-            <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
+        <div class="d-flex flex-wrap gap-2 align-items-end">
+            <label class="bot-picks-month-picker">
+                <span>Mes</span>
+                <input id="BotPicksMonth" class="form-control form-control-sm" type="month" value="@selectedMonth" />
+            </label>
+            <button id="BotPicksPreviousMonth" class="btn btn-sm btn-outline-secondary" type="button">← Mes anterior</button>
+            <button id="BotPicksCurrentMonth" class="btn btn-sm btn-outline-secondary" type="button">Mes actual</button>
+            <button id="BotPicksNextMonth" class="btn btn-sm btn-outline-secondary" type="button">Mes siguiente →</button>
+            <button id="BotPicksBotCHistoricalPending" class="btn btn-sm btn-outline-success" type="button">Pendientes desde 19 jun</button>
+            <a class="btn btn-sm btn-outline-secondary" asp-controller="BotPicks" asp-action="Index" asp-route-market="@marketFamily">Limpiar</a>
+            <button class="btn btn-sm btn-outline-primary" type="submit">Aplicar</button>
         </div>
     </div>
 
     <div class="row g-3 align-items-end">
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="DateFrom">Date from</label>
+            <label class="form-label" for="DateFrom">Desde</label>
             <input id="DateFrom" name="DateFrom" class="form-control" type="date" value="@dateFrom" />
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="DateTo">Date to</label>
+            <label class="form-label" for="DateTo">Hasta</label>
             <input id="DateTo" name="DateTo" class="form-control" type="date" value="@dateTo" />
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="Status">Status</label>
+            <label class="form-label" for="Status">Estado</label>
             <select id="Status" name="Status" class="form-select">
-                <option value="">All</option>
-                @foreach (var status in new[] { "Pending", "Won", "Lost", "Void" })
+                <option value="">Todos</option>
+                @foreach (var status in new[] { "Pending", "Won", "Lost", "Push", "Void" })
                 {
+                    var statusLabel = status switch
+                    {
+                        "Pending" => "Pendiente",
+                        "Won" => "Ganada",
+                        "Lost" => "Perdida",
+                        "Push" => "Devuelta",
+                        "Void" => "Anulada",
+                        _ => status
+                    };
                     if (selectedStatus.Equals(status, StringComparison.OrdinalIgnoreCase))
                     {
-                        <option value="@status" selected>@status</option>
+                        <option value="@status" selected>@statusLabel</option>
                     }
                     else
                     {
-                        <option value="@status">@status</option>
+                        <option value="@status">@statusLabel</option>
                     }
                 }
             </select>
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="MarketType">Market</label>
+            <label class="form-label" for="MarketType">Mercado</label>
             <select id="MarketType" name="MarketType" class="form-select">
-                <option value="">All</option>
-                @foreach (var marketType in new[] { "TotalCorners", "HomeTeamCorners", "AwayTeamCorners" })
+                <option value="">Todos</option>
+                @foreach (var marketType in Model.Market.Options)
                 {
-                    if (selectedMarketType.Equals(marketType, StringComparison.OrdinalIgnoreCase))
+                    if (selectedMarketType.Equals(marketType.Value, StringComparison.OrdinalIgnoreCase))
                     {
-                        <option value="@marketType" selected>@marketType</option>
+                        <option value="@marketType.Value" selected>@marketType.Label</option>
                     }
                     else
                     {
-                        <option value="@marketType">@marketType</option>
+                        <option value="@marketType.Value">@marketType.Label</option>
                     }
                 }
             </select>
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="League">League</label>
-            <input id="League" name="League" class="form-control" value="@Model.Filters.League" placeholder="All leagues" autocomplete="off" />
+            <label class="form-label" for="Bookmaker">Casa de apuesta</label>
+            <select id="Bookmaker" name="Bookmaker" class="form-select">
+                <option value="">Todas</option>
+                @foreach (var bookmaker in new[] { "Betano", "Pinnacle" })
+                {
+                    if (selectedBookmaker.Equals(bookmaker, StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="@bookmaker" selected>@bookmaker</option>
+                    }
+                    else
+                    {
+                        <option value="@bookmaker">@bookmaker</option>
+                    }
+                }
+            </select>
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="SearchText">Search</label>
+            <label class="form-label" for="League">Liga</label>
+            <input id="League" name="League" class="form-control" value="@Model.Filters.League" placeholder="Todas las ligas" autocomplete="off" />
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="SearchText">Buscar</label>
             <input id="SearchText" class="form-control" type="search" placeholder="Equipo o liga" autocomplete="off" />
+        </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="StrategyPlan">Plan productivo</label>
+            <select id="StrategyPlan" class="form-select">
+                <option value="">Todos</option>
+                <option value="bet">Para apostar</option>
+                <option value="stake-1">Stake 1u</option>
+                <option value="stake-half">Stake 0.5u</option>
+                <option value="monitor">Monitoreo</option>
+            </select>
         </div>
     </div>
 </form>
 
-<section class="bot-picks-tabs mb-4" aria-label="Bot pick views">
-    <button class="bot-picks-tab is-active" type="button" data-bot-tab="">
-        <span class="bot-picks-tab-label">Todos</span>
-        <span id="BotPicksTabAllCount" class="bot-picks-tab-count">...</span>
-    </button>
-    <button class="bot-picks-tab bot-picks-tab-a" type="button" data-bot-tab="A">
-        <span class="bot-picks-tab-label">Bot A Actual</span>
-        <span id="BotPicksTabACount" class="bot-picks-tab-count">...</span>
-    </button>
-    <button class="bot-picks-tab bot-picks-tab-b" type="button" data-bot-tab="B">
-        <span class="bot-picks-tab-label">Bot B Conservador</span>
-        <span id="BotPicksTabBCount" class="bot-picks-tab-count">...</span>
-    </button>
-    <button class="bot-picks-tab bot-picks-tab-legacy" type="button" data-bot-tab="Legacy">
-        <span class="bot-picks-tab-label">Legacy</span>
-        <span id="BotPicksTabLegacyCount" class="bot-picks-tab-count">...</span>
-    </button>
-</section>
-
-<section class="surface-panel">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+<section class="surface-panel bot-picks-recommendations-panel">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
         <div>
-            <h2 id="BotPicksTableTitle" class="h6 mb-1">Tabla principal</h2>
-            <div id="BotPicksVisibleCount" class="text-muted small">Loading...</div>
+            <h2 id="BotPicksTableTitle" class="h6 mb-1">Recomendaciones de todos los bots</h2>
+            <div id="BotPicksVisibleCount" class="text-muted small">Cargando...</div>
         </div>
         <span id="BotPicksSortState" class="badge text-bg-light">Fecha asc</span>
     </div>
 
-    <div id="BotPicksLoading" class="py-5 text-center">
+    <div class="bot-picks-table-toolbar mb-3" aria-label="Vista de recomendaciones">
+        <label>
+            <span>Bot en la tabla</span>
+            <select id="BotPicksTableBot" class="form-select form-select-sm">
+                <option value="">Todos los bots</option>
+                <option value="A">Bot A</option>
+                <option value="B">Bot B</option>
+                <option value="C">Bot C</option>
+                <option value="D">Bot D</option>
+                <option value="E">Bot E</option>
+                <option value="F">Bot F</option>
+                <option value="Legacy">Otros / Legacy</option>
+            </select>
+        </label>
+        <div class="bot-picks-quick-views" role="group" aria-label="Filtrar recomendaciones por estado">
+            <button type="button" class="bot-picks-quick-view is-active" data-table-view="all" aria-pressed="true">
+                Todas <span id="BotPicksQuickAllCount">0</span>
+            </button>
+            <button type="button" class="bot-picks-quick-view" data-table-view="pending" aria-pressed="false">
+                Pendientes <span id="BotPicksQuickPendingCount">0</span>
+            </button>
+            <button type="button" class="bot-picks-quick-view" data-table-view="resolved" aria-pressed="false">
+                Resueltas <span id="BotPicksQuickResolvedCount">0</span>
+            </button>
+        </div>
+        <span class="bot-picks-table-scope-note">El resumen superior no cambia con este filtro.</span>
+    </div>
+
+    <div id="BotPicksLoading" class="py-5 text-center" role="status" aria-live="polite">
         <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
-        <div class="text-muted small mt-2">Loading bot picks...</div>
+        <div class="text-muted small mt-2">Cargando recomendaciones...</div>
     </div>
 
     <div id="BotPicksEmpty" class="alert alert-light border d-none mb-0">
@@ -210,28 +555,219 @@
         <table class="table table-sm align-middle mb-0 bot-picks-table">
             <thead>
                 <tr>
-                    <th><button type="button" class="table-sort-button" data-sort="matchDate">Fecha</button></th>
-                    <th>Liga</th>
-                    <th>Partido</th>
-                    <th>Bot</th>
-                    <th>Mercado</th>
-                    <th>Pick</th>
-                    <th class="text-end">Cuota</th>
-                    <th class="text-end">Stake plan</th>
-                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="probabilityEdge">Edge</button></th>
-                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="expectedValue">EV</button></th>
-                    <th class="text-end"><button type="button" class="table-sort-button" data-sort="selectionScore">Score</button></th>
-                    <th>Estado</th>
-                    <th class="text-end">P/L</th>
-                    <th class="text-end">Yield</th>
-                    <th>Resultado</th>
-                    <th class="text-end">Detalle</th>
+                    <th scope="col"><button type="button" class="table-sort-button" data-sort="matchDate">Fecha y liga</button></th>
+                    <th scope="col">Partido</th>
+                    <th scope="col">Bot</th>
+                    <th scope="col">Pick</th>
+                    <th scope="col">Indicadores</th>
+                    <th scope="col">Plan</th>
+                    <th scope="col">Estado y retorno</th>
+                    <th scope="col">Liquidar</th>
+                    <th scope="col" class="text-end">Acciones</th>
                 </tr>
             </thead>
             <tbody id="BotPicksTableBody"></tbody>
         </table>
     </div>
+
+    <nav id="BotPicksPagination" class="bot-picks-pagination d-none" aria-label="Paginacion de recomendaciones">
+        <div id="BotPicksPaginationSummary" class="bot-picks-pagination-summary"></div>
+        <div id="BotPicksPaginationButtons" class="bot-picks-pagination-buttons"></div>
+    </nav>
 </section>
+
+<details id="BotPicksDataScience" class="bot-data-science bot-picks-collapsible mt-4" aria-labelledby="BotPicksDataScienceTitle">
+    <summary>
+        <span>
+            <strong>Laboratorio de rendimiento</strong>
+            <small>Análisis exploratorio de todas las recomendaciones visibles</small>
+        </span>
+        <span aria-hidden="true">Abrir</span>
+    </summary>
+    <div class="bot-picks-collapsible-body">
+    <div class="bot-data-science-header">
+        <div>
+            <div class="bot-data-science-eyebrow">Data Science en vivo</div>
+            <h2 id="BotPicksDataScienceTitle">Laboratorio de rendimiento</h2>
+            <p>Analisis descriptivo de las recomendaciones visibles. Se actualiza con los filtros y cada resultado liquidado.</p>
+        </div>
+        <div class="bot-data-science-sample">
+            <span id="BotPicksDsSampleBadge" class="bot-ds-sample-badge">Sin muestra</span>
+            <small id="BotPicksDsScope">0 apuestas resueltas</small>
+        </div>
+    </div>
+
+    <div class="bot-ds-kpi-grid">
+        <article class="bot-ds-kpi">
+            <span>Muestra resuelta</span>
+            <strong id="BotPicksDsSettled">0</strong>
+            <small id="BotPicksDsRecord">0 W / 0 L</small>
+        </article>
+        <article class="bot-ds-kpi">
+            <span>Hit rate</span>
+            <strong id="BotPicksDsHitRate">-</strong>
+            <small id="BotPicksDsBreakeven">Break-even -</small>
+        </article>
+        <article class="bot-ds-kpi bot-ds-kpi-accent">
+            <span>ROI sobre stake</span>
+            <strong id="BotPicksDsRoi">-</strong>
+            <small id="BotPicksDsProfit">P/L -</small>
+        </article>
+        <article class="bot-ds-kpi">
+            <span>Edge medio</span>
+            <strong id="BotPicksDsAvgEdge">-</strong>
+            <small id="BotPicksDsCalibration">Prob. modelo vs real -</small>
+        </article>
+        <article class="bot-ds-kpi">
+            <span>Mejor segmento</span>
+            <strong id="BotPicksDsBestSegment">-</strong>
+            <small id="BotPicksDsBestSegmentDetail">Esperando resultados</small>
+        </article>
+    </div>
+
+    <div class="bot-ds-insight" id="BotPicksDsInsight">
+        Liquida apuestas para comenzar a detectar patrones.
+    </div>
+
+    <div class="bot-ds-breakdown-grid">
+        <article class="bot-ds-card">
+            <div class="bot-ds-card-heading">
+                <div>
+                    <h3>Edge vs resultado</h3>
+                    <p>Comprueba si un edge mayor realmente mejora el retorno.</p>
+                </div>
+                <span>Bandas</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm bot-ds-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Edge</th>
+                            <th class="text-end">N</th>
+                            <th class="text-end">Hit</th>
+                            <th class="text-end">ROI</th>
+                            <th class="text-end">P/L 1u</th>
+                        </tr>
+                    </thead>
+                    <tbody id="BotPicksDsEdgeBody"></tbody>
+                </table>
+            </div>
+        </article>
+
+        <article class="bot-ds-card">
+            <div class="bot-ds-card-heading">
+                <div>
+                    <h3>Cuota vs resultado</h3>
+                    <p>Retorno normalizado a una unidad por recomendacion.</p>
+                </div>
+                <span>Riesgo</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm bot-ds-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Cuota</th>
+                            <th class="text-end">N</th>
+                            <th class="text-end">Hit</th>
+                            <th class="text-end">ROI</th>
+                            <th class="text-end">P/L 1u</th>
+                        </tr>
+                    </thead>
+                    <tbody id="BotPicksDsOddsBody"></tbody>
+                </table>
+            </div>
+        </article>
+    </div>
+
+    <article class="bot-ds-card bot-ds-segments-card">
+        <div class="bot-ds-card-heading">
+            <div>
+                <h3>Mapa de segmentos</h3>
+                <p>Bot, plan productivo, mercado y casa de apuesta ordenados por ROI. Minimo sugerido: 10 apuestas.</p>
+            </div>
+            <span id="BotPicksDsSegmentCount">0 segmentos</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm bot-ds-table bot-ds-segment-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Dimension</th>
+                        <th>Segmento</th>
+                        <th class="text-end">N</th>
+                        <th class="text-end">W / L</th>
+                        <th class="text-end">Cuota media</th>
+                        <th class="text-end">Edge medio</th>
+                        <th class="text-end">Hit</th>
+                        <th class="text-end">ROI 1u</th>
+                        <th>Lectura</th>
+                    </tr>
+                </thead>
+                <tbody id="BotPicksDsSegmentsBody"></tbody>
+            </table>
+        </div>
+    </article>
+
+    <article class="bot-ds-card bot-ds-leagues-card">
+        <div class="bot-ds-card-heading bot-ds-leagues-heading">
+            <div>
+                <h3>Rendimiento por liga</h3>
+                <p>Todas las ligas del periodo visible. Mejor y peor se priorizan con al menos 10 apuestas resueltas.</p>
+            </div>
+            <span id="BotPicksDsLeagueCount">0 ligas</span>
+        </div>
+        <div class="bot-ds-league-extremes">
+            <div class="bot-ds-league-extreme is-best">
+                <span>Mejor liga</span>
+                <strong id="BotPicksDsBestLeague">-</strong>
+                <small id="BotPicksDsBestLeagueDetail">Esperando resultados</small>
+            </div>
+            <div class="bot-ds-league-extreme is-worst">
+                <span>Liga a revisar</span>
+                <strong id="BotPicksDsWorstLeague">-</strong>
+                <small id="BotPicksDsWorstLeagueDetail">Esperando resultados</small>
+            </div>
+            <div class="bot-ds-league-controls">
+                <label>
+                    <span>Buscar liga</span>
+                    <input id="BotPicksDsLeagueSearch" class="form-control form-control-sm" type="search" placeholder="Nombre de liga" autocomplete="off">
+                </label>
+                <label>
+                    <span>Ordenar por</span>
+                    <select id="BotPicksDsLeagueSort" class="form-select form-select-sm">
+                        <option value="roi-desc">Mayor ROI</option>
+                        <option value="roi-asc">Menor ROI</option>
+                        <option value="profit-desc">Mayor P/L</option>
+                        <option value="sample-desc">Mayor muestra</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        <div class="table-responsive bot-ds-league-table-wrap">
+            <table class="table table-sm bot-ds-table bot-ds-league-table mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-end">#</th>
+                        <th>Liga</th>
+                        <th class="text-end">N</th>
+                        <th class="text-end">W / L</th>
+                        <th class="text-end">Hit</th>
+                        <th class="text-end">Cuota</th>
+                        <th class="text-end">Edge</th>
+                        <th class="text-end">P/L 1u</th>
+                        <th class="text-end">ROI 1u</th>
+                        <th>Lectura</th>
+                    </tr>
+                </thead>
+                <tbody id="BotPicksDsLeaguesBody"></tbody>
+            </table>
+        </div>
+    </article>
+
+    <p class="bot-ds-disclaimer mb-0">
+        El rendimiento historico no garantiza resultados futuros. Las conclusiones con menos de 30 apuestas son exploratorias.
+    </p>
+    </div>
+</details>
 
 <div class="modal fade" id="BotPickDetailModal" tabindex="-1" aria-labelledby="BotPickDetailModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -241,12 +777,12 @@
                     <h2 class="modal-title h5" id="BotPickDetailModalLabel">Detalle recomendacion</h2>
                     <div id="BotPickDetailSubtitle" class="text-muted small"></div>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
             </div>
             <div id="BotPickDetailBody" class="modal-body"></div>
             <div class="modal-footer">
-                <a id="BotPickSourceLink" class="btn btn-outline-secondary d-none" href="#" target="_blank" rel="noopener noreferrer">Source</a>
-                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+                <a id="BotPickSourceLink" class="btn btn-outline-secondary d-none" href="#" target="_blank" rel="noopener noreferrer">Fuente</a>
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Cerrar</button>
             </div>
         </div>
     </div>
@@ -256,49 +792,131 @@
     <script>
 		        (() => {
 		            const endpointUrl = '@Url.Action("Selections", "BotPicks")';
+                    const monthlyHistoryUrl = '@Url.Action("MonthlyHistory", "BotPicks", new { marketFamily })';
 		            const statusEndpointUrl = '@Url.Action("Status", "BotPicks")';
+		            const resolveEndpointUrl = '@Url.Action("Resolve", "BotPicks")';
+		            const settlePendingEndpointUrl = '@Url.Action("SettlePending", "BotPicks")';
+		            const reconcileAvailableEndpointUrl = '@Url.Action("ReconcileAvailable", "BotPicks")';
+		            const deleteEndpointUrl = '@Url.Action("Delete", "BotPicks")';
 		            const canUpdateResults = @(canUpdateResults ? "true" : "false");
 		            const locale = '@language' === 'es' ? 'es-CL' : 'en-US';
+                    const marketFamily = '@marketFamily';
+                    const marketUnitLabel = '@Model.Market.UnitLabel';
+            const storagePrefix = `bot-picks-${marketFamily}`;
 	            const filtersForm = document.getElementById('BotPicksFilters');
+                const antiforgeryToken = filtersForm.querySelector('input[name="__RequestVerificationToken"]')?.value ?? '';
+                const jsonHeaders = () => ({
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': antiforgeryToken
+                });
 	            const initialBankrollInput = document.getElementById('BotPicksInitialBankroll');
+                const betCurrencySelect = document.getElementById('BotPicksBetCurrency');
+                const flatBetStakeInput = document.getElementById('BotPicksFlatBetStake');
 	            const dateFromInput = document.getElementById('DateFrom');
             const dateToInput = document.getElementById('DateTo');
+            const monthInput = document.getElementById('BotPicksMonth');
+            const botCHistoricalPendingButton = document.getElementById('BotPicksBotCHistoricalPending');
+            const previousMonthButton = document.getElementById('BotPicksPreviousMonth');
+            const currentMonthButton = document.getElementById('BotPicksCurrentMonth');
+            const nextMonthButton = document.getElementById('BotPicksNextMonth');
             const statusSelect = document.getElementById('Status');
+            const bookmakerSelect = document.getElementById('Bookmaker');
             const marketTypeSelect = document.getElementById('MarketType');
             const leagueInput = document.getElementById('League');
             const searchInput = document.getElementById('SearchText');
+            const strategyPlanSelect = document.getElementById('StrategyPlan');
+            const tableBotSelect = document.getElementById('BotPicksTableBot');
+            const tableViewButtons = Array.from(document.querySelectorAll('[data-table-view]'));
             const refreshButton = document.getElementById('RefreshBotPicksButton');
+            const settleLocalButton = document.getElementById('SettleLocalBotPicksButton');
+            const settlePendingButton = document.getElementById('SettlePendingBotPicksButton');
             const loadingState = document.getElementById('BotPicksLoading');
             const emptyState = document.getElementById('BotPicksEmpty');
             const tableWrap = document.getElementById('BotPicksTableWrap');
             const tableBody = document.getElementById('BotPicksTableBody');
             const errorState = document.getElementById('BotPicksError');
+            const settlementResultState = document.getElementById('BotPicksSettlementResult');
             const visibleCount = document.getElementById('BotPicksVisibleCount');
             const sortState = document.getElementById('BotPicksSortState');
             const tableTitle = document.getElementById('BotPicksTableTitle');
+            const pagination = document.getElementById('BotPicksPagination');
+            const paginationSummary = document.getElementById('BotPicksPaginationSummary');
+            const paginationButtons = document.getElementById('BotPicksPaginationButtons');
             const botTabButtons = Array.from(document.querySelectorAll('[data-bot-tab]'));
+            const comparisonCards = Array.from(document.querySelectorAll('[data-summary-bot]'));
             const detailModalElement = document.getElementById('BotPickDetailModal');
             const detailModal = bootstrap.Modal.getOrCreateInstance(detailModalElement);
             const detailSubtitle = document.getElementById('BotPickDetailSubtitle');
             const detailBody = document.getElementById('BotPickDetailBody');
             const sourceLink = document.getElementById('BotPickSourceLink');
+            const monthlyHistoryLoading = document.getElementById('BotPicksMonthlyHistoryLoading');
+            const monthlyHistoryEmpty = document.getElementById('BotPicksMonthlyHistoryEmpty');
+            const monthlyHistoryWrap = document.getElementById('BotPicksMonthlyHistoryWrap');
+            const monthlyHistoryBody = document.getElementById('BotPicksMonthlyHistoryBody');
+            const summaryPeriod = document.getElementById('BotPicksSummaryPeriod');
+            const bankrollChart = document.getElementById('BotPicksBankrollChart');
+            const bankrollChartWrap = document.getElementById('BotPicksBankrollChartWrap');
+            const bankrollChartEmpty = document.getElementById('BotPicksBankrollChartEmpty');
+            const chartRecommendedValue = document.getElementById('BotPicksChartRecommendedValue');
+            const chartAllValue = document.getElementById('BotPicksChartAllValue');
+            const leaguePerformanceSearch = document.getElementById('BotPicksDsLeagueSearch');
+            const leaguePerformanceSort = document.getElementById('BotPicksDsLeagueSort');
+            const productionPlanSection = document.getElementById('BotPicksProductionPlan');
+            const perBotSummarySection = document.getElementById('BotPicksPerBotSummary');
+            const selectBotSummaryNotice = document.getElementById('BotPicksSelectBotSummary');
+            const summaryTitle = document.getElementById('BotPicksSummaryTitle');
+            const summaryScope = document.getElementById('BotPicksSummaryScope');
+            const bankrollChartTitle = document.getElementById('BotPicksBankrollChartTitle');
+            const summarySample = document.getElementById('BotPicksSummarySample');
+            const botContextTitle = document.getElementById('BotPicksBotContextTitle');
+            const botContextText = document.getElementById('BotPicksBotContextText');
+            const botContextSample = document.getElementById('BotPicksBotContextSample');
             const selectionsById = new Map();
+            const productionPlansById = new Map();
+            const summaryProductionPlansById = new Map();
 
             let selections = [];
             let filteredSelections = [];
+            let tableSelections = [];
+            let monthlyHistoryItems = [];
+            const pageSize = 20;
+            let currentPage = 1;
 	            let sortField = 'matchDate';
 	            let sortDirection = 'asc';
-            let activeBotTab = localStorage.getItem('bot-picks-active-tab') ?? '';
-	            let requestController;
+            let activeBotTab = localStorage.getItem(`${storagePrefix}-active-tab`) ?? 'C';
+            let tableBotKey = localStorage.getItem(`${storagePrefix}-table-bot`) ?? '';
+            let tableView = localStorage.getItem(`${storagePrefix}-table-view`) ?? 'all';
+            let leaguePerformanceItems = [];
+		            let requestController;
 
-            if (!['', 'A', 'B', 'Legacy'].includes(activeBotTab)) {
-                activeBotTab = '';
+            if (!['', 'A', 'B', 'C', 'D', 'E', 'F', 'Legacy'].includes(activeBotTab)) {
+                activeBotTab = 'C';
             }
 
-	            const savedInitialBankroll = localStorage.getItem('bot-picks-initial-bankroll');
+            if (!['', 'A', 'B', 'C', 'D', 'E', 'F', 'Legacy'].includes(tableBotKey)) {
+                tableBotKey = '';
+            }
+
+            if (!['all', 'pending', 'resolved'].includes(tableView)) {
+                tableView = 'all';
+            }
+
+            tableBotSelect.value = tableBotKey;
+
+	            const savedInitialBankroll = localStorage.getItem(`${storagePrefix}-initial-bankroll`);
 	            if (savedInitialBankroll && Number.isFinite(Number(savedInitialBankroll))) {
 	                initialBankrollInput.value = savedInitialBankroll;
 	            }
+
+            const savedBetCurrency = localStorage.getItem('bot-picks-bet-currency');
+            if (['CLP', 'USD', 'AUD'].includes(savedBetCurrency)) {
+                betCurrencySelect.value = savedBetCurrency;
+            }
+
+            const savedFlatBetStake = Number(localStorage.getItem('bot-picks-flat-bet-stake'));
+            if (Number.isFinite(savedFlatBetStake) && savedFlatBetStake > 0) {
+                flatBetStakeInput.value = String(savedFlatBetStake);
+            }
 
             const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
             const number = value => {
@@ -330,12 +948,39 @@
             const getBotInfo = item => {
                 const version = String(getValue(item, 'AutomationVersion') ?? '').trim();
                 const normalizedVersion = version.toUpperCase();
-                if (normalizedVersion.endsWith('-A')) {
+                const decision = getDecisionReason(item);
+                const decisionBotKey = String(decision?.botProfile ?? '').toUpperCase();
+                if (normalizedVersion.endsWith('-A') || decisionBotKey === 'A') {
                     return { key: 'A', statsKey: 'A', label: 'Bot A', description: 'Actual', badgeClass: 'bot-badge-a' };
                 }
 
-                if (normalizedVersion.endsWith('-B')) {
+                if (normalizedVersion.endsWith('-B') || decisionBotKey === 'B') {
                     return { key: 'B', statsKey: 'B', label: 'Bot B', description: 'Conservador', badgeClass: 'bot-badge-b' };
+                }
+
+                if (normalizedVersion.endsWith('-C2026') || ['C', 'C2026'].includes(decisionBotKey)) {
+                    return { key: 'C', statsKey: 'C', label: 'Bot C', description: 'Modelos 2026', badgeClass: 'bot-badge-c' };
+                }
+
+                if (normalizedVersion.endsWith('-D2026') || ['D', 'D2026'].includes(decisionBotKey)) {
+                    return { key: 'D', statsKey: 'D', label: 'Bot D', description: 'Brecha de nivel', badgeClass: 'bot-badge-d' };
+                }
+
+                if (normalizedVersion.endsWith('-E2026') || ['E', 'E2026'].includes(decisionBotKey)) {
+                    return { key: 'E', statsKey: 'E', label: 'Bot E', description: 'Calibración empírica', badgeClass: 'bot-badge-e' };
+                }
+                if (normalizedVersion.endsWith('-F2026') || ['F', 'F2026'].includes(decisionBotKey)) {
+                    return { key: 'F', statsKey: 'F', label: 'Bot F', description: 'Legacy ML calibrado', badgeClass: 'bot-badge-f' };
+                }
+
+                if (decision?.botProfile) {
+                    return {
+                        key: 'Legacy',
+                        statsKey: 'Legacy',
+                        label: decision.displayName || decision.botProfile,
+                        description: `Personalizado · ${decision.botProfile}`,
+                        badgeClass: 'bot-badge-legacy'
+                    };
                 }
 
                 return { key: 'Legacy', statsKey: 'Legacy', label: 'Legacy', description: version || 'Sin version', badgeClass: 'bot-badge-legacy' };
@@ -416,22 +1061,20 @@
 	                const normalized = String(status ?? '').toLowerCase();
 	                if (normalized === 'won') return 'bot-pick-row-won';
 	                if (normalized === 'lost') return 'bot-pick-row-lost';
-	                if (normalized === 'void') return 'bot-pick-row-void';
+	                if (normalized === 'push' || normalized === 'void') return 'bot-pick-row-void';
 	                return 'bot-pick-row-pending';
 	            };
 
-	            const confidenceStakeUnits = confidence => {
-	                const normalized = String(confidence ?? '').trim().toLowerCase().replaceAll('_', ' ');
-	                if (normalized === 'very high') return 2;
-	                if (normalized === 'high') return 1.5;
-	                if (normalized === 'low') return 0.5;
-	                return 1;
-	            };
+		            const simulatedProfitLoss = (item, stakeUnits) => {
+		                const status = String(getValue(item, 'Status') ?? '').toLowerCase();
+		                const odds = number(getValue(item, 'Odds'));
+		                const storedProfit = number(getValue(item, 'ProfitLoss'));
+		                const storedStake = number(getValue(item, 'Stake'));
+		                if (['won', 'lost', 'push'].includes(status) && storedProfit !== null && storedStake !== null && storedStake > 0) {
+		                    return (storedProfit / storedStake) * stakeUnits;
+		                }
 
-	            const simulatedProfitLoss = (item, stakeUnits) => {
-	                const status = String(getValue(item, 'Status') ?? '').toLowerCase();
-	                const odds = number(getValue(item, 'Odds'));
-	                if (status === 'won' && odds !== null) {
+		                if (status === 'won' && odds !== null) {
 	                    return stakeUnits * (odds - 1);
 	                }
 
@@ -446,7 +1089,7 @@
                 const normalized = String(status ?? '').toLowerCase();
                 if (normalized === 'won') return 'text-bg-success';
                 if (normalized === 'lost') return 'text-bg-danger';
-                if (normalized === 'void') return 'text-bg-secondary';
+                if (normalized === 'push' || normalized === 'void') return 'text-bg-secondary';
                 if (normalized === 'pending') return 'text-bg-warning';
                 return 'text-bg-light';
             };
@@ -464,7 +1107,58 @@
                 const normalized = String(marketType ?? '');
                 if (normalized === 'HomeTeamCorners') return 'Corners local';
                 if (normalized === 'AwayTeamCorners') return 'Corners visita';
+                if (normalized === 'HomeTeamGoals') return 'Goles local';
+                if (normalized === 'AwayTeamGoals') return 'Goles visita';
+                if (normalized === 'TotalGoals') return 'Goles totales';
+                if (normalized === 'HomeTeamShots') return 'Tiros local';
+                if (normalized === 'AwayTeamShots') return 'Tiros visita';
+                if (normalized === 'TotalShots') return 'Tiros totales';
+                if (normalized === 'HomeTeamShotsOnGoal') return 'Tiros al arco local';
+                if (normalized === 'AwayTeamShotsOnGoal') return 'Tiros al arco visita';
+                if (normalized === 'TotalShotsOnGoal') return 'Tiros al arco totales';
                 return 'Corners totales';
+            };
+
+            const actualResultValue = item => {
+                const marketType = String(getValue(item, 'MarketType') ?? '');
+                if (['HomeTeamCorners', 'HomeTeamGoals', 'HomeTeamShots', 'HomeTeamShotsOnGoal'].includes(marketType)) {
+                    return number(getValue(item, 'ActualHomeCorners'));
+                }
+
+                if (['AwayTeamCorners', 'AwayTeamGoals', 'AwayTeamShots', 'AwayTeamShotsOnGoal'].includes(marketType)) {
+                    return number(getValue(item, 'ActualAwayCorners'));
+                }
+
+                return number(getValue(item, 'ActualTotalCorners'));
+            };
+
+            const settlementOutcomeLabel = item => {
+                const status = String(getValue(item, 'Status') ?? '').toLowerCase();
+                const actual = actualResultValue(item);
+                const profitLoss = number(getValue(item, 'ProfitLoss'));
+                const stake = number(getValue(item, 'Stake'));
+                const odds = number(getValue(item, 'Odds'));
+
+                if (status === 'pending') return 'Pendiente';
+                if (status === 'push') return 'Push · apuesta devuelta';
+                if (status === 'void') return actual === null ? 'Anulada' : 'Devuelta';
+
+                if (status === 'won') {
+                    const fullWin = stake !== null && odds !== null
+                        ? Math.round(stake * (odds - 1) * 100) / 100
+                        : null;
+                    return profitLoss !== null && fullWin !== null && profitLoss < fullWin - 0.01
+                        ? 'Media ganancia'
+                        : 'Ganada completa';
+                }
+
+                if (status === 'lost') {
+                    return profitLoss !== null && stake !== null && Math.abs(profitLoss) < stake - 0.01
+                        ? 'Media pérdida'
+                        : 'Perdida completa';
+                }
+
+                return getValue(item, 'Status') ?? '-';
             };
 
 	            const confidenceBadgeClass = confidence => {
@@ -479,6 +1173,520 @@
             const getLeague = item => getValue(item, 'StandardizedLeague') || getValue(item, 'League') || '-';
             const getHomeTeam = item => getValue(item, 'StandardizedHomeTeam') || getValue(item, 'HomeTeam') || '-';
             const getAwayTeam = item => getValue(item, 'StandardizedAwayTeam') || getValue(item, 'AwayTeam') || '-';
+            const normalizePlanKey = value => String(value ?? '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, ' ')
+                .trim();
+            const canonicalLeagueLabel = item => {
+                const league = getLeague(item);
+                const aliases = {
+                    'brasil brasileirao serie b': 'Brazil - Serie B',
+                    'brazil serie b': 'Brazil - Serie B',
+                    'conmebol copa sudamericana': 'Copa Sudamericana',
+                    'copa sudamericana': 'Copa Sudamericana',
+                    'ecuador liga pro serie a': 'Ecuador - Serie A',
+                    'ecuador serie a': 'Ecuador - Serie A',
+                    'mexico liga mx': 'México - Liga MX',
+                    'noruega eliteserien': 'Norway - Eliteserien',
+                    'norway eliteserien': 'Norway - Eliteserien',
+                    'conference league clasificacion': 'UEFA Conference League - Clasificación',
+                    'europa league clasificacion': 'UEFA Europa League - Clasificación',
+                    'uefa europa league qualifiers': 'UEFA Europa League - Clasificación'
+                };
+                return aliases[normalizePlanKey(league)] || league;
+            };
+            const productionMatchKey = item => [
+                String(getValue(item, 'MatchDate') ?? '').slice(0, 16),
+                normalizePlanKey(getHomeTeam(item)),
+                normalizePlanKey(getAwayTeam(item))
+            ].join('|');
+            const productionSignalKey = item => [
+                productionMatchKey(item),
+                getValue(item, 'MarketType'),
+                getValue(item, 'SelectedSide'),
+                formatQueryNumber(getValue(item, 'LineValue'), 2)
+            ].join('|');
+
+            const monitoringReason = item => {
+                const source = String(getValue(item, 'Source') ?? '');
+                const normalizedSource = source.trim().toLowerCase();
+                const marketType = String(getValue(item, 'MarketType') ?? '');
+                const odds = number(getValue(item, 'Odds'));
+
+                if (canonicalLeagueLabel(item) === 'Brazil - Serie B') {
+                    return 'Brasil Serie B bloqueada por inestabilidad';
+                }
+
+                if (!['pinnacle', 'betano'].includes(normalizedSource)) {
+                    return `${source || 'Casa desconocida'} queda en monitoreo`;
+                }
+
+                if (marketFamily !== 'corners') {
+                    if (odds === null || odds < 1.6) {
+                        return 'Cuota menor a 1.60';
+                    }
+
+                    return null;
+                }
+
+                if (marketType === 'TotalCorners') {
+                    return 'Corners totales queda en monitoreo';
+                }
+
+                if (!['HomeTeamCorners', 'AwayTeamCorners'].includes(marketType)) {
+                    return 'Mercado fuera del plan productivo';
+                }
+
+                if (odds === null || odds < 1.6) {
+                    return 'Cuota menor a 1.60';
+                }
+
+                return null;
+            };
+
+            const buildProductionPlans = (items, planMap = productionPlansById) => {
+                planMap.clear();
+                const eligibleByMatch = new Map();
+
+                items.forEach(item => {
+                    const id = String(getValue(item, 'AutomatedCornerBetSelectionId'));
+                    const reason = monitoringReason(item);
+                    planMap.set(id, {
+                        key: 'monitor',
+                        stakeUnits: 0,
+                        label: 'Monitoreo',
+                        reason: reason ?? 'Otra señal fue priorizada para este partido',
+                        rowClass: 'bot-production-monitor'
+                    });
+
+                    if (reason !== null) {
+                        return;
+                    }
+
+                    const key = productionMatchKey(item);
+                    if (!eligibleByMatch.has(key)) {
+                        eligibleByMatch.set(key, []);
+                    }
+                    eligibleByMatch.get(key).push(item);
+                });
+
+                const botPriority = item => {
+                    const botKey = getBotInfo(item).key;
+                    return botKey === 'A' ? 4 : botKey === 'C' ? 3 : botKey === 'B' ? 2 : 1;
+                };
+                const marketPriority = item =>
+                    getValue(item, 'MarketType') === 'HomeTeamCorners' ? 2 : 1;
+
+                eligibleByMatch.forEach(candidates => {
+                    candidates.sort((left, right) =>
+                        marketPriority(right) - marketPriority(left) ||
+                        (number(getValue(right, 'SelectionScore')) ?? 0) -
+                            (number(getValue(left, 'SelectionScore')) ?? 0) ||
+                        (number(getValue(right, 'Odds')) ?? 0) -
+                            (number(getValue(left, 'Odds')) ?? 0) ||
+                        botPriority(right) - botPriority(left));
+
+                    const selected = candidates[0];
+                    const selectedId = String(getValue(selected, 'AutomatedCornerBetSelectionId'));
+                    const isHomeMarket = getValue(selected, 'MarketType') === 'HomeTeamCorners';
+                    const primaryStakeUnits = marketFamily === 'corners' ? (isHomeMarket ? 1 : 0.5) : 1;
+                    const selectedSource = String(getValue(selected, 'Source') ?? '').trim() || 'Casa';
+                    const selectedSignalKey = productionSignalKey(selected);
+                    const consensusBots = [...new Set(
+                        candidates
+                            .filter(item => productionSignalKey(item) === selectedSignalKey)
+                            .map(item => getBotInfo(item).key)
+                            .filter(key => key !== 'Legacy'))]
+                        .sort();
+                    const consensusText = consensusBots.length > 1
+                        ? ` Consenso ${consensusBots.join('+')}.`
+                        : '';
+
+                    planMap.set(selectedId, {
+                        key: primaryStakeUnits === 1 ? 'stake-1' : 'stake-half',
+                        stakeUnits: primaryStakeUnits,
+                        label: primaryStakeUnits === 1 ? 'Apostar 1u' : 'Apostar 0.5u',
+                        reason: `${selectedSource} ${marketLabel(getValue(selected, 'MarketType')).toLowerCase()}.${consensusText}`,
+                        rowClass: primaryStakeUnits === 1
+                            ? 'bot-production-primary'
+                            : 'bot-production-secondary'
+                    });
+
+                    candidates.slice(1).forEach(item => {
+                        const id = String(getValue(item, 'AutomatedCornerBetSelectionId'));
+                        const isDuplicate = productionSignalKey(item) === selectedSignalKey;
+                        planMap.set(id, {
+                            key: 'monitor',
+                            stakeUnits: 0,
+                            label: 'Monitoreo',
+                            reason: isDuplicate
+                                ? `Duplicado de la señal seleccionada (${getBotInfo(selected).label})`
+                                : `Otra señal fue priorizada: ${marketLabel(getValue(selected, 'MarketType'))}`,
+                            rowClass: 'bot-production-monitor'
+                        });
+                    });
+                });
+            };
+
+            const getProductionPlan = item =>
+                productionPlansById.get(String(getValue(item, 'AutomatedCornerBetSelectionId'))) ?? {
+                    key: 'monitor',
+                    stakeUnits: 0,
+                    label: 'Monitoreo',
+                    reason: 'Sin clasificación productiva',
+                    rowClass: 'bot-production-monitor'
+                };
+
+            const getSummaryProductionPlan = item =>
+                summaryProductionPlansById.get(String(getValue(item, 'AutomatedCornerBetSelectionId'))) ?? {
+                    key: 'monitor',
+                    stakeUnits: 0,
+                    label: 'Monitoreo',
+                    reason: 'Sin clasificación productiva para el bot activo',
+                    rowClass: 'bot-production-monitor'
+                };
+
+            const updateProductionPlanSummary = items => {
+                const pendingItems = items.filter(item =>
+                    String(getValue(item, 'Status') ?? '').toLowerCase() === 'pending' &&
+                    new Date(getValue(item, 'MatchDate')).getTime() > Date.now());
+                const plans = pendingItems.map(getSummaryProductionPlan);
+                document.getElementById('BotPicksPlanOneUnit').textContent =
+                    plans.filter(plan => plan.key === 'stake-1').length.toString();
+                document.getElementById('BotPicksPlanHalfUnit').textContent =
+                    plans.filter(plan => plan.key === 'stake-half').length.toString();
+                document.getElementById('BotPicksPlanMonitoring').textContent =
+                    plans.filter(plan => plan.key === 'monitor').length.toString();
+            };
+
+            const ratioValue = value => {
+                const parsed = number(value);
+                if (parsed === null) {
+                    return null;
+                }
+
+                return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
+            };
+
+            const settledStatus = item =>
+                ['won', 'lost', 'push'].includes(String(getValue(item, 'Status') ?? '').toLowerCase());
+
+            const normalizedUnitProfit = item => {
+                const status = String(getValue(item, 'Status') ?? '').toLowerCase();
+                const odds = number(getValue(item, 'Odds'));
+                const storedProfit = number(getValue(item, 'ProfitLoss'));
+                const storedStake = number(getValue(item, 'Stake'));
+                if (['won', 'lost', 'push'].includes(status) && storedProfit !== null && storedStake !== null && storedStake > 0) {
+                    return storedProfit / storedStake;
+                }
+
+                if (status === 'won' && odds !== null) {
+                    return odds - 1;
+                }
+
+                return status === 'lost' ? -1 : 0;
+            };
+
+            const performanceOf = items => {
+                const settled = items.filter(settledStatus);
+                const won = settled.filter(item =>
+                    String(getValue(item, 'Status')).toLowerCase() === 'won').length;
+                const lost = settled.filter(item =>
+                    String(getValue(item, 'Status')).toLowerCase() === 'lost').length;
+                const push = settled.length - won - lost;
+                const decisive = won + lost;
+                const unitProfit = settled.reduce((sum, item) => sum + normalizedUnitProfit(item), 0);
+                const actualStake = settled.reduce(
+                    (sum, item) => sum + (number(getValue(item, 'Stake')) ?? 0),
+                    0);
+                const actualProfit = settled.reduce((sum, item) => {
+                    const stored = number(getValue(item, 'ProfitLoss'));
+                    const stake = number(getValue(item, 'Stake')) ?? 1;
+                    return sum + (stored ?? normalizedUnitProfit(item) * stake);
+                }, 0);
+                const odds = settled
+                    .map(item => number(getValue(item, 'Odds')))
+                    .filter(value => value !== null);
+                const edges = settled
+                    .map(item => ratioValue(getValue(item, 'ProbabilityEdge')))
+                    .filter(value => value !== null);
+                const modelProbabilities = settled
+                    .map(item => ratioValue(getValue(item, 'ModelProbability')))
+                    .filter(value => value !== null);
+
+                return {
+                    items: settled,
+                    count: settled.length,
+                    won,
+                    lost,
+                    push,
+                    hitRate: decisive > 0 ? won / decisive : null,
+                    unitProfit,
+                    unitRoi: settled.length > 0 ? unitProfit / settled.length : null,
+                    actualStake,
+                    actualProfit,
+                    actualRoi: actualStake > 0 ? actualProfit / actualStake : null,
+                    avgOdds: odds.length > 0 ? odds.reduce((sum, value) => sum + value, 0) / odds.length : null,
+                    avgEdge: edges.length > 0 ? edges.reduce((sum, value) => sum + value, 0) / edges.length : null,
+                    avgModelProbability: modelProbabilities.length > 0
+                        ? modelProbabilities.reduce((sum, value) => sum + value, 0) / modelProbabilities.length
+                        : null
+                };
+            };
+
+            const sampleLabel = count => {
+                if (count >= 100) return { label: 'Muestra fuerte', className: 'is-strong' };
+                if (count >= 30) return { label: 'Muestra en desarrollo', className: 'is-developing' };
+                if (count > 0) return { label: 'Muestra exploratoria', className: 'is-early' };
+                return { label: 'Sin muestra', className: '' };
+            };
+
+            const dataScienceGroup = (dimension, label, items) => ({
+                dimension,
+                label,
+                performance: performanceOf(items)
+            });
+
+            const groupBy = (items, dimension, labelSelector) => {
+                const groups = new Map();
+                items.forEach(item => {
+                    const label = labelSelector(item) || 'Sin dato';
+                    if (!groups.has(label)) {
+                        groups.set(label, []);
+                    }
+                    groups.get(label).push(item);
+                });
+
+                return Array.from(groups, ([label, groupItems]) =>
+                    dataScienceGroup(dimension, label, groupItems));
+            };
+
+            const bucketGroups = (items, dimension, buckets, valueSelector) =>
+                buckets.map(bucket => dataScienceGroup(
+                    dimension,
+                    bucket.label,
+                    items.filter(item => {
+                        const value = valueSelector(item);
+                        return value !== null && value >= bucket.min && value < bucket.max;
+                    })));
+
+            const renderDataScienceBandRows = (bodyId, groups) => {
+                const body = document.getElementById(bodyId);
+                body.innerHTML = groups.map(group => {
+                    const stats = group.performance;
+                    return `
+                        <tr>
+                            <td class="fw-semibold">${escapeHtml(group.label)}</td>
+                            <td class="text-end">${stats.count}</td>
+                            <td class="text-end">${stats.hitRate === null ? '-' : escapeHtml(formatPercent(stats.hitRate))}</td>
+                            <td class="text-end ${signedClass(stats.unitRoi)}">${stats.unitRoi === null ? '-' : escapeHtml(formatPercent(stats.unitRoi))}</td>
+                            <td class="text-end ${signedClass(stats.unitProfit)}">${stats.count === 0 ? '-' : escapeHtml(formatDecimal(stats.unitProfit))}</td>
+                        </tr>
+                    `;
+                }).join('');
+            };
+
+            const renderLeaguePerformance = items => {
+                leaguePerformanceItems = items;
+                const groups = groupBy(items, 'Liga', canonicalLeagueLabel)
+                    .filter(group => group.performance.count > 0);
+                const reliableGroups = groups.filter(group => group.performance.count >= 10);
+                const comparisonGroups = reliableGroups.length > 0 ? reliableGroups : groups;
+                const byRoiDescending = [...comparisonGroups].sort((left, right) =>
+                    (right.performance.unitRoi ?? Number.NEGATIVE_INFINITY) -
+                    (left.performance.unitRoi ?? Number.NEGATIVE_INFINITY) ||
+                    right.performance.count - left.performance.count);
+                const bestLeague = byRoiDescending[0] ?? null;
+                const worstLeague = byRoiDescending.at(-1) ?? null;
+                const reliabilityText = reliableGroups.length > 0 ? 'muestra 10+' : 'muestra exploratoria';
+
+                document.getElementById('BotPicksDsLeagueCount').textContent =
+                    `${groups.length} ${groups.length === 1 ? 'liga' : 'ligas'}`;
+                document.getElementById('BotPicksDsBestLeague').textContent = bestLeague?.label ?? '-';
+                document.getElementById('BotPicksDsBestLeagueDetail').textContent = bestLeague
+                    ? `${bestLeague.performance.count} apuestas · ROI ${formatPercent(bestLeague.performance.unitRoi)} · ${reliabilityText}`
+                    : 'Esperando resultados';
+                document.getElementById('BotPicksDsWorstLeague').textContent = worstLeague?.label ?? '-';
+                document.getElementById('BotPicksDsWorstLeagueDetail').textContent = worstLeague
+                    ? `${worstLeague.performance.count} apuestas · ROI ${formatPercent(worstLeague.performance.unitRoi)} · ${reliabilityText}`
+                    : 'Esperando resultados';
+
+                const searchTerm = normalizePlanKey(leaguePerformanceSearch.value);
+                const sortMode = leaguePerformanceSort.value;
+                const visibleGroups = groups
+                    .filter(group => !searchTerm || normalizePlanKey(group.label).includes(searchTerm))
+                    .sort((left, right) => {
+                        if (sortMode === 'roi-asc') {
+                            return (left.performance.unitRoi ?? Number.POSITIVE_INFINITY) -
+                                (right.performance.unitRoi ?? Number.POSITIVE_INFINITY) ||
+                                right.performance.count - left.performance.count;
+                        }
+                        if (sortMode === 'profit-desc') {
+                            return right.performance.unitProfit - left.performance.unitProfit ||
+                                right.performance.count - left.performance.count;
+                        }
+                        if (sortMode === 'sample-desc') {
+                            return right.performance.count - left.performance.count ||
+                                (right.performance.unitRoi ?? Number.NEGATIVE_INFINITY) -
+                                    (left.performance.unitRoi ?? Number.NEGATIVE_INFINITY);
+                        }
+                        return (right.performance.unitRoi ?? Number.NEGATIVE_INFINITY) -
+                            (left.performance.unitRoi ?? Number.NEGATIVE_INFINITY) ||
+                            right.performance.count - left.performance.count;
+                    });
+
+                const body = document.getElementById('BotPicksDsLeaguesBody');
+                body.innerHTML = visibleGroups.length === 0
+                    ? '<tr><td colspan="10" class="text-center text-muted py-4">No hay ligas con resultados para este filtro.</td></tr>'
+                    : visibleGroups.map((group, index) => {
+                        const stats = group.performance;
+                        const reading = stats.count >= 30
+                            ? stats.unitRoi > 0 ? 'Señal positiva' : 'Revisar'
+                            : stats.count >= 10
+                                ? stats.unitRoi > 0 ? 'Tendencia positiva' : 'Tendencia negativa'
+                                : 'Exploratoria';
+                        const readingClass = stats.count >= 30 && stats.unitRoi > 0
+                            ? 'is-ready'
+                            : stats.unitRoi < 0 ? 'is-negative' : '';
+                        const extremeClass = group === bestLeague
+                            ? 'is-best'
+                            : group === worstLeague ? 'is-worst' : '';
+
+                        return `
+                            <tr class="${extremeClass}">
+                                <td class="text-end text-muted">${index + 1}</td>
+                                <td class="fw-semibold bot-ds-league-name">${escapeHtml(group.label)}</td>
+                                <td class="text-end">${stats.count}</td>
+                                <td class="text-end">${stats.won} / ${stats.lost}</td>
+                                <td class="text-end">${stats.hitRate === null ? '-' : escapeHtml(formatPercent(stats.hitRate))}</td>
+                                <td class="text-end">${escapeHtml(formatCompact(stats.avgOdds))}</td>
+                                <td class="text-end">${stats.avgEdge === null ? '-' : escapeHtml(formatPercent(stats.avgEdge))}</td>
+                                <td class="text-end ${signedClass(stats.unitProfit)}">${escapeHtml(formatDecimal(stats.unitProfit))}</td>
+                                <td class="text-end fw-semibold ${signedClass(stats.unitRoi)}">${stats.unitRoi === null ? '-' : escapeHtml(formatPercent(stats.unitRoi))}</td>
+                                <td><span class="bot-ds-reading ${readingClass}">${escapeHtml(reading)}</span></td>
+                            </tr>
+                        `;
+                    }).join('');
+            };
+
+            const renderDataScience = items => {
+                const summary = performanceOf(items);
+                const sample = sampleLabel(summary.count);
+                const sampleBadge = document.getElementById('BotPicksDsSampleBadge');
+                sampleBadge.textContent = sample.label;
+                sampleBadge.className = `bot-ds-sample-badge ${sample.className}`;
+                document.getElementById('BotPicksDsScope').textContent =
+                    `${summary.count} resueltas de ${items.length} visibles`;
+                document.getElementById('BotPicksDsSettled').textContent = summary.count.toString();
+                document.getElementById('BotPicksDsRecord').textContent =
+                    `${summary.won} W / ${summary.lost} L / ${summary.push} Push`;
+                document.getElementById('BotPicksDsHitRate').textContent =
+                    summary.hitRate === null ? '-' : formatPercent(summary.hitRate);
+                document.getElementById('BotPicksDsBreakeven').textContent =
+                    summary.avgOdds === null
+                        ? 'Break-even -'
+                        : `Break-even ${formatPercent(1 / summary.avgOdds)} a cuota ${formatCompact(summary.avgOdds)}`;
+
+                const roiElement = document.getElementById('BotPicksDsRoi');
+                roiElement.textContent = summary.actualRoi === null ? '-' : formatPercent(summary.actualRoi);
+                roiElement.className = signedClass(summary.actualRoi);
+                document.getElementById('BotPicksDsProfit').textContent =
+                    summary.count === 0
+                        ? 'P/L -'
+                        : `P/L ${formatDecimal(summary.actualProfit)} sobre ${formatDecimal(summary.actualStake)} de stake`;
+                document.getElementById('BotPicksDsAvgEdge').textContent =
+                    summary.avgEdge === null ? '-' : formatPercent(summary.avgEdge);
+                document.getElementById('BotPicksDsCalibration').textContent =
+                    summary.avgModelProbability === null || summary.hitRate === null
+                        ? 'Prob. modelo vs real -'
+                        : `Modelo ${formatPercent(summary.avgModelProbability)} vs real ${formatPercent(summary.hitRate)}`;
+
+                const edgeGroups = bucketGroups(items, 'Edge', [
+                    { label: '< 5%', min: Number.NEGATIVE_INFINITY, max: 0.05 },
+                    { label: '5% - 8%', min: 0.05, max: 0.08 },
+                    { label: '8% - 12%', min: 0.08, max: 0.12 },
+                    { label: '12%+', min: 0.12, max: Number.POSITIVE_INFINITY }
+                ], item => ratioValue(getValue(item, 'ProbabilityEdge')));
+                const oddsGroups = bucketGroups(items, 'Cuota', [
+                    { label: '< 1.60', min: Number.NEGATIVE_INFINITY, max: 1.6 },
+                    { label: '1.60 - 1.79', min: 1.6, max: 1.8 },
+                    { label: '1.80 - 1.99', min: 1.8, max: 2 },
+                    { label: '2.00+', min: 2, max: Number.POSITIVE_INFINITY }
+                ], item => number(getValue(item, 'Odds')));
+
+                renderDataScienceBandRows('BotPicksDsEdgeBody', edgeGroups);
+                renderDataScienceBandRows('BotPicksDsOddsBody', oddsGroups);
+                renderLeaguePerformance(items);
+
+                const segmentGroups = [
+                    ...groupBy(items, 'Bot', item => getBotInfo(item).label),
+                    ...groupBy(items, 'Plan', item => getProductionPlan(item).label),
+                    ...groupBy(items, 'Mercado', item => marketLabel(getValue(item, 'MarketType'))),
+                    ...groupBy(items, 'Casa', item => getValue(item, 'Source') || 'Sin casa')
+                ]
+                    .filter(group => group.performance.count > 0)
+                    .sort((left, right) =>
+                        (right.performance.unitRoi ?? Number.NEGATIVE_INFINITY) -
+                        (left.performance.unitRoi ?? Number.NEGATIVE_INFINITY) ||
+                        right.performance.count - left.performance.count);
+                const displayGroups = segmentGroups.slice(0, 12);
+                document.getElementById('BotPicksDsSegmentCount').textContent =
+                    `${segmentGroups.length} segmentos`;
+                document.getElementById('BotPicksDsSegmentsBody').innerHTML =
+                    displayGroups.length === 0
+                        ? '<tr><td colspan="9" class="text-center text-muted py-4">Aun no hay resultados para analizar.</td></tr>'
+                        : displayGroups.map(group => {
+                            const stats = group.performance;
+                            const reading = stats.count >= 30
+                                ? stats.unitRoi > 0 ? 'Senal positiva' : 'Revisar'
+                                : stats.count >= 10
+                                    ? 'Tendencia inicial'
+                                    : 'Muestra pequena';
+                            return `
+                                <tr>
+                                    <td><span class="bot-ds-dimension">${escapeHtml(group.dimension)}</span></td>
+                                    <td class="fw-semibold">${escapeHtml(group.label)}</td>
+                                    <td class="text-end">${stats.count}</td>
+                                    <td class="text-end">${stats.won} / ${stats.lost}</td>
+                                    <td class="text-end">${escapeHtml(formatCompact(stats.avgOdds))}</td>
+                                    <td class="text-end">${stats.avgEdge === null ? '-' : escapeHtml(formatPercent(stats.avgEdge))}</td>
+                                    <td class="text-end">${stats.hitRate === null ? '-' : escapeHtml(formatPercent(stats.hitRate))}</td>
+                                    <td class="text-end ${signedClass(stats.unitRoi)}">${stats.unitRoi === null ? '-' : escapeHtml(formatPercent(stats.unitRoi))}</td>
+                                    <td><span class="bot-ds-reading ${stats.count >= 30 ? 'is-ready' : ''}">${escapeHtml(reading)}</span></td>
+                                </tr>
+                            `;
+                        }).join('');
+
+                const reliableGroups = segmentGroups.filter(group => group.performance.count >= 10);
+                const bestGroup = reliableGroups[0] ?? segmentGroups[0] ?? null;
+                document.getElementById('BotPicksDsBestSegment').textContent =
+                    bestGroup?.label ?? '-';
+                document.getElementById('BotPicksDsBestSegmentDetail').textContent = bestGroup
+                    ? `${bestGroup.dimension} · ${bestGroup.performance.count} apuestas · ROI 1u ${formatPercent(bestGroup.performance.unitRoi)}`
+                    : 'Esperando resultados';
+
+                const populatedEdgeGroups = edgeGroups.filter(group => group.performance.count >= 5);
+                const edgeIsMonotonic = populatedEdgeGroups.length >= 2 &&
+                    populatedEdgeGroups.every((group, index) =>
+                        index === 0 ||
+                        (group.performance.unitRoi ?? Number.NEGATIVE_INFINITY) >=
+                        (populatedEdgeGroups[index - 1].performance.unitRoi ?? Number.NEGATIVE_INFINITY));
+                const insight = document.getElementById('BotPicksDsInsight');
+                if (summary.count === 0) {
+                    insight.textContent = 'Liquida apuestas para comenzar a detectar patrones.';
+                } else if (summary.count < 10) {
+                    insight.textContent = `Hay ${summary.count} resultados: todavia es pronto para cambiar la estrategia. Prioriza completar la muestra.`;
+                } else if (edgeIsMonotonic) {
+                    insight.textContent = `El retorno mejora al subir el edge en las bandas con al menos 5 apuestas. Es una señal favorable, aun sujeta al tamaño de muestra.`;
+                } else if (bestGroup) {
+                    insight.textContent = `${bestGroup.label} lidera entre los segmentos observados, pero un edge mayor aun no muestra una mejora consistente en todas las bandas.`;
+                } else {
+                    insight.textContent = 'La muestra ya permite comparar segmentos, pero todavia no aparece un patron dominante.';
+                }
+            };
+
             const formatRecommendation = item => {
                 const marketType = getValue(item, 'MarketType');
                 const side = getValue(item, 'SelectedSide') ?? '-';
@@ -492,6 +1700,42 @@
                     return `${getAwayTeam(item)} ${side} ${line} corners`;
                 }
 
+                if (marketType === 'HomeTeamGoals') {
+                    return `${getHomeTeam(item)} ${side} ${line} goles`;
+                }
+
+                if (marketType === 'AwayTeamGoals') {
+                    return `${getAwayTeam(item)} ${side} ${line} goles`;
+                }
+
+                if (marketType === 'TotalGoals') {
+                    return `${side} ${line} goles totales`;
+                }
+
+                if (marketType === 'HomeTeamShots') {
+                    return `${getHomeTeam(item)} ${side} ${line} tiros`;
+                }
+
+                if (marketType === 'AwayTeamShots') {
+                    return `${getAwayTeam(item)} ${side} ${line} tiros`;
+                }
+
+                if (marketType === 'TotalShots') {
+                    return `${side} ${line} tiros totales`;
+                }
+
+                if (marketType === 'HomeTeamShotsOnGoal') {
+                    return `${getHomeTeam(item)} ${side} ${line} tiros al arco`;
+                }
+
+                if (marketType === 'AwayTeamShotsOnGoal') {
+                    return `${getAwayTeam(item)} ${side} ${line} tiros al arco`;
+                }
+
+                if (marketType === 'TotalShotsOnGoal') {
+                    return `${side} ${line} tiros al arco totales`;
+                }
+
                 return `${side} ${line} corners totales`;
             };
 
@@ -499,6 +1743,15 @@
                 const normalized = String(marketType ?? '');
                 if (normalized === 'HomeTeamCorners') return 'HomeCorners';
                 if (normalized === 'AwayTeamCorners') return 'AwayCorners';
+                if (normalized === 'HomeTeamGoals') return 'HomeGoals';
+                if (normalized === 'AwayTeamGoals') return 'AwayGoals';
+                if (normalized === 'TotalGoals') return 'TotalGoals';
+                if (normalized === 'HomeTeamShots') return 'HomeShots';
+                if (normalized === 'AwayTeamShots') return 'AwayShots';
+                if (normalized === 'TotalShots') return 'TotalShots';
+                if (normalized === 'HomeTeamShotsOnGoal') return 'HomeShotsOnGoal';
+                if (normalized === 'AwayTeamShotsOnGoal') return 'AwayShotsOnGoal';
+                if (normalized === 'TotalShotsOnGoal') return 'TotalShotsOnGoal';
                 return 'TotalCorners';
             };
 
@@ -524,10 +1777,12 @@
                 return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
             };
 
-            const buildBettingNotes = item => {
+            const buildBettingNotes = (item, stakeStrategy, stakeUnits) => {
                 const botInfo = getBotInfo(item);
                 const parts = [
                     `${botInfo.label} recommendation: ${formatRecommendation(item)}`,
+                    `Stake strategy: ${stakeStrategy}`,
+                    `Production plan: ${formatCompact(stakeUnits)}u flat`,
                     `AutomationVersion: ${getValue(item, 'AutomationVersion') || 'Legacy'}`,
                     `SelectionId: ${getValue(item, 'AutomatedCornerBetSelectionId')}`,
                     `RunId: ${getValue(item, 'RunId') || '-'}`,
@@ -544,9 +1799,15 @@
                 return parts.join('\n');
             };
 
-            const buildBettingCreateUrl = item => {
+            const buildBettingCreateUrl = (item, stakeStrategy, stakeUnits = 1) => {
                 const matchDate = toDateInputValue(getValue(item, 'MatchDate'));
+                const normalizedStrategy = stakeStrategy === 'Kelly'
+                    ? 'Kelly'
+                    : stakeStrategy === 'QuarterKelly'
+                        ? 'QuarterKelly'
+                        : 'None';
                 const parameters = new URLSearchParams({
+                    currencyCode: betCurrencySelect.value,
                     league: getLeague(item),
                     season: getValue(item, 'Season') || (matchDate ? matchDate.slice(0, 4) : new Date().getFullYear().toString()),
                     matchDate,
@@ -555,16 +1816,33 @@
                     marketType: toBettingMarketType(getValue(item, 'MarketType')),
                     betSelection: getValue(item, 'SelectedSide') || 'Over',
                     bookmaker: getValue(item, 'Source') || '',
-                    kellyStrategy: number(getValue(item, 'KellyFraction')) > 0 ? 'Kelly' : 'None',
+                    kellyStrategy: normalizedStrategy,
                     confidenceLevel: toBettingConfidence(getValue(item, 'ConfidenceLevel')),
-                    predictionModel: 'AutomatedCornersBot',
-                    notes: buildBettingNotes(item)
+                    predictionModel: ['C', 'D', 'E', 'F'].includes(getBotInfo(item).key)
+                        ? `AutomatedBot${getBotInfo(item).key}`
+                        : marketFamily === 'goals'
+                            ? 'AutomatedGoalsBot'
+                            : marketFamily === 'shots'
+                                ? 'AutomatedShotsBot'
+                                : marketFamily === 'sog'
+                                    ? 'AutomatedSogBot'
+                                    : 'AutomatedCornersBot',
+                    notes: buildBettingNotes(
+                        item,
+                        normalizedStrategy === 'None' ? 'Flat' : normalizedStrategy,
+                        stakeUnits)
                 });
                 const numericParameters = {
                     line: formatQueryNumber(getValue(item, 'LineValue'), 2),
-                    odds: formatQueryNumber(getValue(item, 'Odds'), 2),
-                    stake: formatQueryNumber(getValue(item, 'Stake'), 2)
+                    odds: formatQueryNumber(getValue(item, 'Odds'), 2)
                 };
+                if (normalizedStrategy === 'None') {
+                    const baseStake = number(flatBetStakeInput.value) ?? 0;
+                    const plannedStake = baseStake * stakeUnits;
+                    numericParameters.stake = formatQueryNumber(
+                        betCurrencySelect.value === 'CLP' ? Math.round(plannedStake) : plannedStake,
+                        2);
+                }
                 Object.entries(numericParameters).forEach(([key, value]) => {
                     if (value !== null) {
                         parameters.set(key, value);
@@ -572,7 +1850,7 @@
                 });
 
                 const modelProbability = number(getValue(item, 'ModelProbability'));
-                if (modelProbability !== null) {
+                if (normalizedStrategy !== 'None' && modelProbability !== null) {
                     parameters.set(
                         'estimatedProbabilityPercent',
                         (Math.abs(modelProbability) <= 1 ? modelProbability * 100 : modelProbability).toFixed(2));
@@ -581,11 +1859,45 @@
                 return `/Betting/Create?${parameters.toString()}`;
             };
 
+            const monthKeyFromDate = date =>
+                `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+            const parseMonthKey = value => {
+                const match = /^(\d{4})-(\d{2})$/.exec(String(value ?? ''));
+                return match
+                    ? new Date(Number(match[1]), Number(match[2]) - 1, 1)
+                    : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+            };
+
+            const setMonthRange = (monthDate, submit = true) => {
+                const today = new Date();
+                const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+                const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+                if (monthStart > currentMonthStart) {
+                    return;
+                }
+
+                const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+                const formatDateInput = date =>
+                    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+                monthInput.value = monthKeyFromDate(monthStart);
+                dateFromInput.value = formatDateInput(monthStart);
+                dateToInput.value = formatDateInput(monthEnd);
+                nextMonthButton.disabled = monthStart.getTime() === currentMonthStart.getTime();
+
+                if (submit) {
+                    filtersForm.requestSubmit();
+                }
+            };
+
             const buildQuery = () => {
                 const query = new URLSearchParams();
+                query.set('marketFamily', marketFamily);
                 if (dateFromInput.value) query.set('dateFrom', dateFromInput.value);
                 if (dateToInput.value) query.set('dateTo', dateToInput.value);
                 if (statusSelect.value) query.set('status', statusSelect.value);
+                if (bookmakerSelect.value) query.set('bookmaker', bookmakerSelect.value);
                 if (marketTypeSelect.value) query.set('marketType', marketTypeSelect.value);
                 if (leagueInput.value.trim()) query.set('league', leagueInput.value.trim());
                 const serialized = query.toString();
@@ -595,8 +1907,63 @@
             const botTabLabel = botKey => {
                 if (botKey === 'A') return 'Bot A Actual';
                 if (botKey === 'B') return 'Bot B Conservador';
-                if (botKey === 'Legacy') return 'Legacy';
+                if (botKey === 'C') return 'Bot C · Modelos 2026';
+                if (botKey === 'D') return 'Bot D · Brecha de nivel';
+                if (botKey === 'E') return 'Bot E · Calibración empírica';
+                if (botKey === 'F') return 'Bot F · Legacy ML calibrado';
+                if (botKey === 'Legacy') return 'Otros / Legacy';
                 return 'Todos los bots';
+            };
+
+            const botContextCopy = botKey => {
+                if (botKey === 'D') {
+                    return marketFamily === 'goals'
+                        ? {
+                            title: 'Brecha de nivel · hipótesis útil en goles por equipo',
+                            text: 'El gap no cambia directamente el número predicho por el ML: ajusta la probabilidad final según la diferencia de nivel. Tiene más sentido en goles del local o visitante que en goles totales; todavía es experimental.'
+                        }
+                        : {
+                            title: 'Brecha de nivel · señal contextual experimental',
+                            text: 'La diferencia de nivel puede describir dominio, pero no garantiza más córners o tiros. El Bot D ajusta la probabilidad final y debe validarse por mercado, selección y lado.'
+                        };
+                }
+
+                if (botKey === 'E') {
+                    return {
+                        title: 'Calibración empírica · aprende por mercado',
+                        text: marketFamily === 'goals'
+                            ? 'No pertenece exclusivamente a goles, pero hoy es el mercado con mayor evidencia útil. Separa goles totales, local y visita; la muestra todavía debe tratarse como exploratoria.'
+                            : 'Es agnóstica al mercado, pero nunca traslada automáticamente lo aprendido en goles. Si faltan resultados comparables para este mercado, reduce la confianza o no publica el pick.'
+                    };
+                }
+
+                if (botKey === 'F') {
+                    return {
+                        title: 'Legacy ML + calibración empírica',
+                        text: 'Usa como señal base los modelos anteriores de córners, goles, tiros y tiros al arco. Después aplica el mismo aprendizaje walk-forward de resultados asiáticos de Bot E, aislado en su propia evidencia F.'
+                    };
+                }
+
+                if (botKey === 'C') {
+                    return {
+                        title: 'Selector base · ML, edge y contexto',
+                        text: 'Combina la predicción del modelo con historial, calidad y contexto. Es la referencia para medir si los experimentos D y E realmente agregan valor.'
+                    };
+                }
+
+                if (botKey === 'A') {
+                    return { title: 'Bot A · estrategia actual', text: 'Sirve como línea base histórica. Sus estadísticas se mantienen separadas para no mezclar resultados con los modelos experimentales.' };
+                }
+
+                if (botKey === 'B') {
+                    return { title: 'Bot B · variante conservadora', text: 'Aplica criterios más restrictivos. Compáralo con A usando muestra resuelta, retorno y yield, no solo porcentaje de acierto.' };
+                }
+
+                if (botKey === 'Legacy') {
+                    return { title: 'Bots personalizados o históricos', text: 'Agrupa versiones que no corresponden a A–E. Úsalo para auditoría; no mezcles su rendimiento con un experimento activo.' };
+                }
+
+                return { title: 'Comparación general', text: 'Las tarjetas comparan bots, pero el resumen financiero necesita un bot activo para evitar mezclar estrategias experimentales.' };
             };
 
             const matchesSearch = item => {
@@ -610,36 +1977,92 @@
                     getValue(item, 'League'),
                     getHomeTeam(item),
                     getAwayTeam(item),
+                    getValue(item, 'Source'),
                     getValue(item, 'SourceMatchId')
                 ]
                     .filter(Boolean)
                     .some(value => String(value).toLowerCase().includes(search));
             };
 
-            const getSearchFilteredSelections = () => selections.filter(matchesSearch);
+            const matchesStrategyPlan = item => {
+                const selectedPlan = strategyPlanSelect.value;
+                const plan = getProductionPlan(item);
+                if (!selectedPlan) {
+                    return true;
+                }
+
+                if (selectedPlan === 'bet') {
+                    return plan.stakeUnits > 0;
+                }
+
+                return plan.key === selectedPlan;
+            };
+
+            const getSearchFilteredSelections = () =>
+                selections.filter(item => matchesSearch(item) && matchesStrategyPlan(item));
 
             const updateBotTabs = baseItems => {
                 const countByBot = botKey => baseItems.filter(item => getBotInfo(item).key === botKey).length;
                 document.getElementById('BotPicksTabAllCount').textContent = `${baseItems.length}`;
                 document.getElementById('BotPicksTabACount').textContent = `${countByBot('A')}`;
                 document.getElementById('BotPicksTabBCount').textContent = `${countByBot('B')}`;
+                document.getElementById('BotPicksTabCCount').textContent = `${countByBot('C')}`;
+                document.getElementById('BotPicksTabDCount').textContent = `${countByBot('D')}`;
+                document.getElementById('BotPicksTabECount').textContent = `${countByBot('E')}`;
+                document.getElementById('BotPicksTabFCount').textContent = `${countByBot('F')}`;
                 document.getElementById('BotPicksTabLegacyCount').textContent = `${countByBot('Legacy')}`;
 
                 botTabButtons.forEach(button => {
                     const isActive = button.dataset.botTab === activeBotTab;
                     button.classList.toggle('is-active', isActive);
-                    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+                    button.tabIndex = isActive ? 0 : -1;
                 });
 
-                tableTitle.textContent = activeBotTab
-                    ? `Recomendaciones ${botTabLabel(activeBotTab)}`
-                    : 'Recomendaciones de todos los bots';
+                comparisonCards.forEach(card =>
+                    card.classList.toggle('is-active', card.dataset.summaryBot === activeBotTab));
+
+                tableTitle.textContent = 'Recomendaciones de todos los bots';
+
+                const hasActiveSummaryBot = activeBotTab !== '';
+                productionPlanSection.classList.toggle('d-none', !hasActiveSummaryBot);
+                perBotSummarySection.classList.toggle('d-none', !hasActiveSummaryBot);
+                selectBotSummaryNotice.classList.toggle('d-none', hasActiveSummaryBot);
+
+                if (hasActiveSummaryBot) {
+                    const activeLabel = botTabLabel(activeBotTab);
+                    const activeItems = baseItems.filter(item => getBotInfo(item).key === activeBotTab);
+                    const activePerformance = performanceOf(activeItems);
+                    const sample = sampleLabel(activePerformance.count);
+                    const context = botContextCopy(activeBotTab);
+                    summaryTitle.textContent = `Resumen del período · ${activeLabel}`;
+                    summaryScope.textContent =
+                        `Solo incluye ${activeLabel}; respeta las fechas y los demás filtros aplicados.`;
+                    bankrollChartTitle.textContent = `Evolución del saldo · ${activeLabel}`;
+                    botContextTitle.textContent = context.title;
+                    botContextText.textContent = context.text;
+                    botContextSample.textContent = `${sample.label} · ${activePerformance.count} resueltas`;
+                    botContextSample.className = `bot-ds-sample-badge ${sample.className}`;
+                } else {
+                    const context = botContextCopy('');
+                    botContextTitle.textContent = context.title;
+                    botContextText.textContent = context.text;
+                    botContextSample.textContent = 'Selecciona un bot';
+                    botContextSample.className = 'bot-ds-sample-badge';
+                }
+
+                if (settlePendingButton && !settlePendingButton.disabled) {
+                    settlePendingButton.textContent = 'Completar faltantes';
+                    settlePendingButton.title =
+                        'Revisar todos los bots y mercados: MatchHistory primero y API-Football cuando falten datos';
+                }
             };
 
             const setLoading = isLoading => {
                 loadingState.classList.toggle('d-none', !isLoading);
-                tableWrap.classList.toggle('d-none', isLoading || filteredSelections.length === 0);
-                emptyState.classList.toggle('d-none', isLoading || filteredSelections.length > 0);
+                tableWrap.classList.toggle('d-none', isLoading || tableSelections.length === 0);
+                emptyState.classList.toggle('d-none', isLoading || tableSelections.length > 0);
+                pagination.classList.toggle('d-none', isLoading || tableSelections.length <= pageSize);
                 refreshButton.disabled = isLoading;
             };
 
@@ -648,28 +2071,120 @@
                 errorState.classList.toggle('d-none', !message);
             };
 
-		            const summarize = (items, comparisonItems = items) => {
+            const renderBankrollChart = items => {
+                const initialBankroll = number(initialBankrollInput.value) ?? 100;
+                const settledItems = items
+                    .filter(item => ['won', 'lost', 'push'].includes(String(getValue(item, 'Status')).toLowerCase()))
+                    .slice()
+                    .sort((left, right) => {
+                        const leftDate = new Date(getValue(left, 'MatchDate')).getTime();
+                        const rightDate = new Date(getValue(right, 'MatchDate')).getTime();
+                        if (leftDate !== rightDate) {
+                            return leftDate - rightDate;
+                        }
+
+                        return Number(getValue(left, 'AutomatedCornerBetSelectionId')) -
+                            Number(getValue(right, 'AutomatedCornerBetSelectionId'));
+                    });
+
+                const inputDateLabel = value => {
+                    if (!value) return '-';
+                    const parsed = new Date(`${value}T12:00:00`);
+                    return Number.isNaN(parsed.getTime()) ? value : dateOnlyFormatter.format(parsed);
+                };
+                summaryPeriod.textContent = `${inputDateLabel(dateFromInput.value)} – ${inputDateLabel(dateToInput.value)}`;
+
+                let allBalance = initialBankroll;
+                let recommendedBalance = initialBankroll;
+                const points = [{ all: allBalance, recommended: recommendedBalance, label: 'Inicio' }];
+                settledItems.forEach(item => {
+                    allBalance += simulatedProfitLoss(item, 1);
+                    recommendedBalance += simulatedProfitLoss(item, getSummaryProductionPlan(item).stakeUnits);
+                    points.push({
+                        all: allBalance,
+                        recommended: recommendedBalance,
+                        label: formatDateOnly(getValue(item, 'MatchDate'))
+                    });
+                });
+
+                chartRecommendedValue.textContent = `${formatDecimal(recommendedBalance)}u`;
+                chartAllValue.textContent = `${formatDecimal(allBalance)}u`;
+                bankrollChartEmpty.classList.toggle('d-none', settledItems.length > 0);
+                bankrollChartWrap.classList.toggle('d-none', settledItems.length === 0);
+
+                if (settledItems.length === 0) {
+                    bankrollChart.innerHTML = '';
+                    return;
+                }
+
+                const width = 1000;
+                const height = 320;
+                const left = 70;
+                const right = 24;
+                const top = 24;
+                const bottom = 46;
+                const plotWidth = width - left - right;
+                const plotHeight = height - top - bottom;
+                const values = points.flatMap(point => [point.all, point.recommended]);
+                const rawMin = Math.min(...values);
+                const rawMax = Math.max(...values);
+                const padding = Math.max((rawMax - rawMin) * 0.12, 0.75);
+                const minValue = rawMin - padding;
+                const maxValue = rawMax + padding;
+                const valueRange = maxValue - minValue;
+                const x = index => left + (index / Math.max(points.length - 1, 1)) * plotWidth;
+                const y = value => top + ((maxValue - value) / valueRange) * plotHeight;
+                const pathFor = key => points
+                    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(point[key]).toFixed(2)}`)
+                    .join(' ');
+
+                const gridLines = Array.from({ length: 5 }, (_, index) => {
+                    const ratio = index / 4;
+                    const value = maxValue - ratio * valueRange;
+                    const rowY = top + ratio * plotHeight;
+                    return `
+                        <line class="bot-chart-grid-line" x1="${left}" y1="${rowY}" x2="${width - right}" y2="${rowY}"></line>
+                        <text class="bot-chart-axis-label" x="${left - 10}" y="${rowY + 4}" text-anchor="end">${escapeHtml(formatCompact(value))}u</text>
+                    `;
+                }).join('');
+
+                const labelIndexes = Array.from(new Set([0, 0.25, 0.5, 0.75, 1]
+                    .map(ratio => Math.round((points.length - 1) * ratio))));
+                const xLabels = labelIndexes.map(index => `
+                    <text class="bot-chart-axis-label" x="${x(index)}" y="${height - 15}" text-anchor="${index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}">
+                        ${escapeHtml(points[index].label)}
+                    </text>
+                `).join('');
+                const lastIndex = points.length - 1;
+                const initialY = y(initialBankroll);
+
+                bankrollChart.innerHTML = `
+                    <title>Evolución del saldo desde ${escapeHtml(formatDecimal(initialBankroll))} unidades</title>
+                    ${gridLines}
+                    <line class="bot-chart-start-line" x1="${left}" y1="${initialY}" x2="${width - right}" y2="${initialY}"></line>
+                    <text class="bot-chart-start-label" x="${left + 8}" y="${initialY - 8}">Saldo inicial ${escapeHtml(formatDecimal(initialBankroll))}u</text>
+                    <path class="bot-chart-path-all" d="${pathFor('all')}"></path>
+                    <path class="bot-chart-path-recommended" d="${pathFor('recommended')}"></path>
+                    <circle class="bot-chart-end-all" cx="${x(lastIndex)}" cy="${y(points[lastIndex].all)}" r="5"></circle>
+                    <circle class="bot-chart-end-recommended" cx="${x(lastIndex)}" cy="${y(points[lastIndex].recommended)}" r="5"></circle>
+                    ${xLabels}
+                `;
+            };
+
+            const summarize = (items, comparisonItems = items) => {
 		                const summarizeBot = botKey => {
                             const botItems = comparisonItems.filter(item => {
                                 const botInfo = getBotInfo(item);
-                                if (botKey === 'A') {
-                                    return botInfo.key === 'A' || botInfo.key === 'Legacy';
-                                }
-
                                 return botInfo.key === botKey;
                             });
 		                    const won = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'won').length;
 		                    const lost = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'lost').length;
 		                    const pending = botItems.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'pending').length;
-		                    const profitLoss = botItems
-		                        .map(item => number(getValue(item, 'ProfitLoss')))
-		                        .filter(value => value !== null)
-		                        .reduce((sum, value) => sum + value, 0);
-		                    const settledStake = botItems
-		                        .filter(item => ['won', 'lost'].includes(String(getValue(item, 'Status')).toLowerCase()))
-		                        .map(item => number(getValue(item, 'Stake')))
-		                        .filter(value => value !== null)
-		                        .reduce((sum, value) => sum + value, 0);
+                            const settledBotItems = botItems.filter(item =>
+                                ['won', 'lost', 'push'].includes(String(getValue(item, 'Status')).toLowerCase()));
+		                    const profitLoss = settledBotItems
+                                .reduce((sum, item) => sum + simulatedProfitLoss(item, 1), 0);
+		                    const settledStake = settledBotItems.length;
 
 		                    return {
 		                        total: botItems.length,
@@ -685,62 +2200,79 @@
 	                const pending = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'pending').length;
 	                const won = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'won').length;
 	                const lost = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'lost').length;
+	                const pushCount = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'push').length;
 	                const voidCount = items.filter(item => String(getValue(item, 'Status')).toLowerCase() === 'void').length;
-	                const profitRows = items
-	                    .map(item => number(getValue(item, 'ProfitLoss')))
-	                    .filter(value => value !== null);
-	                const profitLoss = profitRows.reduce((sum, value) => sum + value, 0);
-	                const settledStake = items
-	                    .filter(item => ['won', 'lost'].includes(String(getValue(item, 'Status')).toLowerCase()))
-	                    .map(item => number(getValue(item, 'Stake')))
-	                    .filter(value => value !== null)
-	                    .reduce((sum, value) => sum + value, 0);
+                    const settledItems = items.filter(item =>
+                        ['won', 'lost', 'push'].includes(String(getValue(item, 'Status')).toLowerCase()));
+                    const profitLoss = settledItems
+                        .reduce((sum, item) => sum + simulatedProfitLoss(item, 1), 0);
+	                const settledStake = settledItems.length;
 	                const yieldPct = settledStake > 0 ? (profitLoss / settledStake) * 100 : null;
 	                const initialBankroll = number(initialBankrollInput.value) ?? 100;
-	                const currentBankroll = initialBankroll + profitLoss;
-	                const settledItems = items.filter(item => ['won', 'lost', 'void'].includes(String(getValue(item, 'Status')).toLowerCase()));
-	                const kellySim = settledItems.reduce((summary, item) => {
-	                    const units = confidenceStakeUnits(getValue(item, 'ConfidenceLevel'));
-	                    return {
-	                        units: summary.units + units,
-	                        profitLoss: summary.profitLoss + simulatedProfitLoss(item, units)
-	                    };
-	                }, { units: 0, profitLoss: 0 });
-	                const quarterKellySim = {
-	                    units: kellySim.units / 4,
-	                    profitLoss: kellySim.profitLoss / 4
-	                };
+                    const recommendedSettledItems = settledItems.filter(item =>
+                        getSummaryProductionPlan(item).stakeUnits > 0);
+                    const recommendedProfitLoss = recommendedSettledItems
+                        .reduce(
+                            (sum, item) =>
+                                sum + simulatedProfitLoss(item, getSummaryProductionPlan(item).stakeUnits),
+                            0);
+                    const recommendedStake = recommendedSettledItems
+                        .reduce((sum, item) => sum + getSummaryProductionPlan(item).stakeUnits, 0);
+                    const recommendedOneUnitCount = recommendedSettledItems
+                        .filter(item => getSummaryProductionPlan(item).stakeUnits === 1).length;
+                    const recommendedHalfUnitCount = recommendedSettledItems
+                        .filter(item => getSummaryProductionPlan(item).stakeUnits === 0.5).length;
 
 	                document.getElementById('BotPicksTotal').textContent = total.toString();
 	                document.getElementById('BotPicksPending').textContent = pending.toString();
 	                document.getElementById('BotPicksWon').textContent = won.toString();
 	                document.getElementById('BotPicksLost').textContent = lost.toString();
-	                document.getElementById('BotPicksVoid').textContent = voidCount.toString();
+	                document.getElementById('BotPicksVoid').textContent = `${pushCount} / ${voidCount}`;
+
+                    const activeSample = sampleLabel(settledItems.length);
+                    summarySample.textContent = `${activeSample.label} · ${settledItems.length} resueltas`;
+                    summarySample.className = `bot-ds-sample-badge ${activeSample.className}`;
 
 	                const profitElement = document.getElementById('BotPicksProfitLoss');
-	                profitElement.textContent = profitRows.length === 0 ? '-' : formatDecimal(profitLoss);
+	                profitElement.textContent = settledItems.length === 0 ? '-' : `${formatDecimal(profitLoss)}u`;
 	                profitElement.className = `metric-value ${signedClass(profitLoss)}`;
+	                document.getElementById('BotPicksProfitLossHelp').textContent =
+	                    `${settledItems.length} picks resueltos × 1u = ${formatCompact(settledStake)}u apostadas`;
 
 	                const yieldElement = document.getElementById('BotPicksYieldPct');
 	                yieldElement.textContent = yieldPct === null ? '-' : `${compactDecimalFormatter.format(yieldPct)}%`;
 	                yieldElement.className = `metric-value ${signedClass(yieldPct)}`;
+	                document.getElementById('BotPicksYieldHelp').textContent = settledStake === 0
+	                    ? 'Sin picks resueltos para calcularlo'
+	                    : `${formatDecimal(profitLoss)}u ÷ ${formatCompact(settledStake)}u apostadas`;
+
+                    const signedEquation = value => value >= 0
+                        ? `+ ${formatDecimal(value)}u`
+                        : `− ${formatDecimal(Math.abs(value))}u`;
 
 	                const bankrollElement = document.getElementById('BotPicksBankroll');
-	                bankrollElement.textContent = formatDecimal(currentBankroll);
-	                bankrollElement.className = `metric-value ${signedClass(currentBankroll - initialBankroll)}`;
+	                bankrollElement.textContent = `${formatDecimal(initialBankroll + profitLoss)}u`;
+	                bankrollElement.className = `metric-value ${signedClass(profitLoss)}`;
+                    document.getElementById('BotPicksAllUnits').textContent =
+                        `${formatDecimal(initialBankroll)}u iniciales ${signedEquation(profitLoss)} = ${formatDecimal(initialBankroll + profitLoss)}u · ${formatCompact(settledStake)}u apostadas`;
 
-	                const kellyBankrollElement = document.getElementById('BotPicksKellyBankroll');
-	                kellyBankrollElement.textContent = formatDecimal(initialBankroll + kellySim.profitLoss);
-	                kellyBankrollElement.className = `metric-value ${signedClass(kellySim.profitLoss)}`;
-	                document.getElementById('BotPicksKellyUnits').textContent = `${formatCompact(kellySim.units)}u en stakes aprox`;
+                    const recommendedBankrollElement = document.getElementById('BotPicksRecommendedBankroll');
+                    recommendedBankrollElement.textContent =
+                        `${formatDecimal(initialBankroll + recommendedProfitLoss)}u`;
+                    recommendedBankrollElement.className =
+                        `metric-value ${signedClass(recommendedProfitLoss)}`;
+                    document.getElementById('BotPicksRecommendedUnits').textContent =
+                        `${formatDecimal(initialBankroll)}u iniciales ${signedEquation(recommendedProfitLoss)} = ${formatDecimal(initialBankroll + recommendedProfitLoss)}u · ${formatCompact(recommendedStake)}u apostadas (${recommendedOneUnitCount}×1u + ${recommendedHalfUnitCount}×0.5u)`;
 
-		                const quarterKellyBankrollElement = document.getElementById('BotPicksQuarterKellyBankroll');
-		                quarterKellyBankrollElement.textContent = formatDecimal(initialBankroll + quarterKellySim.profitLoss);
-		                quarterKellyBankrollElement.className = `metric-value ${signedClass(quarterKellySim.profitLoss)}`;
-		                document.getElementById('BotPicksQuarterKellyUnits').textContent = `${formatCompact(quarterKellySim.units)}u en stakes aprox`;
+                    renderBankrollChart(items);
 
-		                const botA = summarizeBot('A');
-		                const botB = summarizeBot('B');
+			                const botA = summarizeBot('A');
+			                const botB = summarizeBot('B');
+			                const botC = summarizeBot('C');
+			                const botD = summarizeBot('D');
+			                const botE = summarizeBot('E');
+			                const botF = summarizeBot('F');
+			                const botLegacy = summarizeBot('Legacy');
 		                const renderBotSummary = (prefix, summary) => {
 		                    document.getElementById(`${prefix}Total`).textContent = `${summary.total} recomendaciones`;
 		                    document.getElementById(`${prefix}Record`).textContent = `${summary.won} W / ${summary.lost} L / ${summary.pending} P`;
@@ -752,10 +2284,21 @@
 		                    const yieldElement = document.getElementById(`${prefix}Yield`);
 		                    yieldElement.textContent = `Yield ${summary.yieldPct === null ? '-' : `${compactDecimalFormatter.format(summary.yieldPct)}%`}`;
 		                    yieldElement.className = signedClass(summary.yieldPct);
+
+                            const resolvedCount = summary.won + summary.lost;
+                            const sample = sampleLabel(resolvedCount);
+                            const sampleElement = document.getElementById(`${prefix}Sample`);
+                            sampleElement.textContent = `${sample.label} · n=${resolvedCount}`;
+                            sampleElement.className = `bot-comparison-sample ${sample.className}`;
 		                };
 
-		                renderBotSummary('BotPicksBotA', botA);
-		                renderBotSummary('BotPicksBotB', botB);
+			                renderBotSummary('BotPicksBotA', botA);
+			                renderBotSummary('BotPicksBotB', botB);
+			                renderBotSummary('BotPicksBotC', botC);
+			                renderBotSummary('BotPicksBotD', botD);
+			                renderBotSummary('BotPicksBotE', botE);
+			                renderBotSummary('BotPicksBotF', botF);
+			                renderBotSummary('BotPicksBotLegacy', botLegacy);
 		            };
 
             const sortValue = item => {
@@ -781,11 +2324,49 @@
                         ? leftValue - rightValue
                         : rightValue - leftValue;
                 });
+
+                const tableBotItems = tableBotKey
+                    ? baseItems.filter(item => getBotInfo(item).key === tableBotKey)
+                    : baseItems.slice();
+                const pendingCount = tableBotItems.filter(item =>
+                    String(getValue(item, 'Status') ?? '').toLowerCase() === 'pending').length;
+                const resolvedCount = tableBotItems.filter(settledStatus).length;
+                document.getElementById('BotPicksQuickAllCount').textContent = tableBotItems.length.toString();
+                document.getElementById('BotPicksQuickPendingCount').textContent = pendingCount.toString();
+                document.getElementById('BotPicksQuickResolvedCount').textContent = resolvedCount.toString();
+
+                tableViewButtons.forEach(button => {
+                    const isActive = button.dataset.tableView === tableView;
+                    button.classList.toggle('is-active', isActive);
+                    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                });
+
+                tableSelections = tableBotItems.filter(item => {
+                    const status = String(getValue(item, 'Status') ?? '').toLowerCase();
+                    if (tableView === 'pending') return status === 'pending';
+                    if (tableView === 'resolved') return settledStatus(item);
+                    return true;
+                });
+                tableTitle.textContent = tableBotKey
+                    ? `Recomendaciones · ${botTabLabel(tableBotKey)}`
+                    : 'Recomendaciones de todos los bots';
+                tableSelections.sort((left, right) => {
+                    const leftValue = sortValue(left);
+                    const rightValue = sortValue(right);
+                    return sortDirection === 'asc'
+                        ? leftValue - rightValue
+                        : rightValue - leftValue;
+                });
             };
 
             const renderRows = () => {
+                const totalPages = Math.max(1, Math.ceil(tableSelections.length / pageSize));
+                currentPage = Math.min(Math.max(1, currentPage), totalPages);
+                const pageStart = (currentPage - 1) * pageSize;
+                const pageItems = tableSelections.slice(pageStart, pageStart + pageSize);
+
                 selectionsById.clear();
-                tableBody.innerHTML = filteredSelections.map(item => {
+                tableBody.innerHTML = pageItems.map(item => {
                     const id = getValue(item, 'AutomatedCornerBetSelectionId');
                     selectionsById.set(String(id), item);
                     const side = getValue(item, 'SelectedSide') ?? '-';
@@ -793,6 +2374,7 @@
                     const marketType = getValue(item, 'MarketType') ?? 'TotalCorners';
 	                    const confidence = getValue(item, 'ConfidenceLevel');
 	                    const status = getValue(item, 'Status') ?? '-';
+	                    const settlementNote = getValue(item, 'LastSettlementCheckReason') ?? getValue(item, 'SettlementReason');
 	                    const profitLoss = getValue(item, 'ProfitLoss');
 	                    const botInfo = getBotInfo(item);
 	                    const neutralBadge = hasNeutralAdjustment(item)
@@ -800,37 +2382,59 @@
 	                        : '';
 	                    const sideBadge = sideBadgeClass(side);
                     const statusBadge = statusBadgeClass(status);
-	                    const confidenceBadge = confidenceBadgeClass(confidence);
-	                    const edgeClass = highValueClass(getValue(item, 'ProbabilityEdge'));
-	                    const evClass = highValueClass(getValue(item, 'ExpectedValue'));
-	                    const kellyStakeUnits = confidenceStakeUnits(confidence);
-	                    const quarterKellyStakeUnits = kellyStakeUnits / 4;
+		                    const confidenceBadge = confidenceBadgeClass(confidence);
+		                    const edgeClass = highValueClass(getValue(item, 'ProbabilityEdge'));
+		                    const evClass = highValueClass(getValue(item, 'ExpectedValue'));
+                        const productionPlan = getProductionPlan(item);
 
 		                    const yieldPct = getValue(item, 'YieldPct');
-	                    const isWon = String(status).toLowerCase() === 'won';
-	                    const isPending = String(status).toLowerCase() === 'pending';
-	                    const isVoid = String(status).toLowerCase() === 'void';
+		                    const isPending = String(status).toLowerCase() === 'pending';
+		                    const isVoid = String(status).toLowerCase() === 'void';
+                            const actualResult = actualResultValue(item);
+                            const isUpcoming = new Date(getValue(item, 'MatchDate')).getTime() > Date.now();
+                            const productionPlanLabel = productionPlan.stakeUnits > 0 && (!isPending || !isUpcoming)
+                                ? `Plan historico ${formatCompact(productionPlan.stakeUnits)}u`
+                                : productionPlan.label;
 
 	                    const resultActions = canUpdateResults
 	                        ? `
-	                                <div class="bot-picks-result-actions">
-	                                    <label class="form-check form-switch bot-picks-win-toggle">
-	                                        <input class="form-check-input" type="checkbox" data-result-toggle="${escapeHtml(id)}" ${isWon ? 'checked' : ''} />
-	                                        <span class="form-check-label">Ganada</span>
-	                                    </label>
-	                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-status-action="Pending" data-selection-id="${escapeHtml(id)}" ${isPending ? 'disabled' : ''}>Reset</button>
-	                                    <button class="btn btn-sm btn-outline-dark" type="button" data-status-action="Void" data-selection-id="${escapeHtml(id)}" ${isVoid ? 'disabled' : ''}>Void</button>
+	                                <div class="bot-picks-settlement-control">
+	                                    <input class="form-control form-control-sm" type="number" min="0" step="1" inputmode="numeric" data-actual-result="${escapeHtml(id)}" value="${actualResult === null ? '' : escapeHtml(actualResult)}" aria-label="Resultado real en ${escapeHtml(marketUnitLabel)}" placeholder="Real" />
+	                                    <button class="btn btn-sm btn-primary" type="button" data-resolve-selection="${escapeHtml(id)}">Liquidar</button>
 	                                </div>
 	                            `
 	                        : '<span class="badge text-bg-light">Solo admin</span>';
 
-	                    return `
-	                        <tr class="${statusRowClass(status)}" data-selection-row="${escapeHtml(id)}">
-	                            <td class="text-nowrap">${escapeHtml(formatDate(getValue(item, 'MatchDate')))}</td>
-                            <td>
-                                <div class="fw-semibold">${escapeHtml(getLeague(item))}</div>
-                                <div class="text-muted small">${escapeHtml(getValue(item, 'Source') ?? '')}</div>
-                            </td>
+                        const secondaryActions = canUpdateResults
+                            ? `
+                                <details class="bot-picks-row-menu">
+                                    <summary aria-label="Más acciones para este pick">Más</summary>
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" data-status-action="Pending" data-selection-id="${escapeHtml(id)}" ${isPending ? 'disabled' : ''}>Reabrir</button>
+                                        <button class="btn btn-sm btn-outline-dark" type="button" data-status-action="Void" data-selection-id="${escapeHtml(id)}" ${isVoid ? 'disabled' : ''}>Anular</button>
+                                        <button class="btn btn-sm btn-outline-danger" type="button" data-delete-selection="${escapeHtml(id)}">Eliminar</button>
+                                    </div>
+                                </details>`
+                            : '';
+
+                        const bettingAction = productionPlan.stakeUnits > 0 && isPending && isUpcoming
+                            ? `<a class="btn btn-sm bot-production-bet-button" href="${escapeHtml(buildBettingCreateUrl(item, 'Flat', productionPlan.stakeUnits))}">${escapeHtml(productionPlan.label)}</a>`
+                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.stakeUnits > 0 ? 'Plan historico' : 'Solo monitoreo'}</span>`;
+
+                        const shortNote = settlementNote && String(settlementNote).length > 105
+                            ? `${String(settlementNote).slice(0, 102)}...`
+                            : settlementNote;
+                        const shortPlanReason = productionPlan.reason && productionPlan.reason.length > 80
+                            ? `${productionPlan.reason.slice(0, 77)}...`
+                            : productionPlan.reason;
+
+		                    return `
+		                        <tr class="${statusRowClass(status)}" data-selection-row="${escapeHtml(id)}">
+	                            <td class="bot-pick-context-cell">
+                                    <div class="text-nowrap fw-semibold">${escapeHtml(formatDate(getValue(item, 'MatchDate')))}</div>
+                                    <div class="small mt-1">${escapeHtml(getLeague(item))}</div>
+                                    <div class="text-muted small">${escapeHtml(getValue(item, 'Source') ?? '')}</div>
+                                </td>
 	                            <td>
 	                                <div class="fw-semibold">${escapeHtml(getHomeTeam(item))}</div>
 	                                <div class="text-muted small">vs ${escapeHtml(getAwayTeam(item))}</div>
@@ -842,50 +2446,171 @@
 	                            </td>
 	                            <td>
 	                                <div class="fw-semibold">${escapeHtml(marketLabel(marketType))}</div>
-                                <div class="text-muted small">${escapeHtml(getValue(item, 'SourceMarketType') ?? '')}</div>
-                            </td>
-                            <td>
-                                <span class="badge ${sideBadge}">${escapeHtml(side)} ${escapeHtml(formatCompact(line))}</span>
-                                <div class="small mt-1">${escapeHtml(formatRecommendation(item))}</div>
-                                <div class="mt-1"><span class="badge ${confidenceBadge}">${escapeHtml(confidence ?? 'No conf')}</span></div>
-                            </td>
-                            <td class="text-end">${escapeHtml(formatDecimal(getValue(item, 'Odds')))}</td>
-		                            <td class="text-end">
-		                                <div class="fw-semibold">${escapeHtml(formatDecimal(getValue(item, 'Stake')))}</div>
-		                                <div class="text-muted small">Flat ${escapeHtml(formatDecimal(getValue(item, 'FlatStake')))}</div>
-	                                    <div class="text-muted small">Kelly ${escapeHtml(formatCompact(kellyStakeUnits))}u · 1/4 ${escapeHtml(formatCompact(quarterKellyStakeUnits))}u</div>
-	                                    <div class="text-muted small">Kelly frac ${escapeHtml(formatPercent(getValue(item, 'KellyFraction')))}</div>
-		                            </td>
-                            <td class="text-end ${edgeClass}">${escapeHtml(formatPercent(getValue(item, 'ProbabilityEdge')))}</td>
-                            <td class="text-end ${evClass}">${escapeHtml(formatPercent(getValue(item, 'ExpectedValue')))}</td>
-	                            <td class="text-end">${escapeHtml(formatCompact(getValue(item, 'SelectionScore')))}</td>
-	                            <td><span class="badge ${statusBadge}">${escapeHtml(status)}</span></td>
-	                            <td class="text-end ${signedClass(profitLoss)}">${escapeHtml(formatDecimal(profitLoss))}</td>
-	                            <td class="text-end ${signedClass(yieldPct)}">${escapeHtml(formatPercent(yieldPct))}</td>
+                                    <span class="badge ${sideBadge} mt-1">${escapeHtml(side)} ${escapeHtml(formatCompact(line))}</span>
+                                    <div class="small mt-1">${escapeHtml(formatRecommendation(item))}</div>
+                                    <div class="mt-1"><span class="badge ${confidenceBadge}">${escapeHtml(confidence ?? 'Sin confianza')}</span></div>
+                                </td>
 	                            <td>
-	                                ${resultActions}
-	                            </td>
-	                            <td class="text-end">
-                                    <div class="d-inline-flex flex-wrap justify-content-end gap-1">
-                                        <a class="btn btn-sm btn-success" href="${escapeHtml(buildBettingCreateUrl(item))}">Crear apuesta</a>
-	                                    <button class="btn btn-sm btn-outline-primary" type="button" data-detail-id="${escapeHtml(id)}">View</button>
+                                    <div class="bot-pick-signal-grid">
+                                        <span><small>Cuota</small><strong>${escapeHtml(formatDecimal(getValue(item, 'Odds')))}</strong></span>
+                                        <span class="${edgeClass}"><small>Edge</small><strong>${escapeHtml(formatPercent(getValue(item, 'ProbabilityEdge')))}</strong></span>
+                                        <span class="${evClass}"><small>EV</small><strong>${escapeHtml(formatPercent(getValue(item, 'ExpectedValue')))}</strong></span>
+                                        <span><small>Score</small><strong>${escapeHtml(formatCompact(getValue(item, 'SelectionScore')))}</strong></span>
+                                    </div>
+                                </td>
+			                    <td>
+                                    <span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${escapeHtml(productionPlanLabel)}</span>
+                                    <div class="small mt-1" title="${escapeHtml(productionPlan.reason)}">${escapeHtml(shortPlanReason)}</div>
+                                    ${productionPlan.stakeUnits > 0
+                                        ? `<div class="text-muted small">Stake: ${escapeHtml(formatCompact(productionPlan.stakeUnits))} × base configurada</div>`
+                                        : ''}
+			                    </td>
+	                            <td>
+	                                <span class="badge ${statusBadge}">${escapeHtml(settlementOutcomeLabel(item))}</span>
+	                                ${actualResult === null ? '' : `<div class="small text-muted mt-1">Real: ${escapeHtml(actualResult)} ${escapeHtml(marketUnitLabel)}</div>`}
+	                                ${settlementNote ? `<div class="small text-muted mt-1 bot-pick-settlement-note" title="${escapeHtml(settlementNote)}">${escapeHtml(shortNote)}</div>` : ''}
+                                    <div class="bot-pick-return mt-2">
+                                        <span class="${signedClass(profitLoss)}">P/L ${escapeHtml(formatDecimal(profitLoss))}</span>
+                                        <span class="${signedClass(yieldPct)}">Yield ${escapeHtml(formatPercent(yieldPct))}</span>
+                                    </div>
+                                </td>
+	                            <td>${resultActions}</td>
+		                        <td class="text-end">
+	                                <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                        ${bettingAction}
+		                                <button class="btn btn-sm btn-outline-primary" type="button" data-detail-id="${escapeHtml(id)}">Detalle</button>
+                                        ${secondaryActions}
                                     </div>
 	                            </td>
-                        </tr>
-                    `;
+                                </tr>
+                            `;
                 }).join('');
 
-                visibleCount.textContent = `${filteredSelections.length} recomendaciones visibles`;
+                const firstVisible = tableSelections.length === 0 ? 0 : pageStart + 1;
+                const lastVisible = Math.min(pageStart + pageSize, tableSelections.length);
+                visibleCount.textContent = tableSelections.length === 0
+                    ? '0 recomendaciones visibles'
+                    : `Mostrando ${firstVisible}-${lastVisible} de ${tableSelections.length} recomendaciones`;
                 sortState.textContent = `${sortField === 'matchDate' ? 'Fecha' : sortField} ${sortDirection}`;
-                tableWrap.classList.toggle('d-none', filteredSelections.length === 0);
-                emptyState.classList.toggle('d-none', filteredSelections.length > 0);
+                tableWrap.classList.toggle('d-none', tableSelections.length === 0);
+                emptyState.classList.toggle('d-none', tableSelections.length > 0);
+
+                pagination.classList.toggle('d-none', tableSelections.length <= pageSize);
+                paginationSummary.textContent = `Pagina ${currentPage} de ${totalPages} · ${pageSize} por pagina`;
+
+                const pageNumbers = [];
+                for (let page = 1; page <= totalPages; page += 1) {
+                    if (
+                        page === 1 ||
+                        page === totalPages ||
+                        Math.abs(page - currentPage) <= 2
+                    ) {
+                        pageNumbers.push(page);
+                    }
+                }
+
+                const pageControls = [];
+                let previousPageNumber = 0;
+                pageNumbers.forEach(page => {
+                    if (previousPageNumber > 0 && page - previousPageNumber > 1) {
+                        pageControls.push('<span class="bot-picks-page-ellipsis" aria-hidden="true">...</span>');
+                    }
+                    pageControls.push(`
+                        <button
+                            class="bot-picks-page-button ${page === currentPage ? 'is-active' : ''}"
+                            type="button"
+                            data-page="${page}"
+                            aria-label="Ir a la pagina ${page}"
+                            aria-current="${page === currentPage ? 'page' : 'false'}">
+                            ${page}
+                        </button>
+                    `);
+                    previousPageNumber = page;
+                });
+
+                paginationButtons.innerHTML = `
+                    <button class="bot-picks-page-button bot-picks-page-nav" type="button" data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>
+                        Anterior
+                    </button>
+                    ${pageControls.join('')}
+                    <button class="bot-picks-page-button bot-picks-page-nav" type="button" data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>
+                        Siguiente
+                    </button>
+                `;
             };
 
-            const render = () => {
+            const render = (resetPage = false) => {
+                if (resetPage) {
+                    currentPage = 1;
+                }
+                buildProductionPlans(selections);
                 applyLocalFilters();
+                buildProductionPlans(filteredSelections, summaryProductionPlansById);
+                updateProductionPlanSummary(filteredSelections);
                 summarize(filteredSelections, getSearchFilteredSelections());
-	                renderRows();
+		        renderDataScience(getSearchFilteredSelections());
+				    renderMonthlyHistory();
+			        renderRows();
 	            };
+
+                const showSettlementResult = (message, tone = 'success') => {
+                    settlementResultState.textContent = message;
+                    settlementResultState.classList.remove(
+                        'd-none', 'alert-success', 'alert-warning', 'alert-info', 'alert-danger');
+                    settlementResultState.classList.add(`alert-${tone}`);
+                    settlementResultState.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                };
+
+                const settleLocalSelections = async () => {
+                    if (!canUpdateResults || !settleLocalButton) {
+                        setError('Solo usuarios Admin pueden liquidar resultados.');
+                        return;
+                    }
+
+                    setError('');
+                    settlementResultState.classList.add('d-none');
+                    settleLocalButton.disabled = true;
+                    settleLocalButton.textContent = 'Revisando MatchHistory...';
+
+                    try {
+                        const response = await fetch(settlePendingEndpointUrl, {
+                            method: 'POST',
+                            headers: jsonHeaders(),
+                            body: JSON.stringify({
+                                matchDateTo: null,
+                                maxRows: 20000,
+                                botKey: null,
+                                marketFamily: null
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json().catch(() => ({
+                                error: 'No se pudieron liquidar los resultados guardados en MatchHistory.'
+                            }));
+                            throw new Error(error.error ?? 'No se pudieron liquidar los resultados guardados en MatchHistory.');
+                        }
+
+                        const result = await response.json();
+                        const reviewed = Number(getValue(result, 'ReviewedRows') ?? 0);
+                        const settled = Number(getValue(result, 'SettledRows') ?? 0);
+                        const pending = Number(getValue(result, 'StillPendingRows') ?? 0);
+                        const won = Number(getValue(result, 'WonRows') ?? 0);
+                        const lost = Number(getValue(result, 'LostRows') ?? 0);
+                        const push = Number(getValue(result, 'PushRows') ?? 0);
+                        showSettlementResult(
+                            `MatchHistory · todos los bots y mercados: ${reviewed} revisados; ` +
+                            `${settled} liquidados (${won} ganados, ${lost} perdidos, ${push} push); ` +
+                            `${pending} siguen pendientes. Usa “Completar faltantes” solo si necesitas consultar API-Football.`,
+                            settled > 0 ? 'success' : pending > 0 ? 'warning' : 'info');
+                        await Promise.all([loadSelections(), loadMonthlyHistory()]);
+                    } catch (error) {
+                        setError(error.message);
+                    } finally {
+                        settleLocalButton.disabled = false;
+                        settleLocalButton.textContent = 'Liquidar desde MatchHistory';
+                    }
+                };
 
 	            const replaceSelection = updatedSelection => {
 	                const updatedId = String(getValue(updatedSelection, 'AutomatedCornerBetSelectionId'));
@@ -901,6 +2626,74 @@
 	                    control.disabled = isDisabled;
 	                });
 	            };
+
+                const settlePendingSelections = async () => {
+                    if (!canUpdateResults || !settlePendingButton) {
+                        setError('Solo usuarios Admin pueden liquidar resultados.');
+                        return;
+                    }
+
+                    if (!window.confirm(
+                        'Se consultará API-Football solo para los picks que no se pudieron resolver localmente. ' +
+                        'El alcance incluye todos los bots y mercados. ¿Continuar?')) {
+                        return;
+                    }
+
+                    setError('');
+                    settlementResultState.classList.add('d-none');
+                    settlementResultState.classList.remove('alert-success', 'alert-warning', 'alert-info');
+                    settlePendingButton.disabled = true;
+                    settlePendingButton.textContent = 'Sincronizando faltantes...';
+
+                    try {
+                        const response = await fetch(reconcileAvailableEndpointUrl, {
+                            method: 'POST',
+                            headers: jsonHeaders(),
+                            body: JSON.stringify({
+                                dateFrom: null,
+                                dateTo: null,
+                                maxSelections: 20000,
+                                dryRun: false
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json().catch(() => ({
+                                error: 'No se pudieron sincronizar y liquidar los picks disponibles.'
+                            }));
+                            throw new Error(error.error ?? 'No se pudieron sincronizar y liquidar los picks disponibles.');
+                        }
+
+                        const result = await response.json();
+                        const localSettled = Number(getValue(result, 'InitialSettled') ?? 0);
+                        const matched = Number(getValue(result, 'MatchedSelections') ?? 0);
+                        const synced = Number(getValue(result, 'SyncedFixtures') ?? 0);
+                        const linked = Number(getValue(result, 'LinkedSelections') ?? 0);
+                        const settled = Number(getValue(result, 'FinalSettled') ?? 0);
+                        const pending = Number(getValue(result, 'StillPending') ?? 0);
+                        const won = Number(getValue(result, 'FinalWon') ?? 0);
+                        const lost = Number(getValue(result, 'FinalLost') ?? 0);
+                        const push = Number(getValue(result, 'FinalPush') ?? 0);
+                        const unmatched = Number(getValue(result, 'UnmatchedSelections') ?? 0);
+                        const ambiguous = Number(getValue(result, 'AmbiguousSelections') ?? 0);
+                        const missingStats = Number(getValue(result, 'MissingMarketStatistics') ?? 0);
+
+                        showSettlementResult(
+                            `Todos los bots y mercados. Liquidados directamente desde MatchHistory: ${localSettled}. ` +
+                            `API-Football: ${matched} picks identificados, ${synced} partidos sincronizados y ${linked} enlaces guardados. ` +
+                            `Liquidación posterior: ${settled} (${won} ganados, ${lost} perdidos, ${push} push). ` +
+                            `${pending} siguen pendientes: ${unmatched} sin partido seguro, ${ambiguous} ambiguos y ` +
+                            `${missingStats} sin la estadística requerida.`,
+                            settled > 0 ? 'success' : pending > 0 ? 'warning' : 'info');
+
+                        await Promise.all([loadSelections(), loadMonthlyHistory()]);
+                    } catch (error) {
+                        setError(error.message);
+                    } finally {
+                        settlePendingButton.disabled = false;
+                        settlePendingButton.textContent = 'Completar faltantes';
+                    }
+                };
 
 	            const updateSelectionStatus = async (id, status) => {
 	                if (!canUpdateResults) {
@@ -926,9 +2719,7 @@
 	                    };
 	                    const response = await fetch(`${statusEndpointUrl}?id=${encodeURIComponent(id)}`, {
 	                        method: 'PUT',
-	                        headers: {
-	                            'Content-Type': 'application/json'
-	                        },
+	                        headers: jsonHeaders(),
 	                        body: JSON.stringify(payload)
 	                    });
 
@@ -940,6 +2731,7 @@
 	                    const updatedSelection = await response.json();
 	                    replaceSelection(updatedSelection);
 	                    render();
+                        loadMonthlyHistory();
 	                } catch (error) {
 	                    if (error.name === 'AbortError') {
 	                        return;
@@ -950,17 +2742,100 @@
 	                }
 	            };
 
+	            const resolveSelection = async id => {
+	                if (!canUpdateResults) {
+	                    setError('Solo usuarios Admin pueden liquidar resultados.');
+	                    return;
+	                }
+
+	                const row = tableBody.querySelector(`[data-selection-row="${String(id)}"]`);
+	                const input = row?.querySelector(`input[data-actual-result="${String(id)}"]`);
+	                const actualValue = Number(input?.value);
+	                if (!input || input.value.trim() === '' || !Number.isInteger(actualValue) || actualValue < 0) {
+	                    setError(`Ingresa una cantidad real válida de ${marketUnitLabel}: un entero igual o mayor que cero.`);
+	                    input?.focus();
+	                    return;
+	                }
+
+	                setError('');
+	                setRowControlsDisabled(id, true);
+
+	                try {
+	                    const response = await fetch(`${resolveEndpointUrl}?id=${encodeURIComponent(id)}`, {
+	                        method: 'PUT',
+	                        headers: jsonHeaders(),
+	                        body: JSON.stringify({ actualValue })
+	                    });
+
+	                    if (!response.ok) {
+	                        const error = await response.json().catch(() => ({ error: 'No se pudo liquidar el pick.' }));
+	                        throw new Error(error.error ?? 'No se pudo liquidar el pick.');
+	                    }
+
+	                    const updatedSelection = await response.json();
+	                    replaceSelection(updatedSelection);
+	                    render();
+                        loadMonthlyHistory();
+	                } catch (error) {
+	                    render();
+	                    setError(error.message);
+	                }
+	            };
+
+	            const deleteSelection = async id => {
+	                if (!canUpdateResults) {
+	                    setError('Solo usuarios Admin pueden eliminar predicciones.');
+	                    return;
+	                }
+
+	                const selection = selectionsById.get(String(id));
+	                if (!selection) {
+	                    return;
+	                }
+
+	                const matchLabel = `${getHomeTeam(selection)} vs ${getAwayTeam(selection)}`;
+	                if (!window.confirm(`¿Eliminar definitivamente la predicción ${matchLabel}? Esta acción no se puede deshacer.`)) {
+	                    return;
+	                }
+
+	                setError('');
+	                setRowControlsDisabled(id, true);
+
+	                try {
+	                    const response = await fetch(`${deleteEndpointUrl}?id=${encodeURIComponent(id)}`, {
+	                        method: 'DELETE',
+                            headers: { 'RequestVerificationToken': antiforgeryToken }
+	                    });
+
+	                    if (!response.ok) {
+	                        const error = await response.json().catch(() => ({ error: 'No se pudo eliminar la predicción.' }));
+	                        throw new Error(error.error ?? 'No se pudo eliminar la predicción.');
+	                    }
+
+	                    selections = selections.filter(item =>
+	                        String(getValue(item, 'AutomatedCornerBetSelectionId')) !== String(id));
+	                    render();
+                        loadMonthlyHistory();
+	                } catch (error) {
+	                    render();
+	                    setError(error.message);
+	                }
+	            };
+
             const loadSelections = async () => {
                 requestController?.abort();
-                requestController = new AbortController();
+                const currentController = new AbortController();
+                requestController = currentController;
+                currentPage = 1;
                 setError('');
                 filteredSelections = [];
+                tableSelections = [];
                 setLoading(true);
-                visibleCount.textContent = 'Loading...';
+                visibleCount.textContent = 'Cargando...';
 
                 try {
                     const response = await fetch(`${endpointUrl}${buildQuery()}`, {
-                        signal: requestController.signal
+                        signal: currentController.signal
                     });
 
                     if (!response.ok) {
@@ -969,6 +2844,10 @@
                     }
 
                     selections = await response.json();
+                    const browserQuery = new URLSearchParams(buildQuery().replace(/^\?/, ''));
+                    browserQuery.delete('marketFamily');
+                    browserQuery.set('market', marketFamily);
+                    window.history.replaceState(null, '', `${window.location.pathname}?${browserQuery.toString()}`);
                     render();
                 } catch (error) {
                     if (error.name === 'AbortError') {
@@ -977,13 +2856,97 @@
 
                     selections = [];
                     filteredSelections = [];
+                    tableSelections = [];
                     summarize(filteredSelections);
+                    renderDataScience(filteredSelections);
                     tableWrap.classList.add('d-none');
                     emptyState.classList.add('d-none');
+                    pagination.classList.add('d-none');
                     visibleCount.textContent = '0 recomendaciones visibles';
                     setError(error.message);
                 } finally {
-                    setLoading(false);
+                    if (requestController === currentController) {
+                        setLoading(false);
+                    }
+                }
+            };
+
+            const renderMonthlyHistory = () => {
+                const visibleMonths = activeBotTab
+                    ? monthlyHistoryItems.filter(month =>
+                        String(getValue(month, 'BotKey') ?? '') === activeBotTab)
+                    : monthlyHistoryItems;
+
+                monthlyHistoryBody.innerHTML = visibleMonths.map(month => {
+                        const monthValue = String(getValue(month, 'Month') ?? '');
+                        const monthDate = parseMonthKey(monthValue.slice(0, 7));
+                        const monthLabel = new Intl.DateTimeFormat(locale, {
+                            year: 'numeric',
+                            month: 'long'
+                        }).format(monthDate);
+                        const profitLoss = number(getValue(month, 'ProfitLoss')) ?? 0;
+                        const yieldPct = number(getValue(month, 'YieldPct'));
+                        const botKey = String(getValue(month, 'BotKey') ?? 'Legacy');
+                        const badgeClass = botKey === 'A'
+                            ? 'bot-badge-a'
+                            : botKey === 'B'
+                                ? 'bot-badge-b'
+                                : botKey === 'C'
+                                    ? 'bot-badge-c'
+                                    : botKey === 'D'
+                                        ? 'bot-badge-d'
+                                        : botKey === 'E'
+                                            ? 'bot-badge-e'
+                                            : botKey === 'F'
+                                                ? 'bot-badge-f'
+                                                : 'bot-badge-legacy';
+
+                        return `
+                            <tr>
+                                <td>
+                                    <button class="btn btn-sm btn-link fw-semibold text-capitalize p-0" type="button" data-history-month="${escapeHtml(monthKeyFromDate(monthDate))}">
+                                        ${escapeHtml(monthLabel)}
+                                    </button>
+                                </td>
+                                <td><span class="bot-badge ${badgeClass}">${escapeHtml(getValue(month, 'BotLabel') ?? botKey)}</span></td>
+                                <td class="text-end">${escapeHtml(getValue(month, 'Total'))}</td>
+                                <td class="text-end">${escapeHtml(getValue(month, 'Won'))} / ${escapeHtml(getValue(month, 'Lost'))} / ${escapeHtml(getValue(month, 'Push'))} / ${escapeHtml(getValue(month, 'Void'))} / ${escapeHtml(getValue(month, 'Pending'))}</td>
+                                <td class="text-end">${escapeHtml(formatDecimal(getValue(month, 'SettledStake')))}</td>
+                                <td class="text-end ${signedClass(profitLoss)}">${escapeHtml(formatDecimal(profitLoss))}</td>
+                                <td class="text-end ${signedClass(yieldPct)}">${yieldPct === null ? '-' : `${escapeHtml(formatCompact(yieldPct))}%`}</td>
+                            </tr>
+                        `;
+                    }).join('');
+
+                monthlyHistoryEmpty.textContent = activeBotTab
+                    ? `Aún no hay meses con recomendaciones para ${botTabLabel(activeBotTab)}.`
+                    : 'Aún no hay meses con recomendaciones.';
+                monthlyHistoryEmpty.classList.toggle('d-none', visibleMonths.length > 0);
+                monthlyHistoryWrap.classList.toggle('d-none', visibleMonths.length === 0);
+            };
+
+            const loadMonthlyHistory = async () => {
+                monthlyHistoryLoading.classList.remove('d-none');
+                monthlyHistoryWrap.classList.add('d-none');
+                monthlyHistoryEmpty.classList.add('d-none');
+
+                try {
+                    const response = await fetch(monthlyHistoryUrl);
+                    if (!response.ok) {
+                        throw new Error('No se pudo cargar el historial mensual.');
+                    }
+
+                    monthlyHistoryItems = await response.json();
+                    renderMonthlyHistory();
+                } catch (error) {
+                    monthlyHistoryItems = [];
+                    monthlyHistoryBody.innerHTML = '';
+                    monthlyHistoryEmpty.textContent = error instanceof Error
+                        ? error.message
+                        : 'No se pudo cargar el historial mensual.';
+                    monthlyHistoryEmpty.classList.remove('d-none');
+                } finally {
+                    monthlyHistoryLoading.classList.add('d-none');
                 }
             };
 
@@ -1061,7 +3024,7 @@
                 detailBody.innerHTML = `
                     <div class="row g-3">
                         <div class="col-md-4">
-                            <div class="small text-muted">Prediccion total corners</div>
+                            <div class="small text-muted">Predicción total de ${escapeHtml(marketUnitLabel)}</div>
                             <div class="fw-semibold">${escapeHtml(formatCompact(getValue(item, 'PredictedTotalCorners')))}</div>
                         </div>
                         <div class="col-md-4">
@@ -1079,6 +3042,15 @@
 	                        <div class="col-md-4">
 	                            <div class="small text-muted">Automation version</div>
 	                            <div class="fw-semibold">${escapeHtml(getValue(item, 'AutomationVersion') ?? 'Legacy')}</div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Enlace resultado local</div>
+	                            <div class="fw-semibold">Fixture ${escapeHtml(getValue(item, 'ApiFootballFixtureId') ?? '-')} · MatchHistory ${escapeHtml(getValue(item, 'MatchHistoryId') ?? '-')}</div>
+	                        </div>
+	                        <div class="col-md-4">
+	                            <div class="small text-muted">Liquidación automática</div>
+	                            <div class="fw-semibold">${escapeHtml(getValue(item, 'SettlementSource') ?? '-')} · ${escapeHtml(getValue(item, 'SettlementMatchStatus') ?? '-')}</div>
+	                            <div class="small text-muted">${escapeHtml(getValue(item, 'SettlementReason') ?? getValue(item, 'LastSettlementCheckReason') ?? '-')}</div>
 	                        </div>
 	                        <div class="col-md-4">
 	                            <div class="small text-muted">Neutral adjustment</div>
@@ -1125,20 +3097,143 @@
                 loadSelections();
             });
 
-		            refreshButton.addEventListener('click', loadSelections);
-		            searchInput.addEventListener('input', render);
+            const syncFlatStakeStep = () => {
+                const isClp = betCurrencySelect.value === 'CLP';
+                flatBetStakeInput.step = isClp ? '1' : '0.01';
+                flatBetStakeInput.min = isClp ? '1' : '0.01';
+
+                const currentStake = number(flatBetStakeInput.value);
+                if (isClp && currentStake !== null) {
+                    flatBetStakeInput.value = String(Math.max(1, Math.round(currentStake)));
+                    localStorage.setItem('bot-picks-flat-bet-stake', flatBetStakeInput.value);
+                }
+            };
+
+            betCurrencySelect.addEventListener('change', () => {
+                localStorage.setItem('bot-picks-bet-currency', betCurrencySelect.value);
+                syncFlatStakeStep();
+                render();
+            });
+            flatBetStakeInput.addEventListener('input', () => {
+                localStorage.setItem('bot-picks-flat-bet-stake', flatBetStakeInput.value);
+                render();
+            });
+            monthInput.addEventListener('change', () => {
+                setMonthRange(parseMonthKey(monthInput.value));
+            });
+            previousMonthButton.addEventListener('click', () => {
+                const selected = parseMonthKey(monthInput.value);
+                setMonthRange(new Date(selected.getFullYear(), selected.getMonth() - 1, 1));
+            });
+            currentMonthButton.addEventListener('click', () => {
+                const today = new Date();
+                setMonthRange(new Date(today.getFullYear(), today.getMonth(), 1));
+            });
+            nextMonthButton.addEventListener('click', () => {
+                const selected = parseMonthKey(monthInput.value);
+                setMonthRange(new Date(selected.getFullYear(), selected.getMonth() + 1, 1));
+            });
+            botCHistoricalPendingButton.addEventListener('click', () => {
+                const today = new Date();
+                const formatDateInput = date =>
+                    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                monthInput.value = '';
+                dateFromInput.value = '2026-06-19';
+                dateToInput.value = formatDateInput(today);
+                statusSelect.value = 'Pending';
+                tableBotKey = '';
+                tableView = 'pending';
+                tableBotSelect.value = '';
+                localStorage.setItem(`${storagePrefix}-table-bot`, tableBotKey);
+                localStorage.setItem(`${storagePrefix}-table-view`, tableView);
+                filtersForm.requestSubmit();
+            });
+            dateFromInput.addEventListener('change', () => {
+                if (!dateFromInput.value) {
+                    return;
+                }
+
+                monthInput.value = dateFromInput.value.slice(0, 7);
+                const selected = parseMonthKey(monthInput.value);
+                const today = new Date();
+                nextMonthButton.disabled =
+                    selected.getFullYear() === today.getFullYear() &&
+                    selected.getMonth() === today.getMonth();
+            });
+            monthlyHistoryBody.addEventListener('click', event => {
+                const monthButton = event.target.closest('button[data-history-month]');
+                if (monthButton) {
+                    setMonthRange(parseMonthKey(monthButton.dataset.historyMonth));
+                }
+            });
+
+		            refreshButton.addEventListener('click', () => {
+                loadSelections();
+                loadMonthlyHistory();
+            });
+            settleLocalButton?.addEventListener('click', settleLocalSelections);
+            settlePendingButton?.addEventListener('click', settlePendingSelections);
+		    let searchDebounce;
+		    searchInput.addEventListener('input', () => {
+                clearTimeout(searchDebounce);
+                searchDebounce = setTimeout(() => render(true), 180);
+            });
+            strategyPlanSelect.addEventListener('change', () => render(true));
+            tableBotSelect.addEventListener('change', () => {
+                tableBotKey = tableBotSelect.value;
+                localStorage.setItem(`${storagePrefix}-table-bot`, tableBotKey);
+                render(true);
+            });
+            tableViewButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    tableView = button.dataset.tableView ?? 'all';
+                    localStorage.setItem(`${storagePrefix}-table-view`, tableView);
+                    render(true);
+                });
+            });
+            leaguePerformanceSearch.addEventListener('input', () =>
+                renderLeaguePerformance(leaguePerformanceItems));
+            leaguePerformanceSort.addEventListener('change', () =>
+                renderLeaguePerformance(leaguePerformanceItems));
             botTabButtons.forEach(button => {
                 button.addEventListener('click', () => {
                     activeBotTab = button.dataset.botTab ?? '';
-                    localStorage.setItem('bot-picks-active-tab', activeBotTab);
-                    render();
+                    localStorage.setItem(`${storagePrefix}-active-tab`, activeBotTab);
+                    render(true);
+                });
+            });
+            comparisonCards.forEach(card => {
+                const selectSummaryBot = () => {
+                    activeBotTab = card.dataset.summaryBot ?? 'C';
+                    localStorage.setItem(`${storagePrefix}-active-tab`, activeBotTab);
+                    render(true);
+                    document.getElementById('BotPicksSummary').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                };
+                card.addEventListener('click', selectSummaryBot);
+                card.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectSummaryBot();
+                    }
                 });
             });
 		            initialBankrollInput.addEventListener('input', () => {
-	                localStorage.setItem('bot-picks-initial-bankroll', initialBankrollInput.value);
+	                localStorage.setItem(`${storagePrefix}-initial-bankroll`, initialBankrollInput.value);
 	                render();
 	            });
-	            tableBody.addEventListener('click', event => {
+		            tableBody.addEventListener('click', event => {
+	                const resolveButton = event.target.closest('button[data-resolve-selection]');
+	                if (resolveButton) {
+	                    resolveSelection(resolveButton.dataset.resolveSelection);
+	                    return;
+	                }
+
+	                const deleteButton = event.target.closest('button[data-delete-selection]');
+	                if (deleteButton) {
+	                    deleteSelection(deleteButton.dataset.deleteSelection);
+	                    return;
+	                }
+
 	                const statusButton = event.target.closest('button[data-status-action]');
 	                if (statusButton) {
 	                    updateSelectionStatus(statusButton.dataset.selectionId, statusButton.dataset.statusAction);
@@ -1151,14 +3246,32 @@
 	                }
 	            });
 
-	            tableBody.addEventListener('change', event => {
-	                const checkbox = event.target.closest('input[data-result-toggle]');
-	                if (!checkbox) {
-	                    return;
+	            tableBody.addEventListener('keydown', event => {
+	                const input = event.target.closest('input[data-actual-result]');
+	                if (input && event.key === 'Enter') {
+	                    event.preventDefault();
+	                    resolveSelection(input.dataset.actualResult);
 	                }
-
-	                updateSelectionStatus(checkbox.dataset.resultToggle, checkbox.checked ? 'Won' : 'Lost');
 	            });
+
+            paginationButtons.addEventListener('click', event => {
+                const pageButton = event.target.closest('button[data-page]');
+                if (!pageButton || pageButton.disabled) {
+                    return;
+                }
+
+                const nextPage = Number(pageButton.dataset.page);
+                if (!Number.isInteger(nextPage) || nextPage < 1) {
+                    return;
+                }
+
+                currentPage = nextPage;
+                renderRows();
+                document.getElementById('BotPicksTableTitle').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            });
 
             document.querySelectorAll('[data-sort]').forEach(button => {
                 button.addEventListener('click', () => {
@@ -1170,11 +3283,18 @@
                         sortDirection = nextField === 'matchDate' ? 'asc' : 'desc';
                     }
 
-                    render();
+                    render(true);
                 });
             });
 
+            syncFlatStakeStep();
+            const initialMonth = parseMonthKey(monthInput.value);
+            const today = new Date();
+            nextMonthButton.disabled =
+                initialMonth.getFullYear() === today.getFullYear() &&
+                initialMonth.getMonth() === today.getMonth();
             loadSelections();
+            loadMonthlyHistory();
         })();
     </script>
 }

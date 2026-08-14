@@ -8,6 +8,8 @@ namespace CornersPrediction.Application.Teams;
 public sealed class GetTeamBi3InfoUseCase : IGetTeamBi3InfoUseCase
 {
     private readonly ITeamInfoRepository _repository;
+    private readonly Dictionary<string, IReadOnlyList<TeamBi3InfoDto>> _requestCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public GetTeamBi3InfoUseCase(ITeamInfoRepository repository)
     {
@@ -24,12 +26,20 @@ public sealed class GetTeamBi3InfoUseCase : IGetTeamBi3InfoUseCase
             return Array.Empty<TeamBi3InfoDto>();
         }
 
+        var normalizedLeague = league.Trim();
+        var normalizedGender = TeamGenderOptions.Normalize(teamGender);
+        var cacheKey = $"{normalizedGender}|{normalizedLeague}";
+        if (_requestCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
         var teams = await _repository.GetBi3InfoAsync(
-            league.Trim(),
-            TeamGenderOptions.Normalize(teamGender),
+            normalizedLeague,
+            normalizedGender,
             cancellationToken);
 
-        return teams
+        var result = teams
             .OrderBy(team => team.League)
             .ThenBy(team => team.Season)
             .ThenBy(team => team.Team)
@@ -40,6 +50,8 @@ public sealed class GetTeamBi3InfoUseCase : IGetTeamBi3InfoUseCase
                 team.IsBig3,
                 team.CreatedAt))
             .ToArray();
+        _requestCache[cacheKey] = result;
+        return result;
     }
 }
 

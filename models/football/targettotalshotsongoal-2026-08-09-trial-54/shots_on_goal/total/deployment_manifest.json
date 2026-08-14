@@ -1,0 +1,25 @@
+{
+  "status": "active_candidate",
+  "model_version": "targettotalshotsongoal-2026-08-09-trial-54",
+  "target": "TargetTotalShotsOnGoal",
+  "market": "corners",
+  "artifact_role": "deployment_full_refit",
+  "preferred_model_file": "modelo_deployment_full.cbm",
+  "fallback_model_file": "modelo_deployment_full.joblib",
+  "metadata_file": "model_metadata.json",
+  "runtime_file": "inference.py",
+  "trained_rows": 134941,
+  "trained_through": "2026-08-07",
+  "source_best_trial": 54,
+  "dataset_sha256": "a9e8310f81818121e4b28c0469302cfbe778ccd5cf9436b5369cefc995d65d58",
+  "sha256": {
+    "modelo_deployment_full.joblib": "622fd01a834981f7df1b778d9a809aa492e8380eb6a261d97f5849f80a1a64ca",
+    "modelo_deployment_full.cbm": "05dd6d1796df9c62f771fc89b18280589626fc281c560c8e81bc7a1d32525b7b",
+    "model_metadata.json": "9f4b61faa2305647e111653f2e08481c953d66c4dad1e6c92cdf9df731a2f058",
+    "deployment_smoke_fixture.json": "ce8394f6a95930eec3b5cb18200569dd3b43117aff4a24f0dd057535c706312c",
+    "requirements-inference.txt": "db26caf6970eecae5c349834173dec7a3d3848b6c02bd78c995a53a3ad872e21",
+    "environment.json": "38953c73861741711c2cda896eebd8c5bb21f66daf48bd328ca0e4dfb386797d",
+    "inference.py": "6933a248c2cd8636149866fb9b7258d1e2488419a895049fa136a5e67d75563f",
+    "reference_evaluation.json": "351cf7503364844fc4f0da507bba815959fdf778729a914a06afe847bb7a20c5"
+  }
+}
