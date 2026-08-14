@@ -104,7 +104,7 @@ public sealed class RobotPanelController : Controller
                 request?.ExcludeExistingSelections ?? false,
                 Math.Max(1, request?.BatchNumber ?? 1),
                 NormalizeBatchSize(request?.BatchSize ?? 100),
-                request?.RunBotC ?? true,
+                request?.RunAllEnabledBots ?? true,
                 cancellationToken),
             "bot execution",
             cancellationToken);
@@ -138,7 +138,7 @@ public sealed class RobotPanelController : Controller
                 excludeExistingSelections: request.ExcludeExistingSelections,
                 botBatchNumber: Math.Max(1, request.BotBatchNumber),
                 botBatchSize: NormalizeBatchSize(request.BotBatchSize),
-                runBotC: request.RunBotC,
+                runAllEnabledBots: request.RunAllEnabledBots,
                 cancellationToken);
 
             return Json(result);

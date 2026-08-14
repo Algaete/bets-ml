@@ -220,7 +220,8 @@ public sealed class CornersPipelineService : ICornersPipelineService
             command.ExcludeExistingSelections,
             BatchNumber = batchNumber,
             BatchSize = batchSize,
-            command.RunBotC
+            command.RunBotC,
+            command.RunAllEnabledBots
         };
 
         return ExecuteStepAsync(
@@ -236,11 +237,16 @@ public sealed class CornersPipelineService : ICornersPipelineService
                     request,
                     token);
 
-                var botACount = response.Model.Selections.Count(selection =>
-                    selection.Selection.AutomationVersion.EndsWith("-A", StringComparison.OrdinalIgnoreCase));
-                var botBCount = response.Model.Selections.Count(selection =>
-                    selection.Selection.AutomationVersion.EndsWith("-B", StringComparison.OrdinalIgnoreCase));
-                var botCCount = Math.Max(0, response.Model.Selections.Count - botACount - botBCount);
+                var botCounts = response.Model.BotCounts ??
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var botACount = botCounts.GetValueOrDefault("A");
+                var botBCount = botCounts.GetValueOrDefault("B");
+                var botCCount = botCounts.GetValueOrDefault("C2026");
+                var botSummary = botCounts.Count == 0
+                    ? "sin bots habilitados"
+                    : string.Join(", ", botCounts
+                        .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                        .Select(pair => $"{pair.Key}: {pair.Value}"));
                 var missingHistoryMatches = response.Model.Skipped
                     .Where(item => IsMissingHistoryReason(item.Reason))
                     .Select(item => new MissingHistoryMatch(
@@ -255,7 +261,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 {
                     Message = response.Model.TotalOddsRows == 0
                         ? $"Lote {batchNumber} sin cuotas. Disponibles: {response.Model.AvailableOddsRows}."
-                        : $"Lote {response.Model.BatchNumber}/{response.Model.TotalBatches}: cuotas {response.Model.BatchStart}-{response.Model.BatchEnd} de {response.Model.AvailableOddsRows}. Bots A/B/C: {botACount}/{botBCount}/{botCCount}. RunId: {response.Model.RunId}",
+                        : $"Lote {response.Model.BatchNumber}/{response.Model.TotalBatches}: cuotas {response.Model.BatchStart}-{response.Model.BatchEnd} de {response.Model.AvailableOddsRows}. Bots habilitados: {botSummary}. RunId: {response.Model.RunId}",
                     Discovered = response.Model.AvailableOddsRows,
                     Processed = response.Model.TotalMatches,
                     Inserted = response.Model.InsertedRows,
@@ -266,6 +272,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
                     BotACount = botACount,
                     BotBCount = botBCount,
                     BotCCount = botCCount,
+                    BotCounts = botCounts,
                     MissingHistoryMatches = missingHistoryMatches,
                     RawResponse = response.Raw
                 };
@@ -312,7 +319,8 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 command.ExcludeExistingSelections,
                 command.BotBatchNumber,
                 command.BotBatchSize,
-                command.RunBotC),
+                command.RunBotC,
+                command.RunAllEnabledBots),
             cancellationToken));
         return BuildPipelineResult(startedAtUtc, matchHistoryDays, upcomingDays, steps);
     }
@@ -647,6 +655,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
         int UpdatedRows,
         int SkippedMatches,
         int ErrorMatches,
+        IReadOnlyDictionary<string, int>? BotCounts,
         IReadOnlyList<AutomatedSelectionResult> Selections,
         IReadOnlyList<SkippedMatchResult> Skipped);
 

@@ -24,7 +24,7 @@ public sealed class RobotPanelBotsRequestViewModel
 
     public int BatchSize { get; init; } = 100;
 
-    public bool RunBotC { get; init; } = true;
+    public bool RunAllEnabledBots { get; init; } = true;
 }
 
 public sealed class RobotPanelFullRunRequestViewModel
@@ -39,7 +39,7 @@ public sealed class RobotPanelFullRunRequestViewModel
 
     public int BotBatchSize { get; init; } = 100;
 
-    public bool RunBotC { get; init; } = true;
+    public bool RunAllEnabledBots { get; init; } = true;
 }
 
 public sealed class RobotPanelBotAvailabilityViewModel
@@ -101,6 +101,8 @@ public sealed class RobotPanelStepResultViewModel
     public int? BotACount { get; init; }
     public int? BotBCount { get; init; }
     public int? BotCCount { get; init; }
+    public IReadOnlyDictionary<string, int> BotCounts { get; init; } =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<MissingHistoryMatchViewModel> MissingHistoryMatches { get; init; } = Array.Empty<MissingHistoryMatchViewModel>();
     public JsonElement? RawResponse { get; init; }
 }

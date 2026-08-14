@@ -65,10 +65,7 @@
                     <option value="7" selected>7</option>
                 </select>
             </label>
-            <label class="form-check form-switch robot-panel-bot-c-toggle">
-                <input id="RobotPanelRunBotC" class="form-check-input" type="checkbox" checked>
-                <span class="form-check-label">Incluir Bot C · Modelos 2026</span>
-            </label>
+            <span class="badge rounded-pill text-bg-primary">Todos los bots habilitados</span>
         </div>
     </div>
 
@@ -103,11 +100,11 @@
         <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">2. Upcoming matches</button>
         <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">3. Pinnacle odds</button>
         <button type="button" class="btn btn-outline-primary" data-action="betano-odds">4. Betano odds</button>
-        <button type="button" class="btn btn-outline-secondary" data-action="run-bots">5. Ejecutar Bot A + B + C</button>
+        <button type="button" class="btn btn-outline-secondary" data-action="run-bots">5. Ejecutar todos los bots habilitados</button>
         <button type="button" class="btn btn-primary" data-action="full-run">Ejecutar flujo completo</button>
     </div>
     <div class="text-muted small mt-2">
-        La ejecución incluye Bot A (actual), Bot B (conservador) y Bot C (Modelos 2026) sobre el lote seleccionado.
+        La lista se obtiene en cada ejecución desde el mantenedor. Si habilitas, deshabilitas o creas un bot, el panel respetará ese cambio automáticamente.
     </div>
 </section>
 
@@ -188,7 +185,7 @@
                     <th class="text-end">Omitidos</th>
                     <th class="text-end">Errores</th>
                     <th class="text-end">Recomendaciones</th>
-                    <th class="text-end">Bots A / B / C</th>
+                    <th class="text-end">Resultados por bot</th>
                 </tr>
             </thead>
             <tbody id="RobotPanelSummaryBody"></tbody>
@@ -267,7 +264,6 @@
             const downloadMissingHistoryButton = document.getElementById('RobotPanelDownloadMissingHistory');
             const daysSelect = document.getElementById('RobotPanelDays');
             const upcomingDaysSelect = document.getElementById('RobotPanelUpcomingDays');
-            const runBotCInput = document.getElementById('RobotPanelRunBotC');
             const availableOddsElement = document.getElementById('RobotPanelAvailableOdds');
             const availableMatchesElement = document.getElementById('RobotPanelAvailableMatches');
             const totalBatchesElement = document.getElementById('RobotPanelTotalBatches');
@@ -347,6 +343,20 @@
                 }
             };
 
+            const botCountEntries = result => Object.entries(getValue(result, 'BotCounts') || {})
+                .sort(([left], [right]) => left.localeCompare(right, 'es', { sensitivity: 'base' }));
+
+            const botCountsHtml = result => botCountEntries(result)
+                .map(([bot, count]) => `<span>${escapeHtml(bot)}: ${numberOrDash(count)}</span>`)
+                .join('');
+
+            const botCountsText = result => {
+                const entries = botCountEntries(result);
+                return entries.length
+                    ? entries.map(([bot, count]) => `${bot}: ${numberOrDash(count)}`).join(' · ')
+                    : '-';
+            };
+
             const setBusyState = actionKey => {
                 state.activeAction = actionKey;
                 buttons.forEach(button => {
@@ -368,7 +378,7 @@
                     const badgeClass = isRunning ? 'text-bg-primary' : statusClass(getValue(result, 'Status'));
                     const message = getValue(result, 'ErrorMessage') || getValue(result, 'Message') || (isRunning ? 'Proceso en curso...' : 'Sin ejecutar todavia.');
                     const botCounts = step.key === 'run-bots' && result
-                        ? `<span>A: ${numberOrDash(getValue(result, 'BotACount'))}</span><span>B: ${numberOrDash(getValue(result, 'BotBCount'))}</span><span>C: ${numberOrDash(getValue(result, 'BotCCount'))}</span>`
+                        ? botCountsHtml(result)
                         : '';
 
                     return `
@@ -429,7 +439,7 @@
                         <td class="text-end">${numberOrDash(getValue(step, 'Errors'))}</td>
                         <td class="text-end">${numberOrDash(getValue(step, 'RecommendationsGenerated'))}</td>
                         <td class="text-end">${getValue(step, 'StepKey') === 'run-bots'
-                            ? `${numberOrDash(getValue(step, 'BotACount'))} / ${numberOrDash(getValue(step, 'BotBCount'))} / ${numberOrDash(getValue(step, 'BotCCount'))}`
+                            ? escapeHtml(botCountsText(step))
                             : '-'}</td>
                     </tr>
                 `).join('');
@@ -624,7 +634,7 @@
                             excludeExistingSelections: false,
                             batchNumber,
                             batchSize: botBatchSize,
-                            runBotC: runBotCInput.checked
+                            runAllEnabledBots: true
                         };
                     case 'full-run':
                         return {
@@ -633,7 +643,7 @@
                             excludeExistingSelections: false,
                             botBatchNumber: batchNumber,
                             botBatchSize,
-                            runBotC: runBotCInput.checked
+                            runAllEnabledBots: true
                         };
                     default:
                         return null;

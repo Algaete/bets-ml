@@ -59,7 +59,8 @@ public sealed record RunAutomatedCornersRequest(
     bool OnlyBotC = false,
     string? MarketFamilies = null,
     bool HistoricalBackfill = false,
-    string? BotKeys = null);
+    string? BotKeys = null,
+    bool RunAllEnabledBots = false);
 
 public sealed record AutomatedOddsAvailabilityResponse(
     DateOnly DateFrom,
@@ -86,6 +87,7 @@ public sealed record AutomatedRunResponse(
     int UpdatedRows,
     int SkippedMatches,
     int ErrorMatches,
+    IReadOnlyDictionary<string, int> BotCounts,
     IReadOnlyList<AutomatedSelectionResult> Selections,
     IReadOnlyList<SkippedMatchResult> Skipped,
     IReadOnlyList<ErrorMatchResult> Errors);

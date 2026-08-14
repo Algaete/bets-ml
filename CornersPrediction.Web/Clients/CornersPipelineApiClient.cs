@@ -57,7 +57,7 @@ public sealed class CornersPipelineApiClient
         bool excludeExistingSelections,
         int batchNumber,
         int batchSize,
-        bool runBotC,
+        bool runAllEnabledBots,
         CancellationToken cancellationToken) =>
         PostStepAsync(
             "/api/corners-pipeline/bots",
@@ -66,7 +66,7 @@ public sealed class CornersPipelineApiClient
                 ExcludeExistingSelections = excludeExistingSelections,
                 BatchNumber = batchNumber,
                 BatchSize = batchSize,
-                RunBotC = runBotC
+                RunAllEnabledBots = runAllEnabledBots
             },
             cancellationToken);
 
@@ -76,7 +76,7 @@ public sealed class CornersPipelineApiClient
         bool excludeExistingSelections,
         int botBatchNumber,
         int botBatchSize,
-        bool runBotC,
+        bool runAllEnabledBots,
         CancellationToken cancellationToken)
     {
         var response = await _httpClient.PostAsJsonAsync(
@@ -88,7 +88,7 @@ public sealed class CornersPipelineApiClient
                 ExcludeExistingSelections = excludeExistingSelections,
                 BotBatchNumber = botBatchNumber,
                 BotBatchSize = botBatchSize,
-                RunBotC = runBotC
+                RunAllEnabledBots = runAllEnabledBots
             },
             cancellationToken);
 

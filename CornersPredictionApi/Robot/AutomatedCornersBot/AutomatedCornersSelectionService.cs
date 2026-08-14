@@ -97,12 +97,24 @@ public sealed class AutomatedCornersSelectionService
         var minDistanceToLine = effectiveRequest.MinDistanceToLine ?? _options.MinDistanceToLine;
         var maxContextDifference = effectiveRequest.MaxContextDifference ?? _options.MaxContextDifference;
         var allowDisagreement = effectiveRequest.AllowModelDisagreement ?? _options.AllowModelDisagreement;
+        var requestedMarketFamilies = ParseMarketFamilies(effectiveRequest.MarketFamilies);
         var requestedBotKeys = ParseBotKeys(
             effectiveRequest.BotKeys,
             effectiveRequest.OnlyBotC,
             effectiveRequest.RunBotC ?? true);
-        var requestedMarketFamilies = ParseMarketFamilies(effectiveRequest.MarketFamilies);
-        var botDefinitions = await _botDefinitionRepository.GetByKeysAsync(requestedBotKeys, cancellationToken);
+        var botDefinitions = effectiveRequest.RunAllEnabledBots
+            ? (await _botDefinitionRepository.GetAllAsync(cancellationToken))
+                .Where(definition => definition.IsEnabled)
+                .OrderBy(definition => definition.BotKey, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : await _botDefinitionRepository.GetByKeysAsync(requestedBotKeys, cancellationToken);
+        if (effectiveRequest.RunAllEnabledBots)
+        {
+            requestedBotKeys = botDefinitions
+                .Select(definition => definition.BotKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
         var foundBotKeys = botDefinitions
             .Select(definition => definition.BotKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -627,6 +639,13 @@ public sealed class AutomatedCornersSelectionService
         }
 
         stopwatch.Stop();
+        var botCounts = allBotProfiles.ToDictionary(
+            profile => profile.Key,
+            profile => selections.Count(result => string.Equals(
+                result.Selection.AutomationVersion,
+                profile.AutomationVersion,
+                StringComparison.OrdinalIgnoreCase)),
+            StringComparer.OrdinalIgnoreCase);
         _logger.LogInformation(
             "Automated corners bot run finished. RunId={RunId}, ElapsedSeconds={ElapsedSeconds:0.0}, Selected={Selected}, Skipped={Skipped}, Errors={Errors}, Inserted={Inserted}, Updated={Updated}",
             runId,
@@ -654,6 +673,7 @@ public sealed class AutomatedCornersSelectionService
             UpdatedRows: updatedRows,
             SkippedMatches: skipped.Count,
             ErrorMatches: errors.Count,
+            BotCounts: botCounts,
             Selections: selections,
             Skipped: skipped,
             Errors: errors);

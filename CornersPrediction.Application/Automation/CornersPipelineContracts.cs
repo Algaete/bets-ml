@@ -16,7 +16,8 @@ public sealed record RunBotsCommand(
     bool ExcludeExistingSelections = false,
     int BatchNumber = 1,
     int BatchSize = 100,
-    bool RunBotC = true);
+    bool RunBotC = true,
+    bool RunAllEnabledBots = true);
 
 public sealed record RunFullPipelineCommand(
     int MatchHistoryDays = 7,
@@ -24,7 +25,8 @@ public sealed record RunFullPipelineCommand(
     bool ExcludeExistingSelections = false,
     int BotBatchNumber = 1,
     int BotBatchSize = 100,
-    bool RunBotC = true);
+    bool RunBotC = true,
+    bool RunAllEnabledBots = true);
 
 public sealed record BotOddsAvailability(
     DateOnly DateFrom,
@@ -59,6 +61,8 @@ public sealed record CornersPipelineStepResult
     public int? BotACount { get; init; }
     public int? BotBCount { get; init; }
     public int? BotCCount { get; init; }
+    public IReadOnlyDictionary<string, int> BotCounts { get; init; } =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<MissingHistoryMatch> MissingHistoryMatches { get; init; } = Array.Empty<MissingHistoryMatch>();
     public JsonElement? RawResponse { get; init; }
 }

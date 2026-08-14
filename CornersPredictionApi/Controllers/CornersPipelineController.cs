@@ -58,7 +58,8 @@ public sealed class CornersPipelineController : ControllerBase
                 ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false,
                 BatchNumber: request?.BatchNumber ?? 1,
                 BatchSize: request?.BatchSize ?? 100,
-                RunBotC: request?.RunBotC ?? true),
+                RunBotC: request?.RunBotC ?? true,
+                RunAllEnabledBots: request?.RunAllEnabledBots ?? true),
             cancellationToken));
     }
 
@@ -83,7 +84,8 @@ public sealed class CornersPipelineController : ControllerBase
             ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false,
             BotBatchNumber: request?.BotBatchNumber ?? 1,
             BotBatchSize: request?.BotBatchSize ?? 100,
-            RunBotC: request?.RunBotC ?? true);
+            RunBotC: request?.RunBotC ?? true,
+            RunAllEnabledBots: request?.RunAllEnabledBots ?? true);
 
         return Ok(await _cornersPipelineService.RunFullPipelineAsync(command, cancellationToken));
     }
