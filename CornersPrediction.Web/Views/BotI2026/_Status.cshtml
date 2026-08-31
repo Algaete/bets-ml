@@ -22,7 +22,7 @@
         {
             <div class="i-metrics mb-3">
                 <div class="i-metric"><span class="i-metric-label">Evaluaciones</span><span class="i-metric-value">@Model.Status.Evaluations.ToString("N0")</span></div>
-                <div class="i-metric"><span class="i-metric-label">Aprobadas shadow</span><span class="i-metric-value">@Model.Status.Approved.ToString("N0")</span></div>
+                <div class="i-metric"><span class="i-metric-label">Aprobadas sólo shadow</span><span class="i-metric-value">@Model.Status.Approved.ToString("N0")</span></div>
                 <div class="i-metric"><span class="i-metric-label">Rechazadas</span><span class="i-metric-value">@Model.Status.Rejected.ToString("N0")</span></div>
                 <div class="i-metric"><span class="i-metric-label">Abstenciones</span><span class="i-metric-value">@Model.Status.Abstained.ToString("N0")</span></div>
                 <div class="i-metric"><span class="i-metric-label">Filas inseguras</span><span class="i-metric-value @(Model.Status.UnsafeRows == 0 ? "text-success" : "text-danger")">@Model.Status.UnsafeRows.ToString("N0")</span></div>
@@ -31,7 +31,7 @@
                 <div class="col-12 col-lg-8">
                     <div class="i-guard small">
                         <strong>@(Model.Status.PublicationBlocked ? "Publicación bloqueada." : "Advertencia: publicación no bloqueada.")</strong>
-                        I2026 sólo agrega auditorías append-only. Incluso una decisión <em>Approved</em> no tiene stake y no entra a Bot Picks.
+                        I2026 sólo agrega auditorías append-only. <strong>“Aprobado shadow” significa que superó el filtro experimental, no que se pueda apostar:</strong> no tiene stake y no entra a Bot Picks.
                     </div>
                 </div>
                 <div class="col-12 col-lg-4 small text-secondary">

@@ -7,7 +7,7 @@
 <section class="i-card">
     <div class="i-card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
         <div><h2 class="h5 mb-1">Auditoría de señales</h2><p class="small text-secondary mb-0">Paginación desde SQL; los encabezados ordenan sólo la página visible.</p></div>
-        <span class="badge text-bg-info">Nunca publica</span>
+        <span class="i-decision i-decision-approved">Approved · SHADOW</span>
     </div>
     <div class="i-card-body">
         @if (!Model.EvaluationsAvailable)
@@ -17,7 +17,7 @@
         <form method="get" asp-action="Index" class="row g-2 align-items-end mb-3">
             <div class="col-6 col-lg-2"><label class="form-label small" for="IPredictionFromUtc">Desde UTC</label><input name="PredictionFromUtc" id="IPredictionFromUtc" type="date" class="form-control form-control-sm" value="@Model.Filters.PredictionFromUtc?.ToString("yyyy-MM-dd")" /></div>
             <div class="col-6 col-lg-2"><label class="form-label small" for="IPredictionToUtc">Hasta UTC</label><input name="PredictionToUtc" id="IPredictionToUtc" type="date" class="form-control form-control-sm" value="@Model.Filters.PredictionToUtc?.ToString("yyyy-MM-dd")" /></div>
-            <div class="col-6 col-lg-2"><label class="form-label small" for="IDecision">Decisión</label><select id="IDecision" name="Decision" class="form-select form-select-sm"><option value="">Todas</option><option value="Approved" selected="@(Model.Filters.Decision == "Approved")">Approved</option><option value="Rejected" selected="@(Model.Filters.Decision == "Rejected")">Rejected</option><option value="Abstain" selected="@(Model.Filters.Decision == "Abstain")">Abstain</option></select></div>
+            <div class="col-6 col-lg-2"><label class="form-label small" for="IDecision">Decisión shadow</label><select id="IDecision" name="Decision" class="form-select form-select-sm"><option value="">Todas</option><option value="Approved" selected="@(Model.Filters.Decision == "Approved")">Approved · SHADOW (No apostar)</option><option value="Rejected" selected="@(Model.Filters.Decision == "Rejected")">Rejected · SHADOW</option><option value="Abstain" selected="@(Model.Filters.Decision == "Abstain")">Abstain · SHADOW</option></select></div>
             <div class="col-6 col-lg-2"><label class="form-label small" for="IMarketType">Mercado</label><select id="IMarketType" name="MarketType" class="form-select form-select-sm"><option value="">Todos</option><option value="TotalGoals" selected="@(Model.Filters.MarketType == "TotalGoals")">TotalGoals</option><option value="TotalCorners" selected="@(Model.Filters.MarketType == "TotalCorners")">TotalCorners</option></select></div>
             <div class="col-6 col-lg-2"><label class="form-label small" for="ISelection">Selección</label><select id="ISelection" name="Selection" class="form-select form-select-sm"><option value="">Todas</option><option value="Over" selected="@(Model.Filters.Selection == "Over")">Over</option><option value="Under" selected="@(Model.Filters.Selection == "Under")">Under</option></select></div>
             <div class="col-6 col-lg-2"><label class="form-label small" for="ISource">Bookmaker</label><select id="ISource" name="Source" class="form-select form-select-sm"><option value="">Todos</option><option value="Pinnacle" selected="@(Model.Filters.Source == "Pinnacle")">Pinnacle</option><option value="Betano" selected="@(Model.Filters.Source == "Betano")">Betano</option></select></div>
@@ -26,6 +26,11 @@
             <div class="col-auto"><button type="submit" class="btn btn-sm btn-primary">Aplicar filtros</button></div>
             <div class="col-auto"><a asp-action="Index" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
         </form>
+
+        <div class="i-shadow-help small mb-3" role="note">
+            <strong>No apostar.</strong>
+            Approved sólo significa que la señal pasó las reglas del laboratorio; no autoriza una apuesta real. No tiene stake, no aparece en Bot Picks y su publicación productiva continúa bloqueada.
+        </div>
 
         @if (Model.EvaluationsAvailable)
         {
@@ -57,9 +62,15 @@
                         {
                             var decisionBadge = item.Decision switch
                             {
-                                "Approved" => "text-bg-info",
-                                "Rejected" => "text-bg-secondary",
-                                _ => "text-bg-warning"
+                                "Approved" => "i-decision-approved",
+                                "Rejected" => "i-decision-rejected",
+                                _ => "i-decision-abstain"
+                            };
+                            var decisionLabel = item.Decision switch
+                            {
+                                "Approved" => "Approved · SHADOW",
+                                "Rejected" => "Rejected · SHADOW",
+                                _ => "Abstain · SHADOW"
                             };
                             <tr>
                                 <td data-sort-value="@item.PredictionTimestampUtc.Ticks">@item.PredictionTimestampUtc.ToString("yyyy-MM-dd HH:mm")<div class="small text-secondary">#@item.ShadowEvaluationId</div></td>
@@ -68,7 +79,7 @@
                                 <td data-sort-value="@Sort(item.SelectedOdds)"><strong>@item.Selection</strong> @@ @item.SelectedOdds.ToString("0.00")<div class="small text-secondary">línea @item.CurrentLine.ToString("0.00")</div></td>
                                 <td data-sort-value="@Sort(item.SelectedProbabilityMovement)"><strong>@Pct(item.SelectedProbabilityMovement)</strong><div class="small text-secondary">línea @item.SelectedLineMovement.ToString("+0.00;-0.00;0.00") · @item.ObservationHours.ToString("0.0") h</div></td>
                                 <td data-sort-value="@Sort(item.CrossBookProbabilityDispersion)">@(item.PeerSource ?? "sin peer")<div class="small text-secondary">prob. @Pct(item.CrossBookProbabilityDispersion) · línea @(item.CrossBookLineDispersion?.ToString("+0.00;-0.00;0.00") ?? "—")</div></td>
-                                <td data-sort-value="@Sort(item.SignalScore)"><span class="badge @decisionBadge">@item.Decision</span><div class="small text-secondary">score @Pct(item.SignalScore)</div></td>
+                                <td data-sort-value="@Sort(item.SignalScore)"><span class="i-decision @decisionBadge">@decisionLabel</span>@if (item.Decision == "Approved") {<div class="small i-no-bet">No apostar</div>}<div class="small text-secondary">score @Pct(item.SignalScore)</div></td>
                                 <td data-sort-value="@item.SettlementState">@item.SettlementState<div class="small text-secondary">@(item.Result ?? "—") · P/L @Units(item.ProfitLoss)</div></td>
                                 <td class="i-explanation"><strong>@(item.PublicationBlocked ? "Publicación bloqueada" : "REVISAR BARRERA")</strong><div class="small text-secondary">@item.Explanation</div><details class="small mt-1"><summary>Linaje</summary><div>Open #@item.OpeningSnapshotId → current #@item.CurrentSnapshotId</div><div>Peer #@(item.PeerSnapshotId?.ToString() ?? "—") · fixture @item.FixtureIdentity</div></details></td>
                             </tr>

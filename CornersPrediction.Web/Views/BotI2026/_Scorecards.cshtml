@@ -36,7 +36,7 @@
                                 <div class="col-6"><span class="text-secondary d-block">Resueltos</span><strong>@row.Settled.ToString("N0")</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">Yield virtual</span><strong>@Pct(row.Yield)</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">P/L virtual</span><strong>@Units(row.ProfitLoss)</strong></div>
-                                <div class="col-6"><span class="text-secondary d-block">Aprobación</span><strong>@Pct(row.ApprovalRate)</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Aprobación shadow</span><strong>@Pct(row.ApprovalRate)</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">Cruce books</span><strong>@Pct(row.CrossBookCoverageRate)</strong></div>
                             </div>
                         </div>
@@ -51,7 +51,7 @@
                         <th><button type="button" class="i-sort js-i-sort" data-column="2">Segmento</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="3">Evaluaciones</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="4">Partidos</button></th>
-                        <th><button type="button" class="i-sort js-i-sort" data-column="5">Aprobadas</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="5">Aprobadas shadow</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="6">Resueltas</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="7">Yield virtual</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="8">P/L virtual</button></th>
@@ -84,7 +84,7 @@
                     </tbody>
                 </table>
             </div>
-            <p class="small text-secondary mt-2 mb-0">Tipo: <code>@Model.Scorecards.First().ScorecardType</code>. Todas las cifras económicas son virtuales.</p>
+            <p class="small text-secondary mt-2 mb-0">Tipo: <code>@Model.Scorecards.First().ScorecardType</code>. Todas las cifras económicas son virtuales; una aprobación shadow nunca autoriza una apuesta.</p>
         }
     </div>
 </section>

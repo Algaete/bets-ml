@@ -14,7 +14,9 @@ var tests = new (string Name, Action Run)[]
     ("Dashboard components fail independently", DashboardComponentsFailIndependently),
     ("Invalid collection is rejected before the API", InvalidCollectionDoesNotCallApi),
     ("Collection is protected against request forgery", CollectionRequiresAntiforgery),
-    ("Razor surface is responsive, sortable and explicitly non-productive", RazorSurfaceIsSafeAndResponsive)
+    ("Razor surface is responsive, sortable and explicitly non-productive", RazorSurfaceIsSafeAndResponsive),
+    ("Approved is labelled as shadow and never as permission to bet", ApprovedIsExplicitlyShadowOnly),
+    ("Approved badge has explicit accessible contrast", ApprovedBadgeHasExplicitContrast)
 };
 
 var failures = 0;
@@ -199,6 +201,33 @@ static void RazorSurfaceIsSafeAndResponsive()
     Check(!index.Contains("asp-action=\"Publish", StringComparison.OrdinalIgnoreCase)
           && !index.Contains("js-i-publish", StringComparison.OrdinalIgnoreCase),
         "I2026 must not expose a publication command.");
+}
+
+static void ApprovedIsExplicitlyShadowOnly()
+{
+    var root = FindRepositoryRoot();
+    var evaluations = File.ReadAllText(Path.Combine(root, "CornersPrediction.Web", "Views", "BotI2026", "_Evaluations.cshtml"));
+
+    Contains(evaluations, "Approved · SHADOW");
+    Contains(evaluations, "No apostar");
+    Contains(evaluations, "Approved sólo significa que la señal pasó las reglas del laboratorio");
+    Contains(evaluations, "no autoriza una apuesta real");
+    Check(evaluations.Contains("item.PublicationBlocked", StringComparison.Ordinal),
+        "The audit row must continue displaying the publication barrier for every shadow decision.");
+}
+
+static void ApprovedBadgeHasExplicitContrast()
+{
+    var root = FindRepositoryRoot();
+    var index = File.ReadAllText(Path.Combine(root, "CornersPrediction.Web", "Views", "BotI2026", "Index.cshtml"));
+    var evaluations = File.ReadAllText(Path.Combine(root, "CornersPrediction.Web", "Views", "BotI2026", "_Evaluations.cshtml"));
+
+    Contains(evaluations, "i-decision-approved");
+    Contains(index, ".i-decision-approved");
+    Contains(index, "color:");
+    Contains(index, "background:");
+    Check(!evaluations.Contains("\"Approved\" => \"text-bg-info\"", StringComparison.Ordinal),
+        "Approved must not depend on Bootstrap's contextual badge contrast in the current theme.");
 }
 
 static HttpResponseMessage ResponseFor(HttpRequestMessage request, string failComponent)

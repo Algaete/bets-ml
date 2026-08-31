@@ -14,6 +14,17 @@
     .i-status::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 .2rem color-mix(in srgb, currentColor 18%, transparent); }
     .i-status-safe { color: var(--bs-info); border: 1px solid rgba(13, 202, 240, .55); background: rgba(13, 202, 240, .1); }
     .i-status-danger { color: var(--bs-danger); border: 1px solid rgba(220, 53, 69, .55); background: rgba(220, 53, 69, .1); }
+    .i-decision { display: inline-flex; align-items: center; justify-content: center; max-width: 12rem; border: 1px solid transparent; border-radius: 999px; padding: .3rem .62rem; font-size: .7rem; font-weight: 800; line-height: 1.2; text-align: center; white-space: normal; }
+    .i-decision-approved { color: #064e3b !important; border-color: #10b981; background: #d1fae5 !important; }
+    .i-decision-rejected { color: #334155 !important; border-color: #94a3b8; background: #e2e8f0 !important; }
+    .i-decision-abstain { color: #78350f !important; border-color: #f59e0b; background: #fef3c7 !important; }
+    .i-no-bet { color: #b42318; font-weight: 800; }
+    .i-shadow-help { border: 1px solid #0ea5e9; border-left-width: .3rem; border-radius: .7rem; padding: .72rem .85rem; color: #0c4a6e; background: #e0f2fe; }
+    :root[data-theme="dark"] .i-decision-approved { color: #d1fae5 !important; border-color: #34d399; background: #064e3b !important; }
+    :root[data-theme="dark"] .i-decision-rejected { color: #f1f5f9 !important; border-color: #94a3b8; background: #334155 !important; }
+    :root[data-theme="dark"] .i-decision-abstain { color: #fef3c7 !important; border-color: #fbbf24; background: #78350f !important; }
+    :root[data-theme="dark"] .i-no-bet { color: #fda29b; }
+    :root[data-theme="dark"] .i-shadow-help { color: #e0f2fe; border-color: #38bdf8; background: #0c4a6e; }
     .i-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .7rem; }
     .i-metric { min-width: 0; border: 1px solid var(--bs-border-color); border-radius: .8rem; padding: .85rem; background: var(--bs-body-bg); }
     .i-metric-label { display: block; color: var(--bs-secondary-color); font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; }
@@ -41,7 +52,7 @@
         <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
             <div>
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <span class="i-status i-status-safe">SHADOW ONLY</span>
+                    <span class="i-status i-status-safe">SHADOW · NO APOSTAR</span>
                     <span class="badge text-bg-secondary">Movimiento de mercado</span>
                     <span class="badge text-bg-info">Publicación bloqueada</span>
                 </div>
