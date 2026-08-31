@@ -59,6 +59,7 @@ public static class AutomatedBotProductionEligibilityPolicy
     public const int RequiredWindowDays = 30;
     public const int MinimumPredictiveFixtures = 100;
     public const int MinimumControlledTrialFixtures = 30;
+    public const decimal MinimumControlledTrialYield = 0.07m;
     public const decimal GreenMaxStakeUnits = 1m;
     public const decimal ControlledTrialMaxStakeUnits = 0.5m;
 
@@ -129,6 +130,35 @@ public static class AutomatedBotProductionEligibilityPolicy
                 || family?.ProductionBlocked == true))
             return Block("La familia completa del bot está en semáforo rojo.", market, family);
 
+        var isControlledTrialSignal = IsControlledTrialGoalsSignal(
+            botKey,
+            marketFamily,
+            marketType,
+            selectedSide,
+            bookmaker);
+        if (isControlledTrialSignal)
+        {
+            if (market.PredictiveFixtures >= MinimumControlledTrialFixtures
+                && market.Yield is >= MinimumControlledTrialYield
+                && market.CalibrationGap is not null
+                && Math.Abs(market.CalibrationGap.Value) <= 0.05d
+                && market.DeltaBrier is <= 0d
+                && !market.ProductionBlocked)
+            {
+                return Allow(
+                    "ControlledTrial",
+                    ControlledTrialMaxStakeUnits,
+                    $"Elegible: prueba controlada GOALS 30d con {market.PredictiveFixtures} partidos independientes y yield de al menos {MinimumControlledTrialYield:P0}; máximo {ControlledTrialMaxStakeUnits:0.##}u.",
+                    market,
+                    family);
+            }
+
+            return Block(
+                $"La cohorte controlada C/F no cumple muestra, yield mínimo de {MinimumControlledTrialYield:P0}, calibración o Brier; no puede saltar automáticamente a Green.",
+                market,
+                family);
+        }
+
         if (market.PredictiveFixtures >= MinimumPredictiveFixtures
             && market.TrafficLight.Equals("Green", StringComparison.OrdinalIgnoreCase)
             && !market.ProductionBlocked)
@@ -137,27 +167,6 @@ public static class AutomatedBotProductionEligibilityPolicy
                 "Green",
                 GreenMaxStakeUnits,
                 $"Elegible: Green 30d con {market.PredictiveFixtures} partidos independientes; máximo {GreenMaxStakeUnits:0.##}u.",
-                market,
-                family);
-        }
-
-        if (IsControlledTrialGoalsSignal(
-                botKey,
-                marketFamily,
-                marketType,
-                selectedSide,
-                bookmaker)
-            && market.PredictiveFixtures >= MinimumControlledTrialFixtures
-            && market.Yield is > 0m
-            && market.CalibrationGap is not null
-            && Math.Abs(market.CalibrationGap.Value) <= 0.05d
-            && market.DeltaBrier is <= 0d
-            && !market.ProductionBlocked)
-        {
-            return Allow(
-                "ControlledTrial",
-                ControlledTrialMaxStakeUnits,
-                $"Elegible: prueba controlada GOALS 30d con {market.PredictiveFixtures} partidos independientes; máximo {ControlledTrialMaxStakeUnits:0.##}u.",
                 market,
                 family);
         }
@@ -190,7 +199,8 @@ public static class AutomatedBotProductionEligibilityPolicy
         string marketType,
         string selectedSide,
         string bookmaker) =>
-        botKey.Equals("C2026", StringComparison.OrdinalIgnoreCase)
+        (botKey.Equals("C2026", StringComparison.OrdinalIgnoreCase)
+            || botKey.Equals("F2026", StringComparison.OrdinalIgnoreCase))
         && marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
         && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
         && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)

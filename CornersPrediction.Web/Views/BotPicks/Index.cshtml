@@ -108,12 +108,12 @@
 <div class="bot-picks-tabs-heading">
     <div>
         <h2 class="h6 mb-1">Alcance del resumen · @Model.Market.Title</h2>
-        <p class="text-muted small mb-0">Plan global muestra la cartera canónica entre todos los bots. Elige un bot para aislar su aporte sin mezclar mercados.</p>
+        <p class="text-muted small mb-0">El resumen global muestra el histórico de todos los bots. El bloque «Plan vigente futuro» indica, por separado, qué picks nuevos están autorizados.</p>
     </div>
 </div>
 <section class="bot-picks-tabs mb-3" role="tablist" aria-label="Bot activo para el resumen">
     <button class="bot-picks-tab" type="button" role="tab" data-bot-tab="" aria-selected="false">
-        <span class="bot-picks-tab-label">Plan global · todos</span>
+        <span class="bot-picks-tab-label">Resumen global · todos</span>
         <span id="BotPicksTabAllCount" class="bot-picks-tab-count">...</span>
     </button>
     <button class="bot-picks-tab bot-picks-tab-a" type="button" role="tab" data-bot-tab="A" aria-selected="false">
@@ -143,7 +143,7 @@
 </section>
 
 <div id="BotPicksSelectBotSummary" class="alert alert-info d-none mb-4" role="note">
-    El plan global consolida todos los bots activos y conserva una sola apuesta productiva por partido.
+    El resumen global compara todos los bots. El plan vigente futuro conserva una sola apuesta autorizada por partido.
 </div>
 
 <aside id="BotPicksBotContext" class="bot-picks-context-card mb-4" aria-live="polite">
@@ -157,15 +157,15 @@
 
 <section id="BotPicksProductionPlan" class="bot-production-plan mb-4" aria-label="Plan productivo del bot activo">
     <div class="bot-production-plan-copy">
-        <div class="text-uppercase fw-semibold">Plan productivo controlado</div>
-        <h2>Máximo una apuesta principal por partido</h2>
+        <div class="text-uppercase fw-semibold">Plan vigente futuro</div>
+        <h2>Picks nuevos autorizados · máximo uno por partido</h2>
         @if (isCornersMarket)
         {
             <p>Para partidos futuros rige el gate actual. El gráfico reconstruye por separado CORNERS V1 con la regla que estaba vigente antes del cambio: una señal por partido, córners local a 1u o visita a 0.5u. Es una simulación histórica, no una apuesta confirmada.</p>
         }
         else if (Model.Market.Key == "goals")
         {
-            <p>Para partidos futuros, sólo goles de equipo con gate vigente: Green usa 1u y una prueba controlada exacta puede usar 0.5u. El resultado anterior se conserva aparte como simulación histórica GOALS V1 a 1u; el cambio de hoy no reescala el pasado.</p>
+            <p>Para partidos futuros, Green usa 1u. Además, C o F pueden usar 0.5u únicamente en la cohorte exacta «goles visita · Over · Pinnacle», con 30+ partidos, yield mínimo 7%, calibración ≤ 5 pp y Brier no peor que el mercado. Esta cohorte no sube automáticamente a 1u por tener 100 históricos: primero debe reunir 100 picks prospectivos bajo V4. A no entra en esta prueba. La cartera admite <strong>máximo 2u globales por día</strong>; las señales que exceden ese límite quedan en Monitoreo. El resultado anterior aparece aparte como simulación histórica GOALS V1; no representa apuestas ejecutadas.</p>
         }
         else
         {
@@ -174,15 +174,15 @@
     </div>
     <div class="bot-production-plan-stats">
         <div class="bot-production-stat bot-production-stat-primary">
-            <span>Para apostar 1u</span>
+            <span>Picks futuros · 1u</span>
             <strong id="BotPicksPlanOneUnit">...</strong>
         </div>
         <div class="bot-production-stat bot-production-stat-secondary">
-            <span>Para apostar 0.5u</span>
+            <span>Picks futuros · prueba 0.5u</span>
             <strong id="BotPicksPlanHalfUnit">...</strong>
         </div>
         <div class="bot-production-stat bot-production-stat-monitor">
-            <span>Monitoreo pendiente</span>
+            <span>Picks futuros · sólo monitoreo</span>
             <strong id="BotPicksPlanMonitoring">...</strong>
         </div>
     </div>
@@ -201,7 +201,14 @@
     </div>
 </div>
 
-<section class="metric-grid bot-picks-metric-grid mb-4" aria-label="Resumen estadístico de Bot Picks">
+@if (historicalPlanLabel is not null)
+{
+    <div class="alert alert-secondary mb-3" role="note">
+        <strong>Datos hacia atrás:</strong> las tarjetas y el gráfico siguientes son una <strong>simulación histórica reconstruida</strong> con @historicalPlanLabel; no confirman apuestas reales ni modifican el plan vigente futuro mostrado arriba.
+    </div>
+}
+
+<section class="metric-grid bot-picks-metric-grid mb-4" aria-label="Resumen estadístico histórico de Bot Picks">
     <div class="metric-tile bot-metric-total">
         <div id="BotPicksTotalLabel" class="metric-label">Señales de todos los bots</div>
         <div id="BotPicksTotal" class="metric-value">...</div>
@@ -223,12 +230,12 @@
         <div id="BotPicksVoid" class="metric-value">...</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Resultado del período · todos a 1u</div>
+        <div class="metric-label">Resultado histórico del período · todos a 1u</div>
         <div id="BotPicksProfitLoss" class="metric-value">...</div>
         <div id="BotPicksProfitLossHelp" class="metric-footnote">Sólo picks ganados y perdidos</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Yield del período · todos a 1u</div>
+        <div class="metric-label">Yield histórico del período · todos a 1u</div>
         <div id="BotPicksYieldPct" class="metric-value">...</div>
         <div id="BotPicksYieldHelp" class="metric-footnote">Resultado ÷ unidades apostadas</div>
     </div>
@@ -252,11 +259,11 @@
 <section class="surface-panel bot-bankroll-chart-panel mb-4" aria-labelledby="BotPicksBankrollChartTitle">
     <div class="bot-bankroll-chart-heading">
         <div>
-            <h2 id="BotPicksBankrollChartTitle" class="h6 mb-1">Evolución del saldo</h2>
-            <div class="text-muted small">Cada punto agrega un pick resuelto del período, ordenado por fecha. Los pendientes no cambian el saldo.</div>
+            <h2 id="BotPicksBankrollChartTitle" class="h6 mb-1">Simulación histórica del saldo</h2>
+            <div class="text-muted small">Reconstrucción teórica: cada punto agrega un pick resuelto del período. No demuestra que esa apuesta se haya ejecutado y los pendientes no cambian el saldo.</div>
         </div>
         <div class="bot-bankroll-chart-values" aria-label="Saldos finales del gráfico">
-            <span><i class="bot-chart-dot bot-chart-dot-recommended"></i>@(historicalPlanLabel is null ? "Plan recomendado" : $"Histórico {historicalPlanLabel}") <strong id="BotPicksChartRecommendedValue">...</strong></span>
+            <span><i class="bot-chart-dot bot-chart-dot-recommended"></i>@(historicalPlanLabel is null ? "Plan recomendado" : $"Simulación histórica {historicalPlanLabel}") <strong id="BotPicksChartRecommendedValue">...</strong></span>
             <span><i class="bot-chart-dot bot-chart-dot-all"></i>Todos a 1u <strong id="BotPicksChartAllValue">...</strong></span>
         </div>
     </div>
@@ -268,7 +275,11 @@
 </section>
 </div>
 
-<section class="bot-comparison-grid mb-4" aria-label="Comparación por bot del período">
+<div class="mb-2">
+    <strong>Tarjetas históricas por bot</strong>
+    <div class="text-muted small">P/L y yield usan resultados pasados; la línea «Simulación histórica» no autoriza picks futuros.</div>
+</div>
+<section class="bot-comparison-grid mb-4" aria-label="Comparación histórica por bot del período">
     <div class="bot-comparison-card bot-comparison-card-a" data-summary-bot="A" role="button" tabindex="0" aria-label="Ver estadísticas del Bot A">
         <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
@@ -364,14 +375,14 @@
 <details id="BotPicksServerMonitoring" class="surface-panel bot-picks-collapsible mb-4" open>
     <summary>
         <span>
-            <strong>Semáforo automático del servidor</strong>
-            <small>Guardia 7/30/90 días por versión, mercado, lado y casa; Green habilita 1u y una cohorte GOALS controlada puede habilitar 0.5u</small>
+            <strong>Gate vigente para picks futuros</strong>
+            <small>No reconstruye el pasado: Green habilita 1u; sólo C/F en goles visita Over de Pinnacle pueden optar a la prueba de 0.5u</small>
         </span>
         <span aria-hidden="true">Abrir</span>
     </summary>
     <div class="bot-picks-collapsible-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <p class="text-muted small mb-0">El yield y la calibración se calculan una vez por partido para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Un número económico verde sólo significa ROI positivo: Green exige 100 partidos independientes. En goles de equipo, una cohorte exacta con 30–99 partidos, ROI positivo, brecha <= 5 pp y Δ Brier <= 0 puede entrar sólo como prueba controlada de 0.5u.</p>
+            <p class="text-muted small mb-0">Este gate decide únicamente picks nuevos. Yield y calibración se calculan una vez por partido para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Green genérico exige 100 partidos independientes. La excepción controlada exige Bot C o F, goles visita, Over, Pinnacle, 30+ partidos, yield ≥ 7%, brecha ≤ 5 pp y Δ Brier ≤ 0; permanece en 0.5u hasta acumular 100 picks prospectivos V4. A queda fuera de esa excepción.</p>
             <div class="btn-group btn-group-sm" role="group" aria-label="Ventana del semáforo">
                 <button type="button" class="btn btn-outline-secondary" data-scorecard-window="7">7 días</button>
                 <button type="button" class="btn btn-primary" data-scorecard-window="30">30 días</button>
@@ -526,12 +537,12 @@
             <input id="SearchText" class="form-control" type="search" placeholder="Equipo o liga" autocomplete="off" />
         </div>
         <div class="col-sm-6 col-xl-2">
-            <label class="form-label" for="StrategyPlan">Plan productivo</label>
+            <label class="form-label" for="StrategyPlan">Estado del plan</label>
             <select id="StrategyPlan" class="form-select">
                 <option value="">Todos</option>
-                <option value="bet">Para apostar</option>
+                <option value="bet">Plan / simulación con stake</option>
                 <option value="stake-1">Stake 1u</option>
-                <option value="stake-half">Stake 0.5u</option>
+                <option value="stake-half">Prueba 0.5u</option>
                 <option value="monitor">Monitoreo</option>
             </select>
         </div>
@@ -740,7 +751,7 @@
         <div class="bot-ds-card-heading">
             <div>
                 <h3>Mapa de segmentos</h3>
-                <p>Bot, plan productivo, mercado y casa de apuesta ordenados por ROI. Minimo sugerido: 10 apuestas.</p>
+                <p>Bot, simulación histórica, mercado y casa de apuesta ordenados por ROI pasado. No equivale al plan vigente futuro. Mínimo sugerido: 10 apuestas.</p>
             </div>
             <span id="BotPicksDsSegmentCount">0 segmentos</span>
         </div>
@@ -1991,7 +2002,7 @@
                 if (botKey === 'F') {
                     return {
                         title: 'Legacy ML + calibración empírica',
-                        text: 'Usa como señal base los modelos anteriores de córners, goles, tiros y tiros al arco. Después aplica el mismo aprendizaje walk-forward de resultados asiáticos de Bot E, aislado en su propia evidencia F.'
+                        text: 'Usa como señal base los modelos anteriores y calibración walk-forward. Un ROI histórico verde no autoriza apuestas por sí solo: únicamente el plan vigente futuro puede abrir la prueba exacta F de goles visita Over en Pinnacle a 0.5u.'
                     };
                 }
 
@@ -2003,7 +2014,7 @@
                 }
 
                 if (botKey === 'A') {
-                    return { title: 'Bot A · estrategia actual', text: 'Sirve como línea base histórica. Sus estadísticas se mantienen separadas para no mezclar resultados con los modelos experimentales.' };
+                    return { title: 'Bot A · línea base histórica', text: 'Sus tarjetas verdes describen resultados pasados y no lo incluyen en la excepción controlada C/F. A sólo puede aparecer en el plan futuro si el gate normal alcanza Green con 100 partidos independientes.' };
                 }
 
                 if (botKey === 'Legacy') {
@@ -2011,8 +2022,8 @@
                 }
 
                 return {
-                    title: `Plan global · ${marketFamily === 'corners' ? 'córners' : marketFamily === 'goals' ? 'goles' : marketFamily.toUpperCase()}`,
-                    text: 'Consolida las señales de todos los bots activos, pero sólo contabiliza la apuesta canónica elegida por el backend para cada partido. Los duplicados y alternativas permanecen en monitoreo.'
+                    title: `Resumen histórico global · ${marketFamily === 'corners' ? 'córners' : marketFamily === 'goals' ? 'goles' : marketFamily.toUpperCase()}`,
+                    text: 'Compara el desempeño pasado de todos los bots. No autoriza apuestas nuevas: para eso se usa exclusivamente el bloque «Plan vigente futuro», que conserva una sola señal por partido.'
                 };
             };
 
@@ -2107,11 +2118,11 @@
                     const activePerformance = performanceOf(activeItems);
                     const sample = sampleLabel(activePerformance.count);
                     const context = botContextCopy(activeBotTab);
-                    summaryTitle.textContent = `Resumen del período · ${activeLabel}`;
+                    summaryTitle.textContent = `Resumen histórico del período · ${activeLabel}`;
                     summaryScope.textContent =
-                        `Aísla ${activeLabel} dentro del plan canónico de ${marketFamily}; no vuelve a elegir otro pick para reemplazar al ganador global.`;
-                    bankrollChartTitle.textContent = `Evolución del saldo · ${activeLabel}`;
-                    document.getElementById('BotPicksTotalLabel').textContent = 'Picks simulados del bot';
+                        `Aísla el desempeño pasado de ${activeLabel}; no autoriza picks futuros. Consulta el bloque «Plan vigente futuro» para las decisiones nuevas.`;
+                    bankrollChartTitle.textContent = `Simulación histórica del saldo · ${activeLabel}`;
+                    document.getElementById('BotPicksTotalLabel').textContent = 'Picks históricos del bot';
                     botContextTitle.textContent = context.title;
                     botContextText.textContent = context.text;
                     botContextSample.textContent = `${sample.label} · ${activePerformance.count} resueltas`;
@@ -2120,11 +2131,11 @@
                     const context = botContextCopy('');
                     const globalPerformance = performanceOf(baseItems);
                     const sample = sampleLabel(globalPerformance.count);
-                    summaryTitle.textContent = `Plan global del período · ${botTabLabel('')}`;
+                    summaryTitle.textContent = `Resumen histórico global · ${botTabLabel('')}`;
                     summaryScope.textContent =
-                        `Consolida A, C, D, E y F para ${marketFamily}; el saldo recomendado usa como máximo una apuesta productiva por partido.`;
-                    bankrollChartTitle.textContent = `Evolución del saldo · plan global de ${marketFamily}`;
-                    document.getElementById('BotPicksTotalLabel').textContent = 'Señales de todos los bots';
+                        `Compara resultados pasados de A, C, D, E y F para ${marketFamily}. No autoriza el plan futuro; ese gate aparece en el bloque superior.`;
+                    bankrollChartTitle.textContent = `Simulación histórica del saldo · todos los bots de ${marketFamily}`;
+                    document.getElementById('BotPicksTotalLabel').textContent = 'Señales históricas de todos los bots';
                     botContextTitle.textContent = context.title;
                     botContextText.textContent = context.text;
                     botContextSample.textContent = `${sample.label} · ${globalPerformance.count} resueltas`;
@@ -2295,6 +2306,18 @@
                             const productiveProfitLoss = productiveSettledItems.reduce(
                                 (sum, item) => sum + simulatedProfitLoss(item, getProductionPlan(item).stakeUnits),
                                 0);
+                            const historicalProductiveItems = productiveBotItems.filter(item =>
+                                getProductionPlan(item).isHistoricalReconstruction);
+                            const historicalSettledItems = historicalProductiveItems.filter(item =>
+                                ['won', 'lost', 'push'].includes(String(getValue(item, 'Status')).toLowerCase()));
+                            const historicalStake = historicalSettledItems.reduce(
+                                (sum, item) => sum + getProductionPlan(item).stakeUnits,
+                                0);
+                            const historicalProfitLoss = historicalSettledItems.reduce(
+                                (sum, item) => sum + simulatedProfitLoss(item, getProductionPlan(item).stakeUnits),
+                                0);
+                            const currentPlanItems = productiveBotItems.filter(item =>
+                                !getProductionPlan(item).isHistoricalReconstruction);
 
 		                    return {
 		                        total: botItems.length,
@@ -2309,7 +2332,15 @@
                                 productiveProfitLoss,
                                 productiveYieldPct: productiveStake > 0
                                     ? (productiveProfitLoss / productiveStake) * 100
-                                    : null
+                                    : null,
+                                historicalTotal: historicalProductiveItems.length,
+                                historicalSettled: historicalSettledItems.length,
+                                historicalStake,
+                                historicalProfitLoss,
+                                historicalYieldPct: historicalStake > 0
+                                    ? (historicalProfitLoss / historicalStake) * 100
+                                    : null,
+                                currentPlanTotal: currentPlanItems.length
 		                    };
 		                };
 
@@ -2410,18 +2441,22 @@
 		                    document.getElementById(`${prefix}Record`).textContent = `${summary.won} W / ${summary.lost} L / ${summary.pending} P`;
 
 		                    const profitElement = document.getElementById(`${prefix}Profit`);
-		                    profitElement.textContent = `P/L ${formatDecimal(summary.profitLoss)}`;
+		                    profitElement.textContent = `P/L histórico ${formatDecimal(summary.profitLoss)}`;
 		                    profitElement.className = signedClass(summary.profitLoss);
 
-		                    const yieldElement = document.getElementById(`${prefix}Yield`);
-		                    yieldElement.textContent = `Yield ${summary.yieldPct === null ? '-' : `${compactDecimalFormatter.format(summary.yieldPct)}%`}`;
+                            const yieldElement = document.getElementById(`${prefix}Yield`);
+		                    yieldElement.textContent = `Yield histórico ${summary.yieldPct === null ? '-' : `${compactDecimalFormatter.format(summary.yieldPct)}%`}`;
 		                    yieldElement.className = signedClass(summary.yieldPct);
 
                             const planElement = document.getElementById(`${prefix}Plan`);
-                            planElement.textContent = summary.productiveSettled === 0
-                                ? `Plan global: ${summary.productiveTotal} seleccionadas · sin resultados`
-                                : `Plan global: ${summary.productiveTotal} seleccionadas · ${formatCompact(summary.productiveStake)}u resueltas · P/L ${formatDecimal(summary.productiveProfitLoss)}u · ROI ${compactDecimalFormatter.format(summary.productiveYieldPct)}%`;
-                            planElement.className = `bot-comparison-plan ${signedClass(summary.productiveProfitLoss)}`;
+                            const historicalPlanName = historicalReconstructionLabel
+                                ? `Simulación histórica ${historicalReconstructionLabel}`
+                                : 'Resumen histórico';
+                            const historicalCopy = summary.historicalSettled === 0
+                                ? `${historicalPlanName}: ${summary.historicalTotal} seleccionadas · sin resultados`
+                                : `${historicalPlanName}: ${summary.historicalSettled} resueltas · ${formatCompact(summary.historicalStake)}u · P/L ${formatDecimal(summary.historicalProfitLoss)}u · ROI ${compactDecimalFormatter.format(summary.historicalYieldPct)}%`;
+                            planElement.textContent = `${historicalCopy} · Plan vigente registrado: ${summary.currentPlanTotal}`;
+                            planElement.className = `bot-comparison-plan ${signedClass(summary.historicalProfitLoss)}`;
 
                             const resolvedCount = summary.won + summary.lost;
                             const sample = sampleLabel(resolvedCount);
@@ -2587,7 +2622,7 @@
                             const productionPlanLabel = productionPlan.isHistoricalReconstruction
                                 ? productionPlan.label
                                 : productionPlan.stakeUnits > 0 && (!isPending || !isUpcoming)
-                                ? `Plan histórico ${formatCompact(productionPlan.stakeUnits)}u`
+                                ? `Plan vigente registrado ${formatCompact(productionPlan.stakeUnits)}u`
                                 : productionPlan.label;
 
 	                    const resultActions = canUpdateResults
@@ -2616,7 +2651,7 @@
 
                         const bettingAction = productionPlan.stakeUnits > 0 && isPending && isUpcoming
                             ? `<a class="btn btn-sm bot-production-bet-button" href="${escapeHtml(buildBettingCreateUrl(item, 'Flat', productionPlan.stakeUnits))}">${escapeHtml(productionPlan.label)}</a>`
-                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.isHistoricalReconstruction ? 'Simulación histórica' : productionPlan.stakeUnits > 0 ? 'Plan histórico' : 'Sólo monitoreo'}</span>`;
+                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.isHistoricalReconstruction ? 'Simulación histórica' : productionPlan.stakeUnits > 0 ? 'Plan vigente registrado' : 'Sólo monitoreo'}</span>`;
 
                         const shortNote = settlementNote && String(settlementNote).length > 105
                             ? `${String(settlementNote).slice(0, 102)}...`
@@ -3236,11 +3271,16 @@
                         const yieldValue = number(getValue(row, 'Yield'));
                         const fixtures = Number(getValue(row, 'PredictiveFixtures') ?? 0);
                         const marketType = String(getValue(row, 'MarketType') ?? '');
+                        const botKey = String(getValue(row, 'BotKey') ?? '').toUpperCase();
+                        const selectedSide = String(getValue(row, 'SelectedSide') ?? '');
+                        const bookmaker = String(getValue(row, 'Bookmaker') ?? '');
                         const controlledTrial = Number(getValue(row, 'WindowDays')) === 30
-                            && (marketType === 'HomeTeamGoals' || marketType === 'AwayTeamGoals')
+                            && (botKey === 'C2026' || botKey === 'F2026')
+                            && marketType === 'AwayTeamGoals'
+                            && selectedSide.toLowerCase() === 'over'
+                            && bookmaker.toLowerCase() === 'pinnacle'
                             && fixtures >= 30
-                            && fixtures < 100
-                            && yieldValue !== null && yieldValue > 0
+                            && yieldValue !== null && yieldValue >= 0.07
                             && gap !== null && Math.abs(gap) <= 0.05
                             && deltaBrier !== null && deltaBrier <= 0
                             && getValue(row, 'ProductionBlocked') !== true;

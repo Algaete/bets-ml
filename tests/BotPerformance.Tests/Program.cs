@@ -89,11 +89,56 @@ var challengerTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
     [controlledTrialCard with { BotKey = "D2026", AutomationVersion = "AutomatedCornersBotV1.0-D2026" }],
     "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
 if (challengerTrial.CanPublish)
-    throw new InvalidOperationException("A D/E/F challenger entered C2026's controlled trial.");
+    throw new InvalidOperationException("A D/E challenger entered the C2026/F2026 controlled trial.");
+
+var botFTrialCard = controlledTrialCard with
+{
+    BotKey = "F2026",
+    AutomationVersion = "AutomatedCornersBotV1.0-F2026"
+};
+var botFTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [botFTrialCard], "F2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-F2026", 1.5m, freshOdds, now);
+if (!botFTrial.CanPublish)
+    throw new InvalidOperationException($"Healthy F2026 GOALS controlled trial was blocked: {botFTrial.Reason}");
+Equal("ControlledTrial", botFTrial.Tier ?? string.Empty, "F2026 controlled-trial eligibility tier");
+EqualDecimal(0.5m, botFTrial.MaxStakeUnits, "F2026 controlled-trial stake cap");
+var botFHistoricalGreen = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [botFTrialCard with { PredictiveFixtures = 150, PredictiveResolved = 150, TrafficLight = "Green" }],
+    "F2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-F2026", 1.5m, freshOdds, now);
+if (!botFHistoricalGreen.CanPublish || botFHistoricalGreen.Tier != "ControlledTrial")
+    throw new InvalidOperationException("F2026 historical Green bypassed the controlled-trial tier.");
+EqualDecimal(0.5m, botFHistoricalGreen.MaxStakeUnits, "F2026 historical Green remains capped");
+var botFWeakHistoricalGreen = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [botFTrialCard with { PredictiveFixtures = 150, PredictiveResolved = 150, TrafficLight = "Green", Yield = 0.0699m }],
+    "F2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-F2026", 1.5m, freshOdds, now);
+if (botFWeakHistoricalGreen.CanPublish)
+    throw new InvalidOperationException("F2026 below 7% yield bypassed the controlled trial through historical Green.");
+
+var botATrialCard = controlledTrialCard with
+{
+    BotKey = "A",
+    AutomationVersion = "AutomatedCornersBotV1.0-A"
+};
+var botATrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [botATrialCard], "A", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-A", 1.5m, freshOdds, now);
+if (botATrial.CanPublish)
+    throw new InvalidOperationException("Bot A entered the C2026/F2026 controlled trial without reaching general Green eligibility.");
+var botAGreenCard = greenSide with
+{
+    BotKey = "A",
+    AutomationVersion = "AutomatedCornersBotV1.0-A"
+};
+var botAGreen = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [botAGreenCard], "A", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-A", 1.5m, freshOdds, now);
+if (!botAGreen.CanPublish || botAGreen.Tier != "Green")
+    throw new InvalidOperationException("Bot A could not enter through the general Green gate after reaching 100 fixtures.");
 
 var unhealthyTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [controlledTrialCard with { Yield = 0m }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
-if (unhealthyTrial.CanPublish) throw new InvalidOperationException("GOALS without positive yield entered the controlled trial.");
+    [controlledTrialCard with { Yield = 0.0699m }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
+if (unhealthyTrial.CanPublish) throw new InvalidOperationException("GOALS below the 7% yield floor entered the controlled trial.");
+var minimumYieldTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [controlledTrialCard with { Yield = 0.07m }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
+if (!minimumYieldTrial.CanPublish) throw new InvalidOperationException("GOALS exactly at the 7% yield floor was blocked.");
 var uncalibratedTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
     [controlledTrialCard with { CalibrationGap = 0.051d }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (uncalibratedTrial.CanPublish) throw new InvalidOperationException("GOALS outside the calibration limit entered the controlled trial.");
@@ -185,7 +230,9 @@ var cornersFamilyVeto = AutomatedBotProductionEligibilityPolicy.Evaluate(
 if (cornersFamilyVeto.CanPublish) throw new InvalidOperationException("A Red non-GOALS family did not veto production.");
 
 Console.WriteLine("PASS Green eligibility exposes a 1u authoritative cap");
-Console.WriteLine("PASS the frozen C2026 AwayTeamGoals Over cohort enters a 0.5u controlled trial");
+Console.WriteLine("PASS the frozen C2026/F2026 AwayTeamGoals Over cohorts enter a 0.5u controlled trial");
+Console.WriteLine("PASS the controlled trial requires at least 7% yield and keeps Bot A outside the shortcut");
+Console.WriteLine("PASS historical Green cannot promote the controlled C/F cohort above 0.5u automatically");
 Console.WriteLine("PASS controlled trial is fail-closed by side/bookmaker/version, freshness, snapshot and market health");
 Console.WriteLine("PASS TotalGoals remains paused and non-GOALS retains its family veto");
 

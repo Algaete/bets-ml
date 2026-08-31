@@ -174,7 +174,7 @@ var tests = new (string Name, Action Body)[]
             "goals",
             [Scorecard("C2026", "AwayTeamGoals", "Red", blocked: true, sample: 150)]);
         Equal(0m, pick.ProductionPlan!.StakeUnits);
-        Contains("sólo Green", pick.ProductionPlan.Reason);
+        Contains("no se promociona automáticamente a 1u", pick.ProductionPlan.Reason);
     }),
     ("amber and gray server scorecards remain monitoring", () =>
     {
@@ -189,12 +189,12 @@ var tests = new (string Name, Action Body)[]
     }),
     ("green server scorecard preserves the normal stake", () =>
     {
-        var pick = Pick(1, "C2026", "AwayTeamGoals");
+        var pick = Pick(1, "C2026", "HomeTeamGoals");
         BotPickProductionPlanner.Apply(
             [pick],
             [Definition("C2026", "GOALS")],
             "goals",
-            [Scorecard("C2026", "AwayTeamGoals", "Green", blocked: false, sample: 150)]);
+            [Scorecard("C2026", "HomeTeamGoals", "Green", blocked: false, sample: 150)]);
         Equal(1m, pick.ProductionPlan!.StakeUnits);
     }),
     ("qualified C2026 away-goals evidence opens only a half-unit controlled trial", () =>
@@ -215,6 +215,100 @@ var tests = new (string Name, Action Body)[]
                 yield: 0.168m)]);
         Equal(0.5m, pick.ProductionPlan!.StakeUnits);
         Contains("Prueba controlada", pick.ProductionPlan.Label);
+        Contains("yield >= 7%", pick.ProductionPlan.Reason);
+    }),
+    ("qualified F2026 away-goals evidence joins the half-unit controlled trial", () =>
+    {
+        var pick = Pick(1, "F2026", "AwayTeamGoals");
+        BotPickProductionPlanner.Apply(
+            [pick],
+            [Definition("F2026", "GOALS")],
+            "goals",
+            [Scorecard(
+                "F2026",
+                "AwayTeamGoals",
+                "Amber",
+                blocked: false,
+                sample: 48,
+                calibrationGap: 0.04,
+                deltaBrier: -0.01,
+                yield: 0.1807m)]);
+        Equal(0.5m, pick.ProductionPlan!.StakeUnits);
+        Contains("Prueba controlada", pick.ProductionPlan.Label);
+        Contains("Bot F", pick.ProductionPlan.Reason);
+    }),
+    ("C and F exact cohort remains half-unit above one hundred historical fixtures", () =>
+    {
+        var c = Pick(1, "C2026", "AwayTeamGoals");
+        var f = Pick(2, "F2026", "AwayTeamGoals", home: "Other");
+        BotPickProductionPlanner.Apply(
+            [c, f],
+            [Definition("C2026", "GOALS"), Definition("F2026", "GOALS")],
+            "goals",
+            [
+                Scorecard("C2026", "AwayTeamGoals", "Green", false, 150, 0.02, -0.01, 0.12m),
+                Scorecard("F2026", "AwayTeamGoals", "Green", false, 150, 0.02, -0.01, 0.11m)
+            ]);
+        Equal(0.5m, c.ProductionPlan!.StakeUnits);
+        Equal(0.5m, f.ProductionPlan!.StakeUnits);
+        Contains("Prueba controlada", c.ProductionPlan.Label);
+        Contains("Prueba controlada", f.ProductionPlan.Label);
+    }),
+    ("historical Green cannot promote weak C and F exact cohort to one unit", () =>
+    {
+        var pick = Pick(1, "F2026", "AwayTeamGoals");
+        BotPickProductionPlanner.Apply(
+            [pick],
+            [Definition("F2026", "GOALS")],
+            "goals",
+            [Scorecard("F2026", "AwayTeamGoals", "Green", false, 150, 0.02, -0.01, 0.069m)]);
+        Equal(0m, pick.ProductionPlan!.StakeUnits);
+        Contains("no se promociona automáticamente a 1u", pick.ProductionPlan.Reason);
+    }),
+    ("C and F controlled trial requires at least seven-percent yield", () =>
+    {
+        var c = Pick(1, "C2026", "AwayTeamGoals");
+        var f = Pick(2, "F2026", "AwayTeamGoals", home: "Other");
+        BotPickProductionPlanner.Apply(
+            [c, f],
+            [Definition("C2026", "GOALS"), Definition("F2026", "GOALS")],
+            "goals",
+            [
+                Scorecard("C2026", "AwayTeamGoals", "Amber", false, 67, 0.02, -0.01, 0.0699m),
+                Scorecard("F2026", "AwayTeamGoals", "Amber", false, 48, 0.02, -0.01, 0.0699m)
+            ]);
+        Equal(0m, c.ProductionPlan!.StakeUnits);
+        Equal(0m, f.ProductionPlan!.StakeUnits);
+        Contains("yield >= 7%", c.ProductionPlan.Reason);
+        Contains("yield >= 7%", f.ProductionPlan.Reason);
+    }),
+    ("A cannot enter the C and F controlled trial", () =>
+    {
+        var pick = Pick(1, "A", "AwayTeamGoals");
+        BotPickProductionPlanner.Apply(
+            [pick],
+            [Definition("A", "GOALS")],
+            "goals",
+            [Scorecard("A", "AwayTeamGoals", "Amber", false, 48, 0.02, -0.01, 0.20m)]);
+        Equal(0m, pick.ProductionPlan!.StakeUnits);
+        Contains("muestra exacta insuficiente", pick.ProductionPlan.Reason);
+    }),
+    ("duplicate C and F signals produce only one half-unit bet", () =>
+    {
+        var c = Pick(1, "C2026", "AwayTeamGoals", score: 0.80m);
+        var f = Pick(2, "F2026", "AwayTeamGoals", score: 0.90m);
+        BotPickProductionPlanner.Apply(
+            [c, f],
+            [Definition("C2026", "GOALS"), Definition("F2026", "GOALS")],
+            "goals",
+            [
+                Scorecard("C2026", "AwayTeamGoals", "Amber", false, 67, 0.02, -0.01, 0.19m),
+                Scorecard("F2026", "AwayTeamGoals", "Amber", false, 48, 0.03, -0.01, 0.18m)
+            ]);
+        Equal(0.5m, c.ProductionPlan!.StakeUnits + f.ProductionPlan!.StakeUnits);
+        Equal(0.5m, c.ProductionPlan.StakeUnits);
+        Equal(0m, f.ProductionPlan.StakeUnits);
+        Contains("Misma señal ya cubierta", f.ProductionPlan.Reason);
     }),
     ("controlled trial keeps D challengers and home goals in monitoring", () =>
     {
@@ -461,10 +555,10 @@ var tests = new (string Name, Action Body)[]
             "goals",
             [
                 Scorecard("A", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.04),
-                Scorecard("C2026", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.01)
+                Scorecard("C2026", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.01, yield: 0.10m)
             ]);
         Equal(0m, inflatedScore.ProductionPlan!.StakeUnits);
-        Equal(1m, calibrated.ProductionPlan!.StakeUnits);
+        Equal(0.5m, calibrated.ProductionPlan!.StakeUnits);
     }),
     ("consensus is only advertised across independent model lineages", () =>
     {
@@ -476,7 +570,7 @@ var tests = new (string Name, Action Body)[]
             "goals",
             [
                 Scorecard("A", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.02),
-                Scorecard("C2026", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.01)
+                Scorecard("C2026", "AwayTeamGoals", "Green", false, 150, calibrationGap: 0.01, yield: 0.10m)
             ]);
         var winner = new[] { legacy, models2026 }.Single(pick => pick.ProductionPlan!.IsProductive);
         Contains("Consenso entre linajes", winner.ProductionPlan!.Reason);
@@ -496,6 +590,7 @@ var tests = new (string Name, Action Body)[]
         Contains("no tiene scorecard", missing.ProductionPlan.Reason);
         Contains("cinco estados", quarter.ProductionPlan.Reason);
     }),
+    ("GOALS portfolio guard caps daily exposure without changing history", BotPickProductionExposureGuardTests.RunAll),
     ("H2026 is permanently classified as a shadow-only challenger", () =>
     {
         if (!RecommendationBotLifecycle.IsShadowOnly("H2026"))

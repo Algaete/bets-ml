@@ -75,6 +75,13 @@ public sealed class BotPicksController : Controller
         {
             ApplyDefaultMonthRange(filters);
             var selectionsTask = _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken);
+            var canonicalPendingTask = BotPickProductionExposureGuard.RequiresCanonicalPendingUniverse(
+                    filters,
+                    marketFamily)
+                ? _automatedCornersApiClient.GetSelectionsAsync(
+                    BotPickProductionExposureGuard.CreateCanonicalPendingFilters(filters),
+                    cancellationToken)
+                : null;
             var definitionsTask = _recommendationAutomationApiClient.GetBotsAsync(cancellationToken);
             var performanceTask = _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken);
             var selections = FilterVisibleBots(FilterMarketFamily(
@@ -105,6 +112,35 @@ public sealed class BotPicksController : Controller
             }
 
             BotPickProductionPlanner.Apply(selections, definitions, marketFamily, performance);
+            if (canonicalPendingTask is null)
+            {
+                BotPickProductionExposureGuard.Apply(selections, marketFamily);
+            }
+            else
+            {
+                try
+                {
+                    var canonicalSelections = FilterVisibleBots(FilterMarketFamily(
+                        await canonicalPendingTask,
+                        marketFamily));
+                    BotPickProductionPlanner.Apply(
+                        canonicalSelections,
+                        definitions,
+                        marketFamily,
+                        performance);
+                    BotPickProductionExposureGuard.Apply(canonicalSelections, marketFamily);
+                    BotPickProductionExposureGuard.OverlayCurrentPlans(selections, canonicalSelections);
+                }
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning(
+                        exception,
+                        "Could not load the canonical pending GOALS universe; current productive plans fail closed");
+                    BotPickProductionExposureGuard.FailClosedCurrentPlans(
+                        selections,
+                        "Monitoreo: no se pudo verificar el universo completo de pendientes para aplicar el límite global de 2u/día.");
+                }
+            }
             return Json(selections);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

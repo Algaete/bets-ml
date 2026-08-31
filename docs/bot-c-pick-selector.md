@@ -162,18 +162,18 @@ La suite cubre estadística ponderada, mediana, varianza, desviación, percentil
 
 ## Prueba productiva controlada
 
-Desde la política `PRODUCTIVE-GATE-2026-08-31-V3`, el único atajo permitido antes de alcanzar el estado `Green` es la cohorte exacta:
+Desde la política `PRODUCTIVE-GATE-2026-08-31-V4`, el único atajo permitido antes de alcanzar el estado `Green` son las cohortes exactas de C y F:
 
-- bot `C2026`;
+- bot `C2026` o `F2026`;
 - familia `GOALS`;
 - mercado `AwayTeamGoals`;
 - lado `Over`;
 - bookmaker `Pinnacle`;
 - línea binaria `.5` y snapshot bilateral, inmutable y fresco;
 - al menos 30 fixtures independientes en la ventana de 30 días;
-- yield positivo, brecha absoluta de calibración no superior a 5 puntos y Brier no peor que el mercado.
+- yield/ROI mínimo de 7%, brecha absoluta de calibración no superior a 5 puntos y Brier no peor que el mercado.
 
-La exposición máxima es `0.5u` y el plan conserva una sola señal por fixture. Cualquier cambio de bot, mercado, lado, bookmaker o versión vuelve a pasar por su scorecard exacto y permanece en monitoreo si no está `Green`. La política no reclasifica apuestas históricas ni convierte a los challengers D/E/F en picks productivos.
+La exposición máxima es `0.5u` y el plan conserva una sola señal por fixture. C y F permanecen en ese nivel incluso si el histórico supera 100 fixtures o aparece Green; promoverlos a `1u` exige una revisión manual futura con evidencia prospectiva de la versión vigente. Cualquier cambio de bot, mercado, lado, bookmaker o versión vuelve a pasar por su scorecard exacto y permanece en monitoreo si no está `Green`. La política no reclasifica apuestas históricas ni abre este atajo a A, D o E; Bot A sólo podrá entrar en el futuro mediante el Green general con al menos 100 fixtures independientes.
 
 ## Archivos principales de esta entrega
 

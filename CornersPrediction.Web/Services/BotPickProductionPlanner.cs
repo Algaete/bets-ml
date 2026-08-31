@@ -13,7 +13,8 @@ public static class BotPickProductionPlanner
     private const decimal DefaultMinimumExpectedValue = 0.020m;
     private const int MinimumPredictiveFixtures = 100;
     private const int ControlledTrialMinimumPredictiveFixtures = 30;
-    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-08-31-V3";
+    private const decimal ControlledTrialMinimumYield = 0.07m;
+    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-08-31-V4";
     private const string LegacyGoalsPolicyVersion = "GOALS-HISTORICAL-RECONSTRUCTION-V1";
     private const string LegacyCornersPolicyVersion = "CORNERS-HISTORICAL-RECONSTRUCTION-V1";
     private static readonly DateTime LegacyGoalsPolicyCutover = new(2026, 8, 27, 0, 0, 0);
@@ -142,7 +143,7 @@ public static class BotPickProductionPlanner
                 stakeUnits,
                 controlledTrial ? "Prueba controlada 0.5u" : stakeUnits == 1m ? "Apostar 1u" : "Apostar 0.5u",
                 controlledTrial
-                    ? $"{source}; prueba controlada de goles: cohorte exacta con ROI positivo, calibración <= 5 pp y Brier mejor que mercado ({performance!.PredictiveFixtures} partidos).{consensus}"
+                    ? $"{source}; prueba controlada Bot {DisplayBotKey(winner.BotKey)} de goles visita Over: cohorte exacta con yield >= 7%, calibración <= 5 pp y Brier mejor que mercado ({performance!.PredictiveFixtures} partidos).{consensus}"
                     : $"{source}; bot activo y publicable; liga, cuota, edge y EV aprobados. Semáforo {PerformanceLabel(performance)}.{consensus}",
                 stakeUnits == 1m ? "bot-production-primary" : "bot-production-secondary",
                 true,
@@ -382,8 +383,16 @@ public static class BotPickProductionPlanner
             selection.MarketType,
             selection.SelectedSide,
             selection.Source);
+        if (IsControlledGoalsCohort(
+                botKey,
+                family,
+                selection.MarketType,
+                selection.SelectedSide,
+                selection.Source)
+            && !controlledTrial)
+            return $"Monitoreo: la cohorte C/F de goles visita Over en Pinnacle sólo entra a 0.5u con >= {ControlledTrialMinimumPredictiveFixtures} partidos, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado; no se promociona automáticamente a 1u con historia anterior a V4";
         if (!green && !controlledTrial && performance.PredictiveFixtures < MinimumPredictiveFixtures)
-            return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures}, ROI positivo, calibración <= 5 pp y Brier mejor que mercado";
+            return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba C/F de 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures} partidos, goles visita Over en Pinnacle, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado";
         if (!green && !controlledTrial)
             return $"Monitoreo: semáforo {performance.TrafficLight} 30d; sólo Green puede entrar al plan productivo ({performance.Recommendation})";
 
@@ -599,18 +608,25 @@ public static class BotPickProductionPlanner
         string selectedSide,
         string bookmaker) =>
         performance is not null
-        && NormalizeBotKey(botKey) == "C2026"
-        && family.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
-        && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
-        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
-        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase)
+        && IsControlledGoalsCohort(botKey, family, marketType, selectedSide, bookmaker)
         && performance.PredictiveFixtures >= ControlledTrialMinimumPredictiveFixtures
-        && performance.PredictiveFixtures < MinimumPredictiveFixtures
-        && performance.Yield is > 0m
+        && performance.Yield is >= ControlledTrialMinimumYield
         && performance.CalibrationGap.HasValue
         && Math.Abs(performance.CalibrationGap.Value) <= 0.05d
         && performance.DeltaBrier is <= 0d
         && !performance.ProductionBlocked;
+
+    private static bool IsControlledGoalsCohort(
+        string botKey,
+        string family,
+        string marketType,
+        string selectedSide,
+        string bookmaker) =>
+        NormalizeBotKey(botKey) is "C2026" or "F2026"
+        && family.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
+        && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
+        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
+        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHalfLine(decimal line)
     {
