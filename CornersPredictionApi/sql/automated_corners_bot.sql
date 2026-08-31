@@ -5,6 +5,8 @@ BEGIN
         AutomatedCornerBetSelectionId BIGINT IDENTITY(1,1) NOT NULL
             CONSTRAINT PK_AutomatedCornerBetSelections PRIMARY KEY,
         RunId UNIQUEIDENTIFIER NOT NULL,
+        BotKey NVARCHAR(50) NOT NULL,
+        LogicalPickKey VARBINARY(32) NOT NULL,
         AutomationVersion NVARCHAR(50) NOT NULL,
         Source NVARCHAR(50) NOT NULL
             CONSTRAINT DF_AutomatedCornerBetSelections_Source DEFAULT N'Betano',
@@ -88,6 +90,8 @@ BEGIN
         Description NVARCHAR(1000) NOT NULL,
         BaseStrategy NVARCHAR(30) NOT NULL,
         IsEnabled BIT NOT NULL,
+        PublishEnabled BIT NOT NULL
+            CONSTRAINT DF_AutomatedBotDefinitions_PublishEnabled DEFAULT (1),
         IsBuiltIn BIT NOT NULL,
         MarketFamilies NVARCHAR(200) NOT NULL,
         MinEdge FLOAT NULL,
@@ -99,12 +103,13 @@ BEGIN
         MinProbabilityLiftOverImplied FLOAT NULL,
         StakeMultiplier DECIMAL(9,4) NULL,
         StrategyConfigurationJson NVARCHAR(MAX) NULL,
+        LeagueFilterJson NVARCHAR(MAX) NULL,
         CreatedAtUtc DATETIME2(0) NOT NULL
             CONSTRAINT DF_AutomatedBotDefinitions_Created DEFAULT SYSUTCDATETIME(),
         UpdatedAtUtc DATETIME2(0) NOT NULL
             CONSTRAINT DF_AutomatedBotDefinitions_Updated DEFAULT SYSUTCDATETIME(),
         CONSTRAINT CK_AutomatedBotDefinitions_BaseStrategy CHECK
-            (BaseStrategy IN (N'LEGACY_A', N'LEGACY_B', N'LEGACY_EMPIRICAL', N'MODELS_2026')),
+            (BaseStrategy IN (N'LEGACY_A', N'LEGACY_B', N'LEGACY_EMPIRICAL', N'MODELS_2026', N'GOALS_MARKET_ANCHORED')),
         CONSTRAINT CK_AutomatedBotDefinitions_StakeMultiplier CHECK
             (StakeMultiplier IS NULL OR (StakeMultiplier > 0 AND StakeMultiplier <= 10))
     );
@@ -118,11 +123,22 @@ IF OBJECT_ID(N'dbo.AutomatedBotDefinitions', N'U') IS NOT NULL
        SELECT 1 FROM sys.check_constraints
        WHERE parent_object_id = OBJECT_ID(N'dbo.AutomatedBotDefinitions')
          AND name = N'CK_AutomatedBotDefinitions_BaseStrategy'
+         AND definition NOT LIKE N'%GOALS_MARKET_ANCHORED%'
    )
 BEGIN
     ALTER TABLE dbo.AutomatedBotDefinitions DROP CONSTRAINT CK_AutomatedBotDefinitions_BaseStrategy;
+END;
+
+IF OBJECT_ID(N'dbo.AutomatedBotDefinitions', N'U') IS NOT NULL
+   AND NOT EXISTS
+   (
+       SELECT 1 FROM sys.check_constraints
+       WHERE parent_object_id = OBJECT_ID(N'dbo.AutomatedBotDefinitions')
+         AND name = N'CK_AutomatedBotDefinitions_BaseStrategy'
+   )
+BEGIN
     ALTER TABLE dbo.AutomatedBotDefinitions WITH CHECK ADD CONSTRAINT CK_AutomatedBotDefinitions_BaseStrategy
-        CHECK (BaseStrategy IN (N'LEGACY_A', N'LEGACY_B', N'LEGACY_EMPIRICAL', N'MODELS_2026'));
+        CHECK (BaseStrategy IN (N'LEGACY_A', N'LEGACY_B', N'LEGACY_EMPIRICAL', N'MODELS_2026', N'GOALS_MARKET_ANCHORED'));
 END;
 
 GO
@@ -131,6 +147,23 @@ IF COL_LENGTH(N'dbo.AutomatedBotDefinitions', N'StrategyConfigurationJson') IS N
 BEGIN
     ALTER TABLE dbo.AutomatedBotDefinitions
         ADD StrategyConfigurationJson NVARCHAR(MAX) NULL;
+END;
+
+GO
+
+IF COL_LENGTH(N'dbo.AutomatedBotDefinitions', N'PublishEnabled') IS NULL
+BEGIN
+    ALTER TABLE dbo.AutomatedBotDefinitions
+        ADD PublishEnabled BIT NOT NULL
+            CONSTRAINT DF_AutomatedBotDefinitions_PublishEnabled DEFAULT (1) WITH VALUES;
+END;
+
+GO
+
+IF COL_LENGTH(N'dbo.AutomatedBotDefinitions', N'LeagueFilterJson') IS NULL
+BEGIN
+    ALTER TABLE dbo.AutomatedBotDefinitions
+        ADD LeagueFilterJson NVARCHAR(MAX) NULL;
 END;
 
 GO
@@ -205,6 +238,209 @@ WHEN NOT MATCHED THEN
 
 GO
 
+MERGE dbo.AutomatedBotDefinitions WITH (HOLDLOCK) AS target
+USING
+(
+    SELECT
+        N'G2026' AS BotKey,
+        N'Bot G Goals Specialist' AS DisplayName,
+        N'Especialista en goles anclado al mercado, con calibración, incertidumbre, OOD y abstención auditable.' AS Description,
+        N'GOALS_MARKET_ANCHORED' AS BaseStrategy,
+        CONVERT(BIT, 1) AS IsEnabled,
+        CONVERT(BIT, 0) AS PublishEnabled,
+        N'GOALS' AS MarketFamilies,
+        CONVERT(DECIMAL(9,4), 1.0000) AS StakeMultiplier,
+            N'{"botKey":"G2026","name":"Bot G Goals Specialist","baseStrategy":"GOALS_MARKET_ANCHORED","configurationVersion":"bot-g-goals-market-1.0.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","legacyModelVersion":"goals_v1","model2026Version":"goals_deep_tuned_v2","enabled":true,"publishEnabled":false,"shadowMode":true,"stake":1.0,"supportedMarkets":["totalGoals","homeTeamGoals","awayTeamGoals"],"features":{"windows":[5,10,20],"decayFactor":0.85,"requiredVenueMatches":8,"minimumHistoricalMatches":8,"minimumStandardDeviation":0.25,"lineHistoryPriorStrength":20.0,"lineHitRatePriorMean":0.5,"pushRatePriorMean":0.08},"metaModel":{"required":true,"modelVersion":"bot-g-market-meta-1.0.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","maximumAbsoluteResidualLogit":4.0},"calibration":{"version":"bot-g-calibration-1.0.0","method":"BetaCalibration","minimumEffectiveSampleSize":20,"outcomeAvailabilityLagHours":8,"globalPriorStrength":80.0,"marketPriorStrength":60.0,"selectionPriorStrength":40.0,"bookmakerPriorStrength":40.0},"uncertainty":{"version":"bot-g-uncertainty-1.0.0","confidenceZScore":1.645,"conservativeLambda":1.0,"minimumUncertainty":0.005,"maximumUncertainty":0.25,"useLowerBound":true},"outOfDistribution":{"version":"bot-g-ood-1.0.0","minimumReferenceSampleSize":30,"robustZScoreThreshold":3.5,"severeRobustZScore":8.0},"thresholds":{"minimumOdds":1.6,"maximumOdds":2.2,"minimumFinalProbability":0.54,"minimumConservativeEdge":0.02,"minimumConservativeExpectedValue":0.015,"minimumDataQuality":0.65,"minimumCalibrationReliability":0.3,"maximumProbabilityUncertainty":0.08,"maximumOodScore":0.7,"maximumModelDisagreement":1.5,"minimumHistoricalMatches":8,"minimumSettlementEffectiveSampleSize":40,"maximumOddsAgeMinutes":120},"ranking":{"conservativeExpectedValueWeight":0.35,"conservativeEdgeWeight":0.25,"calibrationReliabilityWeight":0.15,"dataQualityWeight":0.1,"inverseUncertaintyWeight":0.1,"contextAgreementWeight":0.05}}' AS StrategyConfigurationJson
+) AS source ON target.BotKey = source.BotKey
+WHEN NOT MATCHED THEN INSERT
+(
+    BotKey, DisplayName, Description, BaseStrategy, IsEnabled,
+    PublishEnabled, IsBuiltIn, MarketFamilies, StakeMultiplier,
+    StrategyConfigurationJson
+)
+VALUES
+(
+    source.BotKey, source.DisplayName, source.Description,
+    source.BaseStrategy, source.IsEnabled, source.PublishEnabled, 1,
+    source.MarketFamilies, source.StakeMultiplier,
+    source.StrategyConfigurationJson
+);
+
+GO
+
+-- H is a corners-only calibration challenger. It reuses the 2026 base signals,
+-- writes every decision to the audit table and is structurally unable to publish.
+-- It is deliberately separate from G so goals and corners can earn promotion independently.
+MERGE dbo.AutomatedBotDefinitions WITH (HOLDLOCK) AS target
+USING
+(
+    SELECT
+        N'H2026' AS BotKey,
+        N'Bot H · Challenger calibración córners' AS DisplayName,
+        N'Experimento shadow de córners: calibración walk-forward anclada a no-vig, umbrales conservadores y cero publicación.' AS Description,
+        N'MODELS_2026' AS BaseStrategy,
+        CONVERT(BIT, 1) AS IsEnabled,
+        CONVERT(BIT, 0) AS PublishEnabled,
+        N'CORNERS' AS MarketFamilies,
+        CONVERT(FLOAT, 0.04) AS MinEdge,
+        CONVERT(FLOAT, 0.03) AS MinExpectedValue,
+        CONVERT(DECIMAL(9,4), 0.5000) AS StakeMultiplier,
+        N'{"configurationVersion":"bot-h-corners-calibration-shadow-1.0.0","featureSchemaVersion":"bot-c-features-1.0.0","basePredictionSource":"MODELS_2026","selectorEnabled":true,"allowRuleBasedFallback":true,"minimumCalibratedProbability":0.56,"minimumFinalEdge":0.04,"minimumFinalExpectedValue":0.03,"minimumDataQualityScore":0.70,"minimumContextAgreementScore":0.70,"minimumOdds":1.60,"maximumOdds":2.20,"marketThresholds":{"TotalCorners":{"enabled":false},"HomeTeamCorners":{"enabled":true,"minimumFinalProbability":0.56,"minimumFinalEdge":0.04,"minimumFinalExpectedValue":0.03,"minimumDataQualityScore":0.70,"minimumContextAgreementScore":0.70,"minimumHistoricalMatches":8,"minimumOdds":1.60,"maximumOdds":2.20},"AwayTeamCorners":{"enabled":true,"minimumFinalProbability":0.56,"minimumFinalEdge":0.04,"minimumFinalExpectedValue":0.03,"minimumDataQualityScore":0.70,"minimumContextAgreementScore":0.70,"minimumHistoricalMatches":8,"minimumOdds":1.60,"maximumOdds":2.20}},"teamStrength":{"enabled":false},"footballIntelligence":{"enabled":false},"empiricalCalibration":{"enabled":true,"version":"bot-h-corners-calibration-shadow-1.0.0","sourceBotKey":"C2026","minimumObservations":50,"minimumExactMarketObservations":20,"minimumEffectiveObservations":20,"targetEffectiveObservations":100,"outcomeAvailabilityLagHours":8,"probabilityBandwidth":0.08,"globalPriorStrength":80,"familyPriorStrength":120,"exactMarketPriorStrength":60,"recencyHalfLifeDays":30,"qualityWeightFloor":0.60,"minimumReliability":0.30,"confidenceZScore":1.645,"requireSameBaseModelVersion":false,"requireNoVigProbability":true}}' AS StrategyConfigurationJson
+) AS source ON target.BotKey = source.BotKey
+WHEN NOT MATCHED THEN INSERT
+(
+    BotKey, DisplayName, Description, BaseStrategy, IsEnabled, PublishEnabled,
+    IsBuiltIn, MarketFamilies, MinEdge, MinExpectedValue, StakeMultiplier,
+    StrategyConfigurationJson
+)
+VALUES
+(
+    source.BotKey, source.DisplayName, source.Description, source.BaseStrategy,
+    source.IsEnabled, source.PublishEnabled, 1, source.MarketFamilies,
+    source.MinEdge, source.MinExpectedValue, source.StakeMultiplier,
+    source.StrategyConfigurationJson
+)
+WHEN MATCHED AND target.IsBuiltIn = 1 THEN UPDATE SET
+    DisplayName = source.DisplayName,
+    Description = source.Description,
+    BaseStrategy = source.BaseStrategy,
+    PublishEnabled = 0,
+    MarketFamilies = source.MarketFamilies,
+    MinEdge = source.MinEdge,
+    MinExpectedValue = source.MinExpectedValue,
+    StakeMultiplier = source.StakeMultiplier,
+    UpdatedAtUtc = SYSUTCDATETIME();
+
+GO
+
+-- Bot B is retired. Its historical picks remain intact for audit and comparison,
+-- but schema initialization must never reactivate it as an executable bot.
+UPDATE dbo.AutomatedBotDefinitions
+SET IsEnabled = 0,
+    UpdatedAtUtc = SYSUTCDATETIME()
+WHERE BotKey = N'B'
+  AND IsEnabled <> 0;
+
+GO
+
+-- Pause every Chilean competition for CORNERS only. Merge the exclusion into
+-- every built-in A-F definition without replacing filters maintained for
+-- Brazil or any other league/market family. Re-running this block leaves one
+-- canonical Chile exclusion and never appends a duplicate.
+DECLARE @ChileFilterBotKey NVARCHAR(50);
+DECLARE @ChileFilterJson NVARCHAR(MAX);
+DECLARE @ChileMergedFilterJson NVARCHAR(MAX);
+DECLARE @FirstCornersFilterIndex INT;
+DECLARE @CornersFilterIndex INT;
+DECLARE @ExistingCornerExclusions NVARCHAR(MAX);
+DECLARE @MergedCornerExclusions NVARCHAR(MAX);
+DECLARE @CornerFilterPath NVARCHAR(200);
+DECLARE @ChileCornerCursor CURSOR;
+
+DECLARE ChileFilterBotCursor CURSOR LOCAL FAST_FORWARD FOR
+    SELECT BotKey
+    FROM dbo.AutomatedBotDefinitions
+    WHERE BotKey IN (N'A', N'B', N'C2026', N'D2026', N'E2026', N'F2026');
+
+OPEN ChileFilterBotCursor;
+FETCH NEXT FROM ChileFilterBotCursor INTO @ChileFilterBotKey;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SELECT @ChileFilterJson = LeagueFilterJson
+    FROM dbo.AutomatedBotDefinitions
+    WHERE BotKey = @ChileFilterBotKey;
+
+    -- Invalid legacy JSON cannot be merged safely. Replace only that unusable
+    -- value; every valid array is preserved and modified in place.
+    SET @ChileMergedFilterJson = CASE
+        WHEN ISJSON(@ChileFilterJson) = 1
+         AND LEFT(LTRIM(@ChileFilterJson), 1) = N'['
+            THEN @ChileFilterJson
+        ELSE N'[]'
+    END;
+
+    SELECT @FirstCornersFilterIndex = MIN(CONVERT(INT, filterEntry.[key]))
+    FROM OPENJSON(@ChileMergedFilterJson) AS filterEntry
+    WHERE UPPER(LTRIM(RTRIM(JSON_VALUE(filterEntry.[value], N'$.marketFamily')))) = N'CORNERS';
+
+    IF @FirstCornersFilterIndex IS NULL
+    BEGIN
+        SET @ChileMergedFilterJson = JSON_MODIFY(
+            @ChileMergedFilterJson,
+            N'append $',
+            JSON_QUERY(N'{"marketFamily":"CORNERS","includedLeagues":[],"excludedLeagues":["Chile - *"]}'));
+    END;
+    ELSE
+    BEGIN
+        SET @ChileCornerCursor = CURSOR LOCAL FAST_FORWARD FOR
+            SELECT CONVERT(INT, filterEntry.[key])
+            FROM OPENJSON(@ChileMergedFilterJson) AS filterEntry
+            WHERE UPPER(LTRIM(RTRIM(JSON_VALUE(filterEntry.[value], N'$.marketFamily')))) = N'CORNERS'
+            ORDER BY CONVERT(INT, filterEntry.[key]);
+
+        OPEN @ChileCornerCursor;
+        FETCH NEXT FROM @ChileCornerCursor INTO @CornersFilterIndex;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @CornerFilterPath = CONCAT(N'$[', @CornersFilterIndex, N'].excludedLeagues');
+            SET @ExistingCornerExclusions = JSON_QUERY(@ChileMergedFilterJson, @CornerFilterPath);
+            IF @ExistingCornerExclusions IS NULL
+               OR LEFT(LTRIM(@ExistingCornerExclusions), 1) <> N'['
+                SET @ExistingCornerExclusions = N'[]';
+
+            ;WITH ExistingExclusions AS
+            (
+                SELECT
+                    Exclusion = MIN(LTRIM(RTRIM(CONVERT(NVARCHAR(200), exclusionEntry.[value])))),
+                    FirstOrdinal = MIN(CONVERT(INT, exclusionEntry.[key]))
+                FROM OPENJSON(@ExistingCornerExclusions) AS exclusionEntry
+                WHERE exclusionEntry.[type] = 1
+                  AND NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(200), exclusionEntry.[value]))), N'') IS NOT NULL
+                  AND LTRIM(RTRIM(CONVERT(NVARCHAR(200), exclusionEntry.[value])))
+                        COLLATE Latin1_General_100_CI_AI <> N'Chile - *'
+                GROUP BY LTRIM(RTRIM(CONVERT(NVARCHAR(200), exclusionEntry.[value])))
+                    COLLATE Latin1_General_100_CI_AI
+            ), CanonicalExclusions AS
+            (
+                SELECT Exclusion, FirstOrdinal
+                FROM ExistingExclusions
+                UNION ALL
+                SELECT N'Chile - *', 2147483647
+                WHERE @CornersFilterIndex = @FirstCornersFilterIndex
+            )
+            SELECT @MergedCornerExclusions = COALESCE(
+                N'[' + STRING_AGG(
+                    CONVERT(NVARCHAR(MAX), N'"' + STRING_ESCAPE(Exclusion, N'json') + N'"'),
+                    N',') WITHIN GROUP (ORDER BY FirstOrdinal) + N']',
+                N'[]')
+            FROM CanonicalExclusions;
+
+            SET @ChileMergedFilterJson = JSON_MODIFY(
+                @ChileMergedFilterJson,
+                @CornerFilterPath,
+                JSON_QUERY(@MergedCornerExclusions));
+
+            FETCH NEXT FROM @ChileCornerCursor INTO @CornersFilterIndex;
+        END;
+        CLOSE @ChileCornerCursor;
+        DEALLOCATE @ChileCornerCursor;
+    END;
+
+    IF ISNULL(@ChileFilterJson, N'') <> @ChileMergedFilterJson
+    BEGIN
+        UPDATE dbo.AutomatedBotDefinitions
+        SET LeagueFilterJson = @ChileMergedFilterJson,
+            UpdatedAtUtc = SYSUTCDATETIME()
+        WHERE BotKey = @ChileFilterBotKey;
+    END;
+
+    FETCH NEXT FROM ChileFilterBotCursor INTO @ChileFilterBotKey;
+END;
+CLOSE ChileFilterBotCursor;
+DEALLOCATE ChileFilterBotCursor;
+
+GO
+
 UPDATE dbo.AutomatedBotDefinitions
 SET StrategyConfigurationJson = N'{"configurationVersion":"bot-d-strength-gap-1.0.0","featureSchemaVersion":"bot-d-features-1.0.0","teamStrength":{"enabled":true,"version":"bot-d-team-strength-1.0.0","resultDecayFactor":0.9,"eloKFactor":24,"homeAdvantageElo":50,"eloWeight":0.5,"directMatchWeight":0.2,"commonOpponentWeight":0.3,"minimumMatchesPerTeam":4,"minimumCommonOpponents":1,"minimumConfidenceScore":0.45,"maximumProbabilityAdjustment":0.08,"contextExpectedValueSigmaWeight":0.35,"homeTeamMarketWeight":1.0,"awayTeamMarketWeight":0.8,"totalMarketWeight":0.15}}',
     UpdatedAtUtc = SYSUTCDATETIME()
@@ -215,7 +451,7 @@ GO
 
 UPDATE dbo.AutomatedBotDefinitions
 SET StrategyConfigurationJson = CASE
-        WHEN ISJSON(StrategyConfigurationJson) <> 1
+        WHEN ISNULL(ISJSON(StrategyConfigurationJson), 0) <> 1
             THEN N'{"configurationVersion":"bot-e-empirical-calibration-1.0.2","featureSchemaVersion":"bot-c-features-1.0.0","minimumCalibratedProbability":0.54,"minimumFinalEdge":0.025,"minimumFinalExpectedValue":0.02,"minimumDataQualityScore":0.65,"minimumContextAgreementScore":0.65,"minimumOdds":1.60,"maximumOdds":2.20,"teamStrength":{"enabled":false},"empiricalCalibration":{"enabled":true,"version":"bot-e-empirical-calibration-1.0.2","sourceBotKey":"C2026","minimumObservations":20,"minimumExactMarketObservations":12,"minimumEffectiveObservations":8,"targetEffectiveObservations":80,"outcomeAvailabilityLagHours":8,"probabilityBandwidth":0.10,"globalPriorStrength":40,"familyPriorStrength":80,"exactMarketPriorStrength":40,"recencyHalfLifeDays":45,"qualityWeightFloor":0.50,"minimumReliability":0.15,"confidenceZScore":0.50,"requireSameBaseModelVersion":false,"requireNoVigProbability":true}}'
         ELSE JSON_MODIFY(
             JSON_MODIFY(
@@ -259,6 +495,90 @@ WHERE BotKey = N'F2026'
 
 GO
 
+DECLARE @FootballIntelligenceConfiguration NVARCHAR(MAX) =
+    N'{"enabled":true,"version":"football-intelligence-adjustment-1.0.0","weight":0.35,"maximumProbabilityAdjustment":0.04,"minimumTeamConfidence":0.60,"maximumSnapshotAgeMinutes":4320,"minimumActionableFacts":1,"minimumIndependentSources":1,"attackWeight":0.35,"defenceWeight":0.25,"widthWeight":0.20,"setPieceWeight":0.20}';
+
+UPDATE dbo.AutomatedBotDefinitions
+SET StrategyConfigurationJson = JSON_MODIFY(
+        JSON_MODIFY(
+            StrategyConfigurationJson,
+            '$.configurationVersion',
+            N'bot-e-intelligence-1.1.0'),
+        '$.footballIntelligence',
+        JSON_QUERY(@FootballIntelligenceConfiguration)),
+    Description = CASE
+        WHEN Description = N'Experimento walk-forward sobre Bot C: calibra la probabilidad con resultados asiáticos anteriores, recencia, calidad, no-vig e incertidumbre.'
+            THEN N'Modelos 2026 con calibración empírica e inteligencia pre-partido; sin evidencia utilizable, el ajuste contextual es exactamente cero.'
+        ELSE Description
+    END,
+    UpdatedAtUtc = SYSUTCDATETIME()
+WHERE BotKey = N'E2026'
+  AND ISJSON(StrategyConfigurationJson) = 1
+  AND
+  (
+      JSON_VALUE(StrategyConfigurationJson, '$.configurationVersion') IN
+          (N'bot-e-empirical-calibration-1.0.0', N'bot-e-empirical-calibration-1.0.1', N'bot-e-empirical-calibration-1.0.2')
+  );
+
+UPDATE dbo.AutomatedBotDefinitions
+SET StrategyConfigurationJson = JSON_MODIFY(
+        JSON_MODIFY(
+            StrategyConfigurationJson,
+            '$.configurationVersion',
+            N'bot-f-legacy-intelligence-1.1.0'),
+        '$.footballIntelligence',
+        JSON_QUERY(@FootballIntelligenceConfiguration)),
+    Description = CASE
+        WHEN Description = N'Experimento walk-forward: usa los modelos ML legacy como base y aplica el mismo calibrador empírico jerárquico de Bot E.'
+            THEN N'Modelos ML legacy con la misma calibración e inteligencia pre-partido de Bot E; sin evidencia utilizable, el ajuste contextual es exactamente cero.'
+        ELSE Description
+    END,
+    UpdatedAtUtc = SYSUTCDATETIME()
+WHERE BotKey = N'F2026'
+  AND ISJSON(StrategyConfigurationJson) = 1
+  AND JSON_VALUE(StrategyConfigurationJson, '$.configurationVersion') IN
+      (N'bot-f-legacy-empirical-1.0.0');
+
+-- Intelligence is a shared pre-match evidence layer, not an E/F-only feature.
+-- Enable it for every active built-in decision engine. Bot B remains retired and
+-- historical selections are never rewritten by this configuration migration.
+UPDATE dbo.AutomatedBotDefinitions
+SET StrategyConfigurationJson = JSON_MODIFY(
+        JSON_MODIFY(
+            CASE
+                WHEN ISJSON(StrategyConfigurationJson) = 1
+                 AND LEFT(LTRIM(StrategyConfigurationJson), 1) = N'{'
+                    THEN StrategyConfigurationJson
+                ELSE N'{}'
+            END,
+            '$.configurationVersion',
+            CASE BotKey
+                WHEN N'A' THEN N'bot-a-intelligence-1.1.0'
+                WHEN N'C2026' THEN N'bot-c-intelligence-1.1.0'
+                WHEN N'D2026' THEN N'bot-d-strength-intelligence-1.1.0'
+                WHEN N'E2026' THEN N'bot-e-intelligence-1.1.0'
+                WHEN N'F2026' THEN N'bot-f-legacy-intelligence-1.1.0'
+                WHEN N'G2026' THEN N'bot-g-goals-market-intelligence-1.1.0'
+                WHEN N'H2026' THEN N'bot-h-corners-calibration-shadow-1.1.0-intelligence'
+            END),
+        '$.footballIntelligence',
+        JSON_QUERY(@FootballIntelligenceConfiguration)),
+    Description = CASE BotKey
+        WHEN N'A' THEN N'Modelo histórico y contexto con inteligencia pre-partido; sin evidencia utilizable, el ajuste es exactamente cero.'
+        WHEN N'C2026' THEN N'Selector 2026 auditable con inteligencia pre-partido aplicada antes de edge, EV y aprobación.'
+        WHEN N'D2026' THEN N'Brecha de nivel y fuerza de equipos con inteligencia pre-partido aplicada antes de edge, EV y aprobación.'
+        WHEN N'E2026' THEN N'Modelos 2026 con calibración empírica e inteligencia pre-partido; sin evidencia utilizable, el ajuste es exactamente cero.'
+        WHEN N'F2026' THEN N'Modelos ML legacy calibrados con inteligencia pre-partido; sin evidencia utilizable, el ajuste es exactamente cero.'
+        WHEN N'G2026' THEN N'Especialista de goles anclado al mercado con inteligencia pre-partido antes de incertidumbre, EV y abstención; permanece shadow.'
+        WHEN N'H2026' THEN N'Challenger shadow de córners con calibración conservadora e inteligencia pre-partido; publicación estructuralmente bloqueada.'
+        ELSE Description
+    END,
+    UpdatedAtUtc = SYSUTCDATETIME()
+WHERE IsBuiltIn = 1
+  AND BotKey IN (N'A', N'C2026', N'D2026', N'E2026', N'F2026', N'G2026', N'H2026');
+
+GO
+
 UPDATE dbo.AutomatedBotDefinitions
 SET DisplayName = N'Bot C · Pick Selector 2026',
     Description = N'Selector auditable: combina los doce modelos ML con historial temporal, contexto, línea, cuota, edge, EV, calidad y acuerdo.',
@@ -282,6 +602,7 @@ BEGIN
         Description,
         BaseStrategy,
         IsEnabled,
+        PublishEnabled,
         IsBuiltIn,
         MarketFamilies,
         MinEdge,
@@ -293,6 +614,7 @@ BEGIN
         MinProbabilityLiftOverImplied,
         StakeMultiplier,
         StrategyConfigurationJson,
+        LeagueFilterJson,
         CreatedAtUtc,
         UpdatedAtUtc
     FROM dbo.AutomatedBotDefinitions
@@ -322,10 +644,15 @@ CREATE OR ALTER PROCEDURE dbo.sp_UpsertAutomatedBotDefinition
     @MinOddsExclusive FLOAT = NULL,
     @MinProbabilityLiftOverImplied FLOAT = NULL,
     @StakeMultiplier DECIMAL(9,4) = NULL,
-    @StrategyConfigurationJson NVARCHAR(MAX) = NULL
+    @StrategyConfigurationJson NVARCHAR(MAX) = NULL,
+    @PublishEnabled BIT = NULL,
+    @LeagueFilterJson NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF @LeagueFilterJson IS NOT NULL AND ISJSON(@LeagueFilterJson) <> 1
+        THROW 50026, 'LeagueFilterJson must be valid JSON.', 1;
 
     MERGE dbo.AutomatedBotDefinitions AS target
     USING
@@ -336,6 +663,7 @@ BEGIN
             @Description AS Description,
             @BaseStrategy AS BaseStrategy,
             @IsEnabled AS IsEnabled,
+            @PublishEnabled AS PublishEnabled,
             @MarketFamilies AS MarketFamilies,
             @MinEdge AS MinEdge,
             @MinExpectedValue AS MinExpectedValue,
@@ -345,7 +673,8 @@ BEGIN
             @MinOddsExclusive AS MinOddsExclusive,
             @MinProbabilityLiftOverImplied AS MinProbabilityLiftOverImplied,
             @StakeMultiplier AS StakeMultiplier,
-            @StrategyConfigurationJson AS StrategyConfigurationJson
+            @StrategyConfigurationJson AS StrategyConfigurationJson,
+            @LeagueFilterJson AS LeagueFilterJson
     ) AS source
     ON target.BotKey = source.BotKey
     WHEN MATCHED THEN
@@ -354,6 +683,7 @@ BEGIN
             Description = source.Description,
             BaseStrategy = source.BaseStrategy,
             IsEnabled = source.IsEnabled,
+            PublishEnabled = COALESCE(source.PublishEnabled, target.PublishEnabled),
             MarketFamilies = source.MarketFamilies,
             MinEdge = source.MinEdge,
             MinExpectedValue = source.MinExpectedValue,
@@ -364,6 +694,7 @@ BEGIN
             MinProbabilityLiftOverImplied = source.MinProbabilityLiftOverImplied,
             StakeMultiplier = source.StakeMultiplier,
             StrategyConfigurationJson = source.StrategyConfigurationJson,
+            LeagueFilterJson = COALESCE(source.LeagueFilterJson, target.LeagueFilterJson),
             UpdatedAtUtc = SYSUTCDATETIME()
     WHEN NOT MATCHED THEN
         INSERT
@@ -373,6 +704,7 @@ BEGIN
             Description,
             BaseStrategy,
             IsEnabled,
+            PublishEnabled,
             IsBuiltIn,
             MarketFamilies,
             MinEdge,
@@ -383,7 +715,8 @@ BEGIN
             MinOddsExclusive,
             MinProbabilityLiftOverImplied,
             StakeMultiplier,
-            StrategyConfigurationJson
+            StrategyConfigurationJson,
+            LeagueFilterJson
         )
         VALUES
         (
@@ -392,6 +725,7 @@ BEGIN
             source.Description,
             source.BaseStrategy,
             source.IsEnabled,
+            COALESCE(source.PublishEnabled, CONVERT(BIT, 1)),
             0,
             source.MarketFamilies,
             source.MinEdge,
@@ -402,7 +736,8 @@ BEGIN
             source.MinOddsExclusive,
             source.MinProbabilityLiftOverImplied,
             source.StakeMultiplier,
-            source.StrategyConfigurationJson
+            source.StrategyConfigurationJson,
+            source.LeagueFilterJson
         );
 
     EXEC dbo.sp_GetAutomatedBotDefinitions @BotKeys = @BotKey;
@@ -460,9 +795,47 @@ BEGIN
             CONSTRAINT DF_AutomatedBotPickEvaluations_Updated DEFAULT SYSUTCDATETIME(),
         CONSTRAINT UQ_AutomatedBotPickEvaluations_Idempotency UNIQUE (IdempotencyKey),
         CONSTRAINT CK_AutomatedBotPickEvaluations_Decision CHECK
-            (Decision IN (N'Approved', N'Rejected', N'PendingData', N'Invalid'))
+            (Decision IN (N'Approved', N'Rejected', N'Abstain', N'PendingData', N'Invalid'))
     );
 END;
+
+GO
+
+-- These publication-audit fields are also part of the full G migration.  They are
+-- bootstrapped here because the productive upsert below must be able to update the
+-- G audit row in the same transaction that creates the published selection.
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'Published') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD Published BIT NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'PublicationStatus') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD PublicationStatus NVARCHAR(20) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'PublicationLine') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD PublicationLine DECIMAL(6,2) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'PublicationOdds') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD PublicationOdds DECIMAL(10,4) NULL;
+
+-- The productive upsert is defined in this bootstrap script, before the full G
+-- migration is executed. Bootstrap every G audit column referenced by that
+-- procedure so an existing database can compile the procedure on the first pass.
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'FixtureIdentity') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD FixtureIdentity BIGINT NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'ConservativeProbability') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD ConservativeProbability DECIMAL(9,6) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'ConservativeEdge') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD ConservativeEdge DECIMAL(9,6) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'ConservativeExpectedValue') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD ConservativeExpectedValue DECIMAL(9,6) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'GSelectionScore') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD GSelectionScore DECIMAL(9,6) NULL;
+
+IF COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'StakeUnits') IS NULL
+    ALTER TABLE dbo.AutomatedBotPickEvaluations ADD StakeUnits DECIMAL(9,4) NULL;
 
 GO
 
@@ -867,7 +1240,9 @@ BEGIN
             (Status = N'Running' AND LeaseExpiresAtUtc < SYSUTCDATETIME())
         )
       AND (NextAttemptAtUtc IS NULL OR NextAttemptAtUtc <= SYSUTCDATETIME())
-    ORDER BY CreatedAtUtc, RecommendationJobId;
+    -- Fair queue: once a batch finishes its UpdatedAtUtc moves to the end,
+    -- allowing a manual job queued meanwhile to run before the next batch.
+    ORDER BY UpdatedAtUtc, CreatedAtUtc, RecommendationJobId;
 
     IF @RecommendationJobId IS NOT NULL
     BEGIN
@@ -886,6 +1261,27 @@ BEGIN
     SELECT *
     FROM dbo.vw_AutomatedRecommendationJobs
     WHERE RecommendationJobId = @RecommendationJobId;
+END;
+
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_HeartbeatAutomatedRecommendationJob
+    @RecommendationJobId UNIQUEIDENTIFIER,
+    @WorkerId NVARCHAR(150),
+    @LeaseSeconds INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE dbo.AutomatedRecommendationJobs
+    SET
+        LeaseExpiresAtUtc = DATEADD(SECOND, @LeaseSeconds, SYSUTCDATETIME()),
+        UpdatedAtUtc = SYSUTCDATETIME()
+    WHERE RecommendationJobId = @RecommendationJobId
+      AND Status = N'Running'
+      AND LeaseOwner = @WorkerId;
+
+    SELECT @@ROWCOUNT;
 END;
 
 GO
@@ -1056,16 +1452,26 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    DECLARE @NowUtc DATETIME2(0) = SYSUTCDATETIME();
+    DECLARE @Reason NVARCHAR(500) = N'Pick anulado manualmente.';
+
     UPDATE dbo.AutomatedCornerBetSelections
     SET
         Status = N'Void',
         ActualHomeCorners = NULL,
         ActualAwayCorners = NULL,
         ActualTotalCorners = NULL,
+        SettlementActualValue = NULL,
+        SettlementFactor = CONVERT(DECIMAL(6,3), 0),
+        SettlementReason = @Reason,
+        SettlementSource = N'Manual',
+        SettlementSnapshotJson = N'{"source":"Manual","action":"Void"}',
+        LastSettlementCheckReason = @Reason,
+        LastSettlementCheckAtUtc = @NowUtc,
         ProfitLoss = 0,
         YieldPct = 0,
-        SettledAtUtc = SYSUTCDATETIME(),
-        UpdatedAtUtc = SYSUTCDATETIME()
+        SettledAtUtc = @NowUtc,
+        UpdatedAtUtc = @NowUtc
     WHERE AutomatedCornerBetSelectionId = @AutomatedCornerBetSelectionId;
 
     SET @RowsAffected = @@ROWCOUNT;
@@ -1088,12 +1494,33 @@ BEGIN
         THROW 50000, 'Invalid status. Allowed: Pending, Won, Lost, Push, Void.', 1;
     END;
 
+    DECLARE @NowUtc DATETIME2(0) = SYSUTCDATETIME();
+    DECLARE @Reason NVARCHAR(500) = CASE
+        WHEN @Status = N'Pending' THEN N'Pick reabierto manualmente.'
+        ELSE CONCAT(N'Estado establecido manualmente: ', @Status, N'.')
+    END;
+
     UPDATE dbo.AutomatedCornerBetSelections
     SET
         Status = @Status,
         ActualHomeCorners = CASE WHEN @Status = N'Pending' THEN NULL ELSE COALESCE(@ActualHomeCorners, ActualHomeCorners) END,
         ActualAwayCorners = CASE WHEN @Status = N'Pending' THEN NULL ELSE COALESCE(@ActualAwayCorners, ActualAwayCorners) END,
         ActualTotalCorners = CASE WHEN @Status = N'Pending' THEN NULL ELSE COALESCE(@ActualTotalCorners, ActualTotalCorners) END,
+        SettlementActualValue = CASE WHEN @Status = N'Pending' THEN NULL ELSE SettlementActualValue END,
+        SettlementFactor = CASE
+            WHEN @Status = N'Pending' THEN NULL
+            WHEN @Status = N'Won' THEN CONVERT(DECIMAL(6,3), 1)
+            WHEN @Status = N'Lost' THEN CONVERT(DECIMAL(6,3), -1)
+            ELSE CONVERT(DECIMAL(6,3), 0)
+        END,
+        SettlementReason = CASE WHEN @Status = N'Pending' THEN NULL ELSE @Reason END,
+        SettlementSource = CASE WHEN @Status = N'Pending' THEN NULL ELSE N'Manual' END,
+        SettlementSnapshotJson = CASE
+            WHEN @Status = N'Pending' THEN NULL
+            ELSE CONCAT(N'{"source":"Manual","action":"Status","status":"', @Status, N'"}')
+        END,
+        LastSettlementCheckReason = @Reason,
+        LastSettlementCheckAtUtc = @NowUtc,
         ProfitLoss = CASE
             WHEN @Status = N'Won' THEN ROUND(Stake * (Odds - 1), 2)
             WHEN @Status = N'Lost' THEN ROUND(-Stake, 2)
@@ -1106,8 +1533,8 @@ BEGIN
             WHEN @Status IN (N'Push', N'Void') THEN 0
             ELSE NULL
         END,
-        SettledAtUtc = CASE WHEN @Status = N'Pending' THEN NULL ELSE SYSUTCDATETIME() END,
-        UpdatedAtUtc = SYSUTCDATETIME()
+        SettledAtUtc = CASE WHEN @Status = N'Pending' THEN NULL ELSE @NowUtc END,
+        UpdatedAtUtc = @NowUtc
     WHERE AutomatedCornerBetSelectionId = @AutomatedCornerBetSelectionId;
 END;
 
@@ -1120,6 +1547,7 @@ CREATE OR ALTER PROCEDURE dbo.sp_ResolveAutomatedCornerBetSelection
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
     IF @ActualValue < 0
     BEGIN
@@ -1137,9 +1565,14 @@ BEGIN
         RETURN;
     END;
 
-    DECLARE @SettlementFactor DECIMAL(4,2);
+    DECLARE @SettlementFactor DECIMAL(6,3);
+    DECLARE @SelectedSide NVARCHAR(10);
+    DECLARE @LineValue DECIMAL(6,2);
+    DECLARE @NowUtc DATETIME2(0) = SYSUTCDATETIME();
 
     SELECT
+        @SelectedSide = SelectedSide,
+        @LineValue = LineValue,
         @SettlementFactor =
             CAST(
                 CASE
@@ -1166,23 +1599,46 @@ BEGIN
     FROM dbo.AutomatedCornerBetSelections
     WHERE AutomatedCornerBetSelectionId = @AutomatedCornerBetSelectionId;
 
+    DECLARE @SettlementReason NVARCHAR(500) = CONCAT(
+        N'Liquidación manual: ',
+        @SelectedSide,
+        N' ',
+        CONVERT(NVARCHAR(30), @LineValue),
+        N', resultado ',
+        CONVERT(NVARCHAR(20), @ActualValue),
+        N', factor ',
+        CONVERT(NVARCHAR(20), @SettlementFactor),
+        N'.');
+
     UPDATE dbo.AutomatedCornerBetSelections
     SET
         ActualHomeCorners = CASE
             WHEN MarketType IN (N'HomeTeamCorners', N'HomeTeamGoals', N'HomeTeamShots', N'HomeTeamShotsOnGoal')
                 THEN @ActualValue
-            ELSE NULL
+            ELSE ActualHomeCorners
         END,
         ActualAwayCorners = CASE
             WHEN MarketType IN (N'AwayTeamCorners', N'AwayTeamGoals', N'AwayTeamShots', N'AwayTeamShotsOnGoal')
                 THEN @ActualValue
-            ELSE NULL
+            ELSE ActualAwayCorners
         END,
         ActualTotalCorners = CASE
             WHEN MarketType IN (N'TotalCorners', N'TotalGoals', N'TotalShots', N'TotalShotsOnGoal')
                 THEN @ActualValue
-            ELSE NULL
+            ELSE ActualTotalCorners
         END,
+        SettlementActualValue = @ActualValue,
+        SettlementFactor = @SettlementFactor,
+        SettlementReason = @SettlementReason,
+        SettlementSource = N'Manual',
+        SettlementSnapshotJson = CONCAT(
+            N'{"source":"Manual","actualValue":',
+            CONVERT(NVARCHAR(20), @ActualValue),
+            N',"factor":',
+            CONVERT(NVARCHAR(20), @SettlementFactor),
+            N'}'),
+        LastSettlementCheckReason = @SettlementReason,
+        LastSettlementCheckAtUtc = @NowUtc,
         Status = CASE
             WHEN @SettlementFactor > 0 THEN N'Won'
             WHEN @SettlementFactor < 0 THEN N'Lost'
@@ -1198,8 +1654,8 @@ BEGIN
             WHEN @SettlementFactor > 0 THEN ROUND((Odds - 1) * @SettlementFactor, 4)
             ELSE @SettlementFactor
         END,
-        SettledAtUtc = SYSUTCDATETIME(),
-        UpdatedAtUtc = SYSUTCDATETIME()
+        SettledAtUtc = @NowUtc,
+        UpdatedAtUtc = @NowUtc
     WHERE AutomatedCornerBetSelectionId = @AutomatedCornerBetSelectionId;
 
     SET @RowsAffected = @@ROWCOUNT;
@@ -1254,6 +1710,12 @@ IF COL_LENGTH(N'dbo.AutomatedCornerBetSelections', N'LastSettlementCheckReason')
     ALTER TABLE dbo.AutomatedCornerBetSelections ADD LastSettlementCheckReason NVARCHAR(500) NULL;
 IF COL_LENGTH(N'dbo.AutomatedCornerBetSelections', N'LastSettlementCheckAtUtc') IS NULL
     ALTER TABLE dbo.AutomatedCornerBetSelections ADD LastSettlementCheckAtUtc DATETIME2(0) NULL;
+IF COL_LENGTH(N'dbo.AutomatedCornerBetSelections', N'BotKey') IS NULL
+    ALTER TABLE dbo.AutomatedCornerBetSelections ADD BotKey NVARCHAR(50) NULL;
+IF COL_LENGTH(N'dbo.AutomatedCornerBetSelections', N'LogicalPickKey') IS NULL
+    ALTER TABLE dbo.AutomatedCornerBetSelections ADD LogicalPickKey VARBINARY(32) NULL;
+
+GO
 
 IF EXISTS
 (
@@ -1308,68 +1770,239 @@ WHERE FlatStake IS NULL;
 
 GO
 
-;WITH RankedDuplicateSelections AS
+-- A productive pick is unique per bot, fixture, market, side and line. Source,
+-- quote and run are evidence attached to that pick, not separate recommendations.
+UPDATE selection
+SET BotKey = COALESCE
+(
+    NULLIF(UPPER(LTRIM(RTRIM(JSON_VALUE(
+        CASE WHEN ISJSON(selection.DecisionReason) = 1
+             THEN selection.DecisionReason ELSE N'{}' END,
+        '$.botProfile')))), N''),
+    CASE
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 6) = N'-C2026' THEN N'C2026'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 6) = N'-D2026' THEN N'D2026'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 6) = N'-E2026' THEN N'E2026'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 6) = N'-F2026' THEN N'F2026'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 6) = N'-G2026' THEN N'G2026'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 2) = N'-A' THEN N'A'
+        WHEN RIGHT(UPPER(LTRIM(RTRIM(selection.AutomationVersion))), 2) = N'-B' THEN N'B'
+        ELSE UPPER(LTRIM(RTRIM(selection.AutomationVersion)))
+    END
+)
+FROM dbo.AutomatedCornerBetSelections AS selection
+WHERE selection.BotKey IS NULL OR LTRIM(RTRIM(selection.BotKey)) = N'';
+
+-- Reconcile rows that were originally published without an official fixture id
+-- when the same canonical fixture has since acquired one unambiguous id.
+;WITH OfficialFixture AS
 (
     SELECT
-        AutomatedCornerBetSelectionId,
+        MatchDay = CAST(MatchDate AS DATE),
+        HomeKey = UPPER(LTRIM(RTRIM(COALESCE(NULLIF(StandardizedHomeTeam, N''), HomeTeam)))),
+        AwayKey = UPPER(LTRIM(RTRIM(COALESCE(NULLIF(StandardizedAwayTeam, N''), AwayTeam)))),
+        ApiFootballFixtureId = MIN(ApiFootballFixtureId)
+    FROM dbo.AutomatedCornerBetSelections
+    WHERE ApiFootballFixtureId IS NOT NULL
+    GROUP BY
+        CAST(MatchDate AS DATE),
+        UPPER(LTRIM(RTRIM(COALESCE(NULLIF(StandardizedHomeTeam, N''), HomeTeam)))),
+        UPPER(LTRIM(RTRIM(COALESCE(NULLIF(StandardizedAwayTeam, N''), AwayTeam))))
+    HAVING MIN(ApiFootballFixtureId) = MAX(ApiFootballFixtureId)
+)
+UPDATE selection
+SET ApiFootballFixtureId = fixture.ApiFootballFixtureId
+FROM dbo.AutomatedCornerBetSelections AS selection
+INNER JOIN OfficialFixture AS fixture
+    ON fixture.MatchDay = CAST(selection.MatchDate AS DATE)
+   AND fixture.HomeKey = UPPER(LTRIM(RTRIM(COALESCE(NULLIF(selection.StandardizedHomeTeam, N''), selection.HomeTeam))))
+   AND fixture.AwayKey = UPPER(LTRIM(RTRIM(COALESCE(NULLIF(selection.StandardizedAwayTeam, N''), selection.AwayTeam))))
+WHERE selection.ApiFootballFixtureId IS NULL;
+
+UPDATE selection
+SET LogicalPickKey = HASHBYTES
+(
+    'SHA2_256',
+    CONCAT
+    (
+        UPPER(LTRIM(RTRIM(selection.BotKey))), N'|',
+        CASE
+            WHEN selection.ApiFootballFixtureId IS NOT NULL
+                THEN CONCAT(N'ID|', CONVERT(NVARCHAR(30), selection.ApiFootballFixtureId))
+            ELSE CONCAT
+            (
+                N'FALLBACK|', CONVERT(NVARCHAR(10), CAST(selection.MatchDate AS DATE), 23), N'|',
+                UPPER(LTRIM(RTRIM(COALESCE(NULLIF(selection.StandardizedHomeTeam, N''), selection.HomeTeam)))), N'|',
+                UPPER(LTRIM(RTRIM(COALESCE(NULLIF(selection.StandardizedAwayTeam, N''), selection.AwayTeam))))
+            )
+        END, N'|',
+        UPPER(LTRIM(RTRIM(selection.MarketType))), N'|',
+        UPPER(LTRIM(RTRIM(selection.SelectedSide))), N'|',
+        CONVERT(NVARCHAR(30), CONVERT(DECIMAL(6,2), selection.LineValue))
+    )
+)
+FROM dbo.AutomatedCornerBetSelections AS selection
+WHERE selection.LogicalPickKey IS NULL;
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.AutomatedCornerBetSelections
+    WHERE BotKey IS NULL OR LogicalPickKey IS NULL
+)
+    THROW 51050, 'Could not derive the logical identity of every automated pick.', 1;
+
+IF EXISTS
+(
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
+      AND name = N'BotKey'
+      AND is_nullable = 1
+)
+    ALTER TABLE dbo.AutomatedCornerBetSelections ALTER COLUMN BotKey NVARCHAR(50) NOT NULL;
+
+IF EXISTS
+(
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
+      AND name = N'LogicalPickKey'
+      AND is_nullable = 1
+)
+    ALTER TABLE dbo.AutomatedCornerBetSelections ALTER COLUMN LogicalPickKey VARBINARY(32) NOT NULL;
+
+IF OBJECT_ID(N'dbo.AutomatedCornerBetSelectionDeduplicationAudit', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.AutomatedCornerBetSelectionDeduplicationAudit
+    (
+        AutomatedCornerBetSelectionDeduplicationAuditId BIGINT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_AutomatedCornerBetSelectionDeduplicationAudit PRIMARY KEY,
+        RemovedSelectionId BIGINT NOT NULL,
+        SurvivorSelectionId BIGINT NOT NULL,
+        BotKey NVARCHAR(50) NOT NULL,
+        LogicalPickKey VARBINARY(32) NOT NULL,
+        RemovedStatus NVARCHAR(20) NOT NULL,
+        RemovedSnapshotJson NVARCHAR(MAX) NOT NULL,
+        RemovedAtUtc DATETIME2(0) NOT NULL
+            CONSTRAINT DF_AutomatedCornerBetSelectionDeduplicationAudit_RemovedAtUtc DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_AutomatedCornerBetSelectionDeduplicationAudit_RemovedSelectionId
+            UNIQUE (RemovedSelectionId)
+    );
+END;
+
+DECLARE @DuplicateSelections TABLE
+(
+    RemovedSelectionId BIGINT NOT NULL PRIMARY KEY,
+    SurvivorSelectionId BIGINT NOT NULL,
+    BotKey NVARCHAR(50) NOT NULL,
+    LogicalPickKey VARBINARY(32) NOT NULL
+);
+
+;WITH SettlementConsistency AS
+(
+    SELECT
+        BotKey,
+        LogicalPickKey,
+        MinimumSignature = MIN(CONCAT(
+            Status, N'|', COALESCE(CONVERT(NVARCHAR(20), SettlementActualValue), N'NULL'), N'|',
+            COALESCE(CONVERT(NVARCHAR(30), SettlementFactor), N'NULL'))),
+        MaximumSignature = MAX(CONCAT(
+            Status, N'|', COALESCE(CONVERT(NVARCHAR(20), SettlementActualValue), N'NULL'), N'|',
+            COALESCE(CONVERT(NVARCHAR(30), SettlementFactor), N'NULL')))
+    FROM dbo.AutomatedCornerBetSelections
+    GROUP BY BotKey, LogicalPickKey
+    HAVING COUNT_BIG(*) > 1
+),
+RankedDuplicateSelections AS
+(
+    SELECT
+        selection.AutomatedCornerBetSelectionId,
+        selection.BotKey,
+        selection.LogicalPickKey,
         rn = ROW_NUMBER() OVER
         (
             PARTITION BY
-                AutomationVersion,
-                Source,
-                MarketType,
-                CASE
-                    WHEN NULLIF(LTRIM(RTRIM(SourceMatchId)), N'') IS NOT NULL
-                        THEN CONCAT(N'ID|', Source, N'|', LTRIM(RTRIM(SourceMatchId)))
-                    WHEN NULLIF(LTRIM(RTRIM(SourceUrl)), N'') IS NOT NULL
-                        THEN CONCAT(N'URL|', Source, N'|', LTRIM(RTRIM(SourceUrl)))
-                    ELSE CONCAT(
-                        N'FALLBACK|',
-                        Source,
-                        N'|',
-                        CONVERT(NVARCHAR(19), MatchDate, 126),
-                        N'|',
-                        COALESCE(StandardizedLeague, League),
-                        N'|',
-                        COALESCE(StandardizedHomeTeam, HomeTeam),
-                        N'|',
-                        COALESCE(StandardizedAwayTeam, AwayTeam))
-                END
+                selection.BotKey,
+                selection.LogicalPickKey
             ORDER BY
-                CASE WHEN Status IN (N'Won', N'Lost', N'Push', N'Void') THEN 0 ELSE 1 END,
-                UpdatedAtUtc DESC,
-                AutomatedCornerBetSelectionId DESC
+                CASE
+                    WHEN selection.Status IN (N'Won', N'Lost', N'Push') THEN 0
+                    WHEN selection.Status = N'Pending' THEN 1
+                    ELSE 2
+                END,
+                CASE WHEN selection.MatchHistoryId IS NOT NULL THEN 0 ELSE 1 END,
+                CASE WHEN consistency.MinimumSignature <> consistency.MaximumSignature
+                     THEN selection.SettledAtUtc END DESC,
+                selection.Odds DESC,
+                selection.SettledAtUtc DESC,
+                selection.UpdatedAtUtc DESC,
+                selection.AutomatedCornerBetSelectionId DESC
         )
-    FROM dbo.AutomatedCornerBetSelections
+    FROM dbo.AutomatedCornerBetSelections AS selection
+    INNER JOIN SettlementConsistency AS consistency
+        ON consistency.BotKey = selection.BotKey
+       AND consistency.LogicalPickKey = selection.LogicalPickKey
 )
-DELETE s
-FROM dbo.AutomatedCornerBetSelections s
-INNER JOIN RankedDuplicateSelections d
-    ON d.AutomatedCornerBetSelectionId = s.AutomatedCornerBetSelectionId
-WHERE d.rn > 1;
+INSERT INTO @DuplicateSelections
+(
+    RemovedSelectionId,
+    SurvivorSelectionId,
+    BotKey,
+    LogicalPickKey
+)
+SELECT
+    duplicate.AutomatedCornerBetSelectionId,
+    survivor.AutomatedCornerBetSelectionId,
+    duplicate.BotKey,
+    duplicate.LogicalPickKey
+FROM RankedDuplicateSelections AS duplicate
+INNER JOIN RankedDuplicateSelections AS survivor
+    ON survivor.BotKey = duplicate.BotKey
+   AND survivor.LogicalPickKey = duplicate.LogicalPickKey
+   AND survivor.rn = 1
+WHERE duplicate.rn > 1;
 
-GO
-
-IF NOT EXISTS
+INSERT INTO dbo.AutomatedCornerBetSelectionDeduplicationAudit
+(
+    RemovedSelectionId,
+    SurvivorSelectionId,
+    BotKey,
+    LogicalPickKey,
+    RemovedStatus,
+    RemovedSnapshotJson
+)
+SELECT
+    mapping.RemovedSelectionId,
+    mapping.SurvivorSelectionId,
+    mapping.BotKey,
+    mapping.LogicalPickKey,
+    removed.Status,
+    (
+        SELECT removed.*
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+    )
+FROM @DuplicateSelections AS mapping
+INNER JOIN dbo.AutomatedCornerBetSelections AS removed
+    ON removed.AutomatedCornerBetSelectionId = mapping.RemovedSelectionId
+WHERE NOT EXISTS
 (
     SELECT 1
-    FROM sys.indexes
-    WHERE name = N'UX_AutomatedCornerBetSelections_Match'
-      AND object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
-)
-BEGIN
-    CREATE UNIQUE INDEX UX_AutomatedCornerBetSelections_Match
-        ON dbo.AutomatedCornerBetSelections
-        (
-            AutomationVersion,
-            Source,
-            MatchDate,
-            StandardizedLeague,
-            StandardizedHomeTeam,
-            StandardizedAwayTeam,
-            MarketType
-        );
-END;
+    FROM dbo.AutomatedCornerBetSelectionDeduplicationAudit AS audit
+    WHERE audit.RemovedSelectionId = mapping.RemovedSelectionId
+);
+
+UPDATE evaluation
+SET PublishedSelectionId = mapping.SurvivorSelectionId,
+    UpdatedAtUtc = SYSUTCDATETIME()
+FROM dbo.AutomatedBotPickEvaluations AS evaluation
+INNER JOIN @DuplicateSelections AS mapping
+    ON mapping.RemovedSelectionId = evaluation.PublishedSelectionId;
+
+DELETE removed
+FROM dbo.AutomatedCornerBetSelections AS removed
+INNER JOIN @DuplicateSelections AS mapping
+    ON mapping.RemovedSelectionId = removed.AutomatedCornerBetSelectionId;
+
+GO
 
 IF EXISTS
 (
@@ -1377,40 +2010,22 @@ IF EXISTS
     FROM sys.indexes
     WHERE name = N'UX_AutomatedCornerBetSelections_Match'
       AND object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
-      AND NOT EXISTS
-      (
-          SELECT 1
-          FROM sys.index_columns ic
-          INNER JOIN sys.columns c
-              ON c.object_id = ic.object_id
-             AND c.column_id = ic.column_id
-          WHERE ic.object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
-            AND ic.index_id =
-            (
-                SELECT index_id
-                FROM sys.indexes
-                WHERE object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
-                  AND name = N'UX_AutomatedCornerBetSelections_Match'
-            )
-            AND c.name = N'AutomationVersion'
-            AND ic.key_ordinal = 1
-      )
 )
 BEGIN
     DROP INDEX UX_AutomatedCornerBetSelections_Match
         ON dbo.AutomatedCornerBetSelections;
+END;
 
-    CREATE UNIQUE INDEX UX_AutomatedCornerBetSelections_Match
-        ON dbo.AutomatedCornerBetSelections
-        (
-            AutomationVersion,
-            Source,
-            MatchDate,
-            StandardizedLeague,
-            StandardizedHomeTeam,
-            StandardizedAwayTeam,
-            MarketType
-        );
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = N'UX_AutomatedCornerBetSelections_LogicalPick'
+      AND object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_AutomatedCornerBetSelections_LogicalPick
+        ON dbo.AutomatedCornerBetSelections(BotKey, LogicalPickKey);
 END;
 
 IF NOT EXISTS
@@ -1498,10 +2113,319 @@ CREATE OR ALTER PROCEDURE dbo.sp_UpsertAutomatedCornerBetSelection
     @RecommendedSide NVARCHAR(10) = NULL,
     @DecisionReason NVARCHAR(MAX) = NULL,
     @AutomatedCornerBetSelectionId BIGINT OUTPUT,
-    @MergeAction NVARCHAR(10) OUTPUT
+    @MergeAction NVARCHAR(10) OUTPUT,
+    @BotKey NVARCHAR(50) = NULL,
+    @BotGCandidateId BIGINT = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    DECLARE @EffectiveBotKey NVARCHAR(50) = COALESCE
+    (
+        NULLIF(UPPER(LTRIM(RTRIM(@BotKey))), N''),
+        NULLIF(UPPER(LTRIM(RTRIM(JSON_VALUE(
+            CASE WHEN ISJSON(@DecisionReason) = 1
+                 THEN @DecisionReason ELSE N'{}' END,
+            '$.botProfile')))), N''),
+        CASE
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-C2026' THEN N'C2026'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-D2026' THEN N'D2026'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-E2026' THEN N'E2026'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-F2026' THEN N'F2026'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-G2026' THEN N'G2026'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 2) = N'-A' THEN N'A'
+            WHEN RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 2) = N'-B' THEN N'B'
+            ELSE UPPER(LTRIM(RTRIM(@AutomationVersion)))
+        END
+    );
+
+    IF NULLIF(@EffectiveBotKey, N'') IS NULL
+        THROW 51051, 'A stable bot key is required to publish an automated pick.', 1;
+
+    DECLARE @LogicalPickKey VARBINARY(32) = HASHBYTES
+    (
+        'SHA2_256',
+        CONCAT
+        (
+            @EffectiveBotKey, N'|',
+            CASE
+                WHEN @ApiFootballFixtureId IS NOT NULL
+                    THEN CONCAT(N'ID|', CONVERT(NVARCHAR(30), @ApiFootballFixtureId))
+                ELSE CONCAT
+                (
+                    N'FALLBACK|', CONVERT(NVARCHAR(10), CAST(@MatchDate AS DATE), 23), N'|',
+                    UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedHomeTeam, N''), @HomeTeam)))), N'|',
+                    UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedAwayTeam, N''), @AwayTeam))))
+                )
+            END, N'|',
+            UPPER(LTRIM(RTRIM(@MarketType))), N'|',
+            UPPER(LTRIM(RTRIM(@SelectedSide))), N'|',
+            CONVERT(NVARCHAR(30), CONVERT(DECIMAL(6,2), @LineValue))
+        )
+    );
+
+    DECLARE @IsBotG BIT = IIF
+    (
+        @EffectiveBotKey = N'G2026'
+        OR UPPER(LTRIM(RTRIM(@AutomationVersion))) = N'G2026'
+        OR RIGHT(UPPER(LTRIM(RTRIM(@AutomationVersion))), 6) = N'-G2026',
+        1,
+        0
+    );
+
+    -- Preserve the pre-existing A-F transaction semantics. Atomic fail-closed
+    -- publication is required only for the isolated G branch.
+    IF @IsBotG = 1 SET XACT_ABORT ON;
+
+    DECLARE @StartedBotGTransaction BIT = 0;
+    DECLARE @StartedDeduplicationTransaction BIT = 0;
+    DECLARE @BotGFixtureIdentity BIGINT = NULL;
+
+    BEGIN TRY
+        -- The application selector emits one winner, but publication can be retried
+        -- concurrently by separate workers/bookmakers.  Serialize only G for this
+        -- canonical fixture so the guard below and the MERGE are one atomic decision.
+        IF @IsBotG = 1
+        BEGIN
+            IF @@TRANCOUNT = 0
+            BEGIN
+                BEGIN TRANSACTION;
+                SET @StartedBotGTransaction = 1;
+            END;
+
+            SELECT @BotGFixtureIdentity = auditCandidate.FixtureIdentity
+            FROM dbo.AutomatedBotPickEvaluations AS auditCandidate WITH (UPDLOCK, HOLDLOCK)
+            WHERE auditCandidate.AutomatedBotPickEvaluationId = @BotGCandidateId
+              AND auditCandidate.BotKey = N'G2026';
+
+            IF @BotGFixtureIdentity IS NULL
+                THROW 51043, 'Bot G2026 publication requires a persisted candidate with canonical fixture identity.', 1;
+
+            -- Always lock the canonical audit identity. Official-id enrichment can
+            -- therefore never create a second concurrency namespace.
+            DECLARE @BotGFixtureLockResource NVARCHAR(255) = CONCAT
+            (
+                N'BotG2026:fixture-identity:',
+                CONVERT(NVARCHAR(30), @BotGFixtureIdentity)
+            );
+            DECLARE @BotGFixtureLockResult INT;
+
+            EXEC @BotGFixtureLockResult = sys.sp_getapplock
+                @Resource = @BotGFixtureLockResource,
+                @LockMode = N'Exclusive',
+                @LockOwner = N'Transaction',
+                @LockTimeout = 15000;
+
+            IF @BotGFixtureLockResult < 0
+                THROW 51042, 'Bot G2026 could not acquire the fixture publication lock.', 1;
+        END;
+
+        IF @IsBotG = 0
+        BEGIN
+            IF @@TRANCOUNT = 0
+            BEGIN
+                BEGIN TRANSACTION;
+                SET @StartedDeduplicationTransaction = 1;
+            END;
+
+            -- Use the canonical date/team identity for the lock even when an
+            -- official id exists, so enrichment cannot create a second namespace.
+            DECLARE @LogicalPickLockResource NVARCHAR(255) = CONCAT
+            (
+                N'AutomatedPick:', @EffectiveBotKey, N':',
+                CONVERT(NVARCHAR(10), CAST(@MatchDate AS DATE), 23), N':',
+                UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedHomeTeam, N''), @HomeTeam)))), N':',
+                UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedAwayTeam, N''), @AwayTeam)))), N':',
+                UPPER(LTRIM(RTRIM(@MarketType))), N':',
+                UPPER(LTRIM(RTRIM(@SelectedSide))), N':',
+                CONVERT(NVARCHAR(30), CONVERT(DECIMAL(6,2), @LineValue))
+            );
+            DECLARE @LogicalPickLockResult INT;
+
+            EXEC @LogicalPickLockResult = sys.sp_getapplock
+                @Resource = @LogicalPickLockResource,
+                @LockMode = N'Exclusive',
+                @LockOwner = N'Transaction',
+                @LockTimeout = 15000;
+
+            IF @LogicalPickLockResult < 0
+                THROW 51052, 'Could not acquire the logical automated-pick lock.', 1;
+
+            DECLARE @ExistingLogicalSelectionId BIGINT = NULL;
+            SELECT TOP (1)
+                @ExistingLogicalSelectionId = existing.AutomatedCornerBetSelectionId
+            FROM dbo.AutomatedCornerBetSelections AS existing WITH (UPDLOCK, HOLDLOCK)
+            WHERE existing.BotKey = @EffectiveBotKey
+              AND existing.MarketType = @MarketType
+              AND existing.SelectedSide = @SelectedSide
+              AND existing.LineValue = @LineValue
+              AND
+              (
+                  existing.LogicalPickKey = @LogicalPickKey
+                  OR
+                  (
+                      @ApiFootballFixtureId IS NOT NULL
+                      AND existing.ApiFootballFixtureId = @ApiFootballFixtureId
+                  )
+                  OR
+                  (
+                      CAST(existing.MatchDate AS DATE) = CAST(@MatchDate AS DATE)
+                      AND UPPER(LTRIM(RTRIM(COALESCE(NULLIF(existing.StandardizedHomeTeam, N''), existing.HomeTeam)))) =
+                          UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedHomeTeam, N''), @HomeTeam))))
+                      AND UPPER(LTRIM(RTRIM(COALESCE(NULLIF(existing.StandardizedAwayTeam, N''), existing.AwayTeam)))) =
+                          UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedAwayTeam, N''), @AwayTeam))))
+                  )
+              )
+            ORDER BY
+                CASE
+                    WHEN existing.Status IN (N'Won', N'Lost', N'Push') THEN 0
+                    WHEN existing.Status = N'Pending' THEN 1
+                    ELSE 2
+                END,
+                CASE WHEN existing.MatchHistoryId IS NOT NULL THEN 0 ELSE 1 END,
+                existing.Odds DESC,
+                existing.AutomatedCornerBetSelectionId DESC;
+
+            IF @ExistingLogicalSelectionId IS NOT NULL
+            BEGIN
+                -- Reuse the original productive record. Only enrich immutable
+                -- fixture identity; never overwrite its quote, result or lineage.
+                UPDATE dbo.AutomatedCornerBetSelections
+                SET ApiFootballFixtureId = COALESCE(ApiFootballFixtureId, @ApiFootballFixtureId),
+                    LogicalPickKey = CASE
+                        WHEN ApiFootballFixtureId IS NULL AND @ApiFootballFixtureId IS NOT NULL
+                            THEN @LogicalPickKey
+                        ELSE LogicalPickKey
+                    END,
+                    UpdatedAtUtc = SYSUTCDATETIME()
+                WHERE AutomatedCornerBetSelectionId = @ExistingLogicalSelectionId;
+
+                SET @AutomatedCornerBetSelectionId = @ExistingLogicalSelectionId;
+                SET @MergeAction = N'UPDATE';
+
+                IF @StartedDeduplicationTransaction = 1 AND XACT_STATE() = 1
+                    COMMIT TRANSACTION;
+                RETURN;
+            END;
+        END;
+
+    IF @IsBotG = 1
+       AND
+       (
+           @BotGCandidateId IS NULL
+           OR NOT EXISTS
+           (
+               SELECT 1
+               FROM dbo.AutomatedBotPickEvaluations AS auditCandidate
+               WHERE auditCandidate.AutomatedBotPickEvaluationId = @BotGCandidateId
+                 AND auditCandidate.BotKey = N'G2026'
+                 AND auditCandidate.RunId = @RunId
+                 AND auditCandidate.FixtureIdentity = @BotGFixtureIdentity
+                 AND auditCandidate.Decision = N'Approved'
+                 AND auditCandidate.AutomationVersion = @AutomationVersion
+                 AND auditCandidate.Source = @Source
+                 AND auditCandidate.MarketType = @MarketType
+                 AND auditCandidate.LineValue = @LineValue
+                 AND auditCandidate.SelectedSide = @SelectedSide
+                 AND CONVERT(DECIMAL(10,2), auditCandidate.SelectedOdds) = @Odds
+                 AND auditCandidate.MatchDate = @MatchDate
+                 AND UPPER(LTRIM(RTRIM(auditCandidate.League))) =
+                     UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedLeague, N''), @League))))
+                 AND UPPER(LTRIM(RTRIM(auditCandidate.HomeTeam))) =
+                     UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedHomeTeam, N''), @HomeTeam))))
+                 AND UPPER(LTRIM(RTRIM(auditCandidate.AwayTeam))) =
+                     UPPER(LTRIM(RTRIM(COALESCE(NULLIF(@StandardizedAwayTeam, N''), @AwayTeam))))
+                 AND
+                 (
+                     (@ApiFootballFixtureId IS NOT NULL
+                      AND auditCandidate.ApiFootballFixtureId = @ApiFootballFixtureId)
+                     OR
+                     (@ApiFootballFixtureId IS NULL
+                     AND auditCandidate.ApiFootballFixtureId IS NULL)
+                 )
+                 AND auditCandidate.RawImpliedProbability IS NOT NULL
+                 AND auditCandidate.ConservativeProbability IS NOT NULL
+                 AND auditCandidate.ConservativeEdge IS NOT NULL
+                 AND auditCandidate.ConservativeExpectedValue IS NOT NULL
+                 AND auditCandidate.GSelectionScore IS NOT NULL
+                 AND auditCandidate.StakeUnits > 0
+           )
+       )
+        THROW 51043, 'Bot G2026 publication requires the matching persisted Approved audit candidate.', 1;
+
+    -- For G the persisted audit decision is authoritative. Never allow a caller
+    -- to publish different probabilities, economics, ranking or stake.
+    IF @IsBotG = 1
+    BEGIN
+        SELECT
+            @ImpliedProbability = auditCandidate.RawImpliedProbability,
+            @ModelProbability = auditCandidate.ConservativeProbability,
+            @ProbabilityEdge = auditCandidate.ConservativeEdge,
+            @ExpectedValue = auditCandidate.ConservativeExpectedValue,
+            @SelectionScore = auditCandidate.GSelectionScore,
+            @Stake = auditCandidate.StakeUnits,
+            @FlatStake = auditCandidate.StakeUnits
+        FROM dbo.AutomatedBotPickEvaluations AS auditCandidate WITH (UPDLOCK, HOLDLOCK)
+        WHERE auditCandidate.AutomatedBotPickEvaluationId = @BotGCandidateId
+          AND auditCandidate.BotKey = N'G2026';
+    END;
+
+    IF @IsBotG = 1
+       AND NOT EXISTS
+       (
+           SELECT 1
+           FROM dbo.AutomatedBotDefinitions
+           WHERE BotKey = N'G2026'
+             AND IsEnabled = 1
+             AND PublishEnabled = 1
+       )
+    BEGIN
+        THROW 51040, 'Bot G2026 publication is disabled. Shadow candidates cannot create productive picks.', 1;
+    END;
+
+    -- Published G decisions are immutable and limited to one pick per fixture
+    -- across all bookmakers. An exact retry of the same version is the only update
+    -- accepted; a different market, line, side or version is rejected.
+    IF @IsBotG = 1
+       AND EXISTS
+       (
+           SELECT 1
+           FROM dbo.AutomatedCornerBetSelections AS existing
+           WHERE
+             (
+                 UPPER(LTRIM(RTRIM(existing.AutomationVersion))) = N'G2026'
+                 OR RIGHT(UPPER(LTRIM(RTRIM(existing.AutomationVersion))), 6) = N'-G2026'
+             )
+             AND
+             (
+                 (@ApiFootballFixtureId IS NOT NULL AND existing.ApiFootballFixtureId = @ApiFootballFixtureId)
+                 OR
+                 (
+                     existing.MatchDate = @MatchDate
+                     AND COALESCE(existing.StandardizedLeague, existing.League) =
+                         COALESCE(@StandardizedLeague, @League)
+                     AND COALESCE(existing.StandardizedHomeTeam, existing.HomeTeam) =
+                         COALESCE(@StandardizedHomeTeam, @HomeTeam)
+                     AND COALESCE(existing.StandardizedAwayTeam, existing.AwayTeam) =
+                         COALESCE(@StandardizedAwayTeam, @AwayTeam)
+                 )
+             )
+             AND
+             (
+                 (@ApiFootballFixtureId IS NOT NULL
+                  AND existing.ApiFootballFixtureId IS NOT NULL
+                  AND existing.ApiFootballFixtureId <> @ApiFootballFixtureId)
+                 OR existing.AutomationVersion <> @AutomationVersion
+                 OR existing.Source <> @Source
+                 OR existing.MarketType <> @MarketType
+                 OR existing.LineValue <> @LineValue
+                 OR existing.SelectedSide <> @SelectedSide
+                 OR existing.Odds <> @Odds
+             )
+       )
+    BEGIN
+        THROW 51041, 'Bot G2026 already has an immutable published pick for this fixture.', 1;
+    END;
 
     DECLARE @Results TABLE
     (
@@ -1514,6 +2438,8 @@ BEGIN
     (
         SELECT
             RunId = @RunId,
+            BotKey = @EffectiveBotKey,
+            LogicalPickKey = @LogicalPickKey,
             AutomationVersion = @AutomationVersion,
             Source = @Source,
             SourceMatchId = @SourceMatchId,
@@ -1555,34 +2481,59 @@ BEGIN
             RecommendedSide = @RecommendedSide,
             DecisionReason = @DecisionReason
     ) AS Source
-        ON Target.AutomationVersion = Source.AutomationVersion
-       AND Target.Source = Source.Source
-       AND Target.MarketType = Source.MarketType
-       AND
-       (
+        ON
+        (
+            @IsBotG = 1
+            AND Target.AutomationVersion = Source.AutomationVersion
+            AND Target.Source = Source.Source
+            AND Target.MarketType = Source.MarketType
+            AND
             (
-                NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NOT NULL
-                AND Target.SourceMatchId = Source.SourceMatchId
+                Target.ApiFootballFixtureId = Source.ApiFootballFixtureId
+                OR
+                (
+                    (Target.ApiFootballFixtureId IS NULL OR Source.ApiFootballFixtureId IS NULL)
+                    AND Target.MatchDate = Source.MatchDate
+                    AND COALESCE(Target.StandardizedLeague, Target.League) = COALESCE(Source.StandardizedLeague, Source.League)
+                    AND COALESCE(Target.StandardizedHomeTeam, Target.HomeTeam) = COALESCE(Source.StandardizedHomeTeam, Source.HomeTeam)
+                    AND COALESCE(Target.StandardizedAwayTeam, Target.AwayTeam) = COALESCE(Source.StandardizedAwayTeam, Source.AwayTeam)
+                )
             )
-            OR
+        )
+        OR
+        (
+            @IsBotG = 0
+            AND Target.AutomationVersion = Source.AutomationVersion
+            AND Target.Source = Source.Source
+            AND Target.MarketType = Source.MarketType
+            AND
             (
-                NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NULL
-                AND NULLIF(LTRIM(RTRIM(Source.SourceUrl)), N'') IS NOT NULL
-                AND Target.SourceUrl = Source.SourceUrl
+                (
+                    NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NOT NULL
+                    AND Target.SourceMatchId = Source.SourceMatchId
+                )
+                OR
+                (
+                    NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NULL
+                    AND NULLIF(LTRIM(RTRIM(Source.SourceUrl)), N'') IS NOT NULL
+                    AND Target.SourceUrl = Source.SourceUrl
+                )
+                OR
+                (
+                    NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NULL
+                    AND NULLIF(LTRIM(RTRIM(Source.SourceUrl)), N'') IS NULL
+                    AND Target.MatchDate = Source.MatchDate
+                    AND COALESCE(Target.StandardizedLeague, Target.League) = COALESCE(Source.StandardizedLeague, Source.League)
+                    AND COALESCE(Target.StandardizedHomeTeam, Target.HomeTeam) = COALESCE(Source.StandardizedHomeTeam, Source.HomeTeam)
+                    AND COALESCE(Target.StandardizedAwayTeam, Target.AwayTeam) = COALESCE(Source.StandardizedAwayTeam, Source.AwayTeam)
+                )
             )
-            OR
-            (
-                NULLIF(LTRIM(RTRIM(Source.SourceMatchId)), N'') IS NULL
-                AND NULLIF(LTRIM(RTRIM(Source.SourceUrl)), N'') IS NULL
-                AND Target.MatchDate = Source.MatchDate
-                AND COALESCE(Target.StandardizedLeague, Target.League) = COALESCE(Source.StandardizedLeague, Source.League)
-                AND COALESCE(Target.StandardizedHomeTeam, Target.HomeTeam) = COALESCE(Source.StandardizedHomeTeam, Source.HomeTeam)
-                AND COALESCE(Target.StandardizedAwayTeam, Target.AwayTeam) = COALESCE(Source.StandardizedAwayTeam, Source.AwayTeam)
-            )
-       )
+        )
     WHEN MATCHED THEN
         UPDATE SET
             Target.RunId = Source.RunId,
+            Target.BotKey = Source.BotKey,
+            Target.LogicalPickKey = Source.LogicalPickKey,
             Target.AutomationVersion = Source.AutomationVersion,
             Target.SourceMatchId = Source.SourceMatchId,
             Target.ApiFootballFixtureId = COALESCE(Target.ApiFootballFixtureId, Source.ApiFootballFixtureId),
@@ -1626,6 +2577,8 @@ BEGIN
         INSERT
         (
             RunId,
+            BotKey,
+            LogicalPickKey,
             AutomationVersion,
             Source,
             SourceMatchId,
@@ -1673,6 +2626,8 @@ BEGIN
         VALUES
         (
             Source.RunId,
+            Source.BotKey,
+            Source.LogicalPickKey,
             Source.AutomationVersion,
             Source.Source,
             Source.SourceMatchId,
@@ -1724,6 +2679,37 @@ BEGIN
         @AutomatedCornerBetSelectionId = AutomatedCornerBetSelectionId,
         @MergeAction = MergeAction
     FROM @Results;
+
+        IF @IsBotG = 1
+        BEGIN
+            UPDATE dbo.AutomatedBotPickEvaluations
+            SET Published = 1,
+                PublicationStatus = N'Published',
+                PublishedSelectionId = @AutomatedCornerBetSelectionId,
+                PublicationLine = @LineValue,
+                PublicationOdds = @Odds,
+                UpdatedAtUtc = SYSUTCDATETIME()
+            WHERE AutomatedBotPickEvaluationId = @BotGCandidateId
+              AND BotKey = N'G2026'
+              AND Decision = N'Approved'
+              AND (PublishedSelectionId IS NULL
+                   OR PublishedSelectionId = @AutomatedCornerBetSelectionId);
+
+            IF @@ROWCOUNT <> 1
+                THROW 51044, 'Bot G2026 audit publication update failed; the productive pick was rolled back.', 1;
+        END;
+
+        IF @StartedBotGTransaction = 1 AND XACT_STATE() = 1
+            COMMIT TRANSACTION;
+        IF @StartedDeduplicationTransaction = 1 AND XACT_STATE() = 1
+            COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF (@StartedBotGTransaction = 1 OR @StartedDeduplicationTransaction = 1)
+           AND XACT_STATE() <> 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
 END;
 
 GO
@@ -1743,6 +2729,7 @@ BEGIN
     SELECT
         AutomatedCornerBetSelectionId,
         RunId,
+        BotKey,
         AutomationVersion,
         Source,
         SourceMatchId,

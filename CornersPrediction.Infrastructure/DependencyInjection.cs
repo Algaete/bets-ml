@@ -3,9 +3,13 @@ using CornersPrediction.Application.Abstractions.Persistence;
 using CornersPrediction.Application.Admin;
 using CornersPrediction.Application.AutomatedCorners;
 using CornersPrediction.Application.Automation;
+using CornersPrediction.Application.Automation.BotG;
+using CornersPrediction.Application.Automation.BotH;
 using CornersPrediction.Infrastructure.Automation;
 using CornersPrediction.Application.Betting;
 using CornersPrediction.Application.UpcomingMatches;
+using CornersPrediction.Application.FootballIntelligence;
+using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPrediction.Infrastructure.Options;
 using CornersPrediction.Infrastructure.Persistence;
 using CornersPrediction.Infrastructure.Python;
@@ -28,6 +32,8 @@ public static class DependencyInjection
             configuration.GetSection(PredictionAdjustmentOptions.SectionName));
         services.Configure<CornersAutomationOptions>(
             configuration.GetSection(CornersAutomationOptions.SectionName));
+        services.Configure<RobustPickEvaluationOptions>(
+            configuration.GetSection(RobustPickEvaluationOptions.SectionName));
 
         var connectionString = configuration.GetConnectionString("CornersDatabase") ??
             "Data Source=../data/corners.db";
@@ -61,9 +67,33 @@ public static class DependencyInjection
         services.AddScoped<IAutomatedBotPickSettlementRepository, SqlServerAutomatedBotPickSettlementRepository>();
         services.AddScoped<IRecommendationJobRepository, SqlServerRecommendationJobRepository>();
         services.AddScoped<IRecommendationBotDefinitionRepository, SqlServerRecommendationBotDefinitionRepository>();
+        services.AddScoped<SqlServerBotGRepository>();
+        services.AddScoped<IBotGCandidateRepository>(provider =>
+            provider.GetRequiredService<SqlServerBotGRepository>());
+        services.AddScoped<IBotGCandidateReadRepository>(provider =>
+            provider.GetRequiredService<SqlServerBotGRepository>());
+        services.AddScoped<IBotHShadowLabReadRepository, SqlServerBotHShadowLabRepository>();
+        services.AddSingleton<IRobustPickEvaluationRepository, SqlServerRobustPickEvaluationRepository>();
         services.AddScoped<IUserAdminRepository, SqlServerUserAdminRepository>();
         services.AddScoped<ITeamInfoRepository, TeamInfoRepository>();
         services.AddScoped<IUpcomingMatchesRepository, SqlServerUpcomingMatchesRepository>();
+        services.AddScoped<SqlServerFootballIntelligenceRepository>();
+        services.AddScoped<INewsDocumentRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<INewsFactRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<IIntelligenceSnapshotRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<IFootballSourceRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<ITeamAliasRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<IPlayerAliasRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<IMatchIntelligenceRunRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
+        services.AddScoped<IUpcomingIntelligenceFixtureRepository>(provider =>
+            provider.GetRequiredService<SqlServerFootballIntelligenceRepository>());
 
         return services;
     }

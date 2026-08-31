@@ -1,19 +1,33 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CornersPrediction.Application.AutomatedCorners;
 using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotC;
 using CornersPrediction.Application.Automation.BotD;
 using CornersPrediction.Application.Automation.BotE;
+using CornersPrediction.Application.Automation.BotG;
+using CornersPrediction.Domain.Automation.BotG;
+using CornersPrediction.Application.FootballIntelligence;
 using CornersPrediction.Application.Teams;
 using CornersPrediction.Application.MatchHistory;
+using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPredictionApi.CompetitionFiltering;
 using CornersPredictionApi.NewGenerationMl;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using RobustCalibrationFallbackLevel = CornersPrediction.Domain.RobustPickEvaluation.CalibrationFallbackLevel;
+using RobustCurrentSystemDecision = CornersPrediction.Domain.RobustPickEvaluation.CurrentSystemDecision;
+using RobustEvidenceStatus = CornersPrediction.Domain.RobustPickEvaluation.EvidenceStatus;
+using RobustDecision = CornersPrediction.Domain.RobustPickEvaluation.RobustDecision;
+using RobustEvaluationMode = CornersPrediction.Domain.RobustPickEvaluation.EvaluationMode;
+using RobustScenarioEvidenceSnapshot = CornersPrediction.Domain.RobustPickEvaluation.ScenarioEvidenceSnapshot;
+using RobustScenarioType = CornersPrediction.Domain.RobustPickEvaluation.ScenarioType;
 
 namespace AutomatedCornersBot.Api;
 
 public sealed class AutomatedCornersSelectionService
 {
+    private const string PerformanceScorecardsCacheKey = "automated-bot-performance-scorecards-v1";
     private static readonly TimeZoneInfo SantiagoTimeZone = ResolveSantiagoTimeZone();
     private readonly AutomatedBotOptions _options;
     private readonly SqlAutomationRepository _repository;
@@ -22,8 +36,14 @@ public sealed class AutomatedCornersSelectionService
     private readonly IGetPredictionContextUseCase _predictionContextUseCase;
     private readonly NewGenerationPredictionService _newGenerationPredictionService;
     private readonly IBotCPickDecisionEngine _botCPickDecisionEngine;
+    private readonly BotGAutomationService _botGAutomationService;
+    private readonly IIntelligenceSnapshotRepository _intelligenceSnapshotRepository;
     private readonly FeatureBuilder _featureBuilder;
     private readonly CompetitionEligibilityPolicy _competitionPolicy;
+    private readonly IAutomatedBotPerformanceService _performanceService;
+    private readonly IRobustPickEvaluationService _robustPickEvaluationService;
+    private readonly RobustPickEvaluationOptions _robustOptions;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<AutomatedCornersSelectionService> _logger;
 
     public AutomatedCornersSelectionService(
@@ -34,8 +54,14 @@ public sealed class AutomatedCornersSelectionService
         IGetPredictionContextUseCase predictionContextUseCase,
         NewGenerationPredictionService newGenerationPredictionService,
         IBotCPickDecisionEngine botCPickDecisionEngine,
+        BotGAutomationService botGAutomationService,
+        IIntelligenceSnapshotRepository intelligenceSnapshotRepository,
         FeatureBuilder featureBuilder,
         CompetitionEligibilityPolicy competitionPolicy,
+        IAutomatedBotPerformanceService performanceService,
+        IRobustPickEvaluationService robustPickEvaluationService,
+        IOptions<RobustPickEvaluationOptions> robustOptions,
+        IMemoryCache cache,
         ILogger<AutomatedCornersSelectionService> logger)
     {
         _options = options.Value;
@@ -45,8 +71,14 @@ public sealed class AutomatedCornersSelectionService
         _predictionContextUseCase = predictionContextUseCase;
         _newGenerationPredictionService = newGenerationPredictionService;
         _botCPickDecisionEngine = botCPickDecisionEngine;
+        _botGAutomationService = botGAutomationService;
+        _intelligenceSnapshotRepository = intelligenceSnapshotRepository;
         _featureBuilder = featureBuilder;
         _competitionPolicy = competitionPolicy;
+        _performanceService = performanceService;
+        _robustPickEvaluationService = robustPickEvaluationService;
+        _robustOptions = robustOptions.Value;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -104,7 +136,9 @@ public sealed class AutomatedCornersSelectionService
             effectiveRequest.RunBotC ?? true);
         var botDefinitions = effectiveRequest.RunAllEnabledBots
             ? (await _botDefinitionRepository.GetAllAsync(cancellationToken))
-                .Where(definition => definition.IsEnabled)
+                .Where(definition =>
+                    definition.IsEnabled &&
+                    !RecommendationBotLifecycle.IsRetired(definition.BotKey))
                 .OrderBy(definition => definition.BotKey, StringComparer.OrdinalIgnoreCase)
                 .ToArray()
             : await _botDefinitionRepository.GetByKeysAsync(requestedBotKeys, cancellationToken);
@@ -125,7 +159,9 @@ public sealed class AutomatedCornersSelectionService
         }
 
         var disabledBotKeys = botDefinitions
-            .Where(definition => !definition.IsEnabled)
+            .Where(definition =>
+                !definition.IsEnabled ||
+                RecommendationBotLifecycle.IsRetired(definition.BotKey))
             .Select(definition => definition.BotKey)
             .ToArray();
         if (disabledBotKeys.Length > 0)
@@ -133,7 +169,12 @@ public sealed class AutomatedCornersSelectionService
             throw new ArgumentException($"Disabled bot keys cannot be executed: {string.Join(", ", disabledBotKeys)}.");
         }
 
-        var allBotProfiles = botDefinitions
+        // G is intentionally removed before BuildBotProfile. Passing GOALS_MARKET_ANCHORED
+        // through the legacy profile builder would make it behave like Bot A and could publish
+        // without the market-anchor/abstention pipeline.
+        var botGDefinitions = botDefinitions.Where(definition => definition.UsesBotG).ToArray();
+        var standardBotDefinitions = botDefinitions.Where(definition => !definition.UsesBotG).ToArray();
+        var allBotProfiles = standardBotDefinitions
             .Select(definition => BuildBotProfile(
                 definition,
                 minEdge,
@@ -148,11 +189,18 @@ public sealed class AutomatedCornersSelectionService
             .ToArray();
         var newGenerationProfiles = allBotProfiles.Where(profile => profile.UsesNewGenerationModels).ToArray();
         var selectorProfiles = legacySelectorProfiles.Concat(newGenerationProfiles).ToArray();
-        var expectedAutomationVersionCount = allBotProfiles.Length;
-        if (expectedAutomationVersionCount == 0)
+        var expectedAutomationVersionCount = allBotProfiles.Count(profile => profile.PublishEnabled)
+            + botGDefinitions.Count(definition => definition.PublishEnabled);
+        if (allBotProfiles.Length == 0 && botGDefinitions.Length == 0)
         {
             throw new ArgumentException("None of the requested bots are enabled.");
         }
+        var enforceLiveProductionGate = !effectiveRequest.DryRun && !historicalMode;
+        var productionScorecards = await LoadProductionScorecardsAsync(
+            enforceLiveProductionGate
+            && (allBotProfiles.Any(profile => profile.PublishEnabled)
+                || botGDefinitions.Any(definition => definition.PublishEnabled)),
+            cancellationToken);
         var runId = Guid.NewGuid();
         var stopwatch = Stopwatch.StartNew();
         var batchNumber = Math.Max(1, effectiveRequest.BatchNumber);
@@ -163,8 +211,10 @@ public sealed class AutomatedCornersSelectionService
             dateTo,
             minimumMatchDate,
             effectiveRequest.League,
-            effectiveRequest.ExcludeExistingSelections,
-            expectedAutomationVersionCount,
+            effectiveRequest.ExcludeExistingSelections
+                && allBotProfiles.All(profile => profile.PublishEnabled)
+                && botGDefinitions.All(definition => definition.PublishEnabled),
+            Math.Max(1, expectedAutomationVersionCount),
             resolveApiFootballFixtureId: true,
             cancellationToken: cancellationToken);
         var eligibleOddsRows = fetchedOddsRows
@@ -181,27 +231,27 @@ public sealed class AutomatedCornersSelectionService
         var allGroupedMatches = eligibleOddsRows
             .GroupBy(BuildMatchIdentity)
             .ToArray();
-        var totalBatchItems = historicalMode
+        // G evaluates complete line curves and ranks globally within a fixture. Never
+        // split one fixture across batches, even for a live/shadow run.
+        var batchCompleteFixtures = historicalMode || botGDefinitions.Length > 0;
+        var totalBatchItems = batchCompleteFixtures
             ? allGroupedMatches.Length
             : availableOddsRows;
         var totalBatches = CalculateTotalBatches(totalBatchItems, batchSize);
-        var oddsRows = historicalMode
-            ? allGroupedMatches
-                .Skip(batchOffset)
-                .Take(batchSize)
-                .SelectMany(group => group)
-                .ToArray()
-            : eligibleOddsRows
-                .Skip(batchOffset)
-                .Take(batchSize)
-                .ToArray();
-        var processedBatchItems = historicalMode
+        var oddsRows = SelectBatchOddsRows(
+            eligibleOddsRows,
+            batchOffset,
+            batchSize,
+            batchCompleteFixtures);
+        var processedBatchItems = batchCompleteFixtures
             ? oddsRows.GroupBy(BuildMatchIdentity).Count()
             : oddsRows.Length;
         var batchStart = processedBatchItems == 0 ? 0 : batchOffset + 1;
         var batchEnd = processedBatchItems == 0 ? 0 : batchOffset + processedBatchItems;
         var calibrationHistoryBySourceBot = new Dictionary<string, IReadOnlyList<BotECalibrationObservation>>(
             StringComparer.OrdinalIgnoreCase);
+        IReadOnlyDictionary<long, MatchIntelligenceSnapshotPair> intelligenceSnapshotsByFixture =
+            new Dictionary<long, MatchIntelligenceSnapshotPair>();
         if (oddsRows.Length > 0)
         {
             var calibrationSourceBots = selectorProfiles
@@ -239,6 +289,39 @@ public sealed class AutomatedCornersSelectionService
                         sourceBotKey);
                 }
             }
+
+            if (botDefinitions.Any(definition => definition.FootballIntelligenceConfiguration.Enabled))
+            {
+                var fixtureIds = oddsRows
+                    .Where(row => row.ApiFootballFixtureId.HasValue)
+                    .Select(row => row.ApiFootballFixtureId!.Value)
+                    .Distinct()
+                    .ToArray();
+                if (fixtureIds.Length > 0)
+                {
+                    try
+                    {
+                        intelligenceSnapshotsByFixture = await _intelligenceSnapshotRepository.GetLatestPairsAsync(
+                            fixtureIds,
+                            oddsRows.Max(row => ToUtcFromSantiago(row.MatchDate)),
+                            cancellationToken);
+                        _logger.LogInformation(
+                            "Pre-match intelligence snapshots loaded. RequestedFixtures={RequestedFixtures}, AvailableFixtures={AvailableFixtures}",
+                            fixtureIds.Length,
+                            intelligenceSnapshotsByFixture.Count);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.LogError(
+                            exception,
+                            "Pre-match intelligence snapshots could not be loaded. Intelligence-enabled bots will continue with neutral adjustment");
+                    }
+                }
+            }
         }
 
         _logger.LogInformation(
@@ -260,6 +343,10 @@ public sealed class AutomatedCornersSelectionService
         var errors = new List<ErrorMatchResult>();
         var insertedRows = 0;
         var updatedRows = 0;
+        var botGCandidatesEvaluated = 0;
+        var botGApprovedCandidates = 0;
+        var botGRejectedCandidates = 0;
+        var botGAbstainedCandidates = 0;
         var teamInfoCache = new Dictionary<string, IReadOnlyList<TeamBi3InfoDto>>(StringComparer.OrdinalIgnoreCase);
         var newGenerationPredictionCache = new Dictionary<string, NewGenerationBatchPredictionResult>(StringComparer.OrdinalIgnoreCase);
         var progressLogEveryMatches = Math.Max(1, _options.ProgressLogEveryMatches);
@@ -286,6 +373,25 @@ public sealed class AutomatedCornersSelectionService
             var teamGender = NormalizeGender(representative.HomeTeamGender);
             var isNeutralMatch = IsNeutralOrInternationalMatch(representative);
             var currentMarketFamily = MarketFamily(representative.MarketType);
+            var applicableBotGDefinitions = currentMarketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
+                ? botGDefinitions
+                    .Where(definition => definition.IsLeagueAllowed(currentMarketFamily, league))
+                    .ToArray()
+                : Array.Empty<RecommendationBotDefinitionDto>();
+            var hasLeagueEligibleStandardBot = allBotProfiles.Any(profile =>
+                profile.MarketFamilies.Contains(currentMarketFamily)
+                && profile.IsLeagueAllowed(currentMarketFamily, league));
+
+            if (applicableBotGDefinitions.Length == 0 && !hasLeagueEligibleStandardBot)
+            {
+                skipped.Add(new SkippedMatchResult(
+                    league,
+                    homeTeam,
+                    awayTeam,
+                    representative.MatchDate,
+                    $"Todos los bots solicitados excluyen {league} para {currentMarketFamily}."));
+                continue;
+            }
 
             if (matchIndex == 0 || (matchIndex + 1) % progressLogEveryMatches == 0)
             {
@@ -311,14 +417,8 @@ public sealed class AutomatedCornersSelectionService
                     DateOnly.FromDateTime(representative.MatchDate),
                     cancellationToken);
 
-                if (predictionContext is null)
-                {
-                    skipped.Add(new SkippedMatchResult(league, homeTeam, awayTeam, representative.MatchDate, "Prediction context was empty."));
-                    continue;
-                }
-
                 PredictionContextDto? swappedPredictionContext = null;
-                if (isNeutralMatch)
+                if (predictionContext is not null && isNeutralMatch)
                 {
                     swappedPredictionContext = await GetPredictionContextAsync(
                         league,
@@ -327,6 +427,107 @@ public sealed class AutomatedCornersSelectionService
                         teamGender,
                         DateOnly.FromDateTime(representative.MatchDate),
                         cancellationToken);
+                }
+
+                IReadOnlyList<TeamBi3InfoDto> teamInfo = Array.Empty<TeamBi3InfoDto>();
+                if (predictionContext is not null)
+                {
+                    if (teamInfoCache.TryGetValue($"{league}|{teamGender}", out var cachedTeamInfo))
+                    {
+                        teamInfo = cachedTeamInfo;
+                    }
+                    else
+                    {
+                        teamInfo = await _predictionApiClient.GetTeamInfoAsync(league, teamGender, cancellationToken);
+                        teamInfoCache[$"{league}|{teamGender}"] = teamInfo;
+                    }
+                }
+
+                foreach (var botGDefinition in applicableBotGDefinitions)
+                {
+                    var botGResult = await _botGAutomationService.EvaluateFixtureAsync(
+                        runId,
+                        botGDefinition,
+                        matchGroup.ToArray(),
+                        predictionContext,
+                        swappedPredictionContext,
+                        teamInfo,
+                        isNeutralMatch,
+                        historicalMode,
+                        effectiveRequest.DryRun,
+                        ResolveIntelligenceSnapshot(matchGroup, intelligenceSnapshotsByFixture),
+                        cancellationToken);
+                    botGCandidatesEvaluated += botGResult.Candidates.Count;
+                    botGApprovedCandidates += botGResult.Approved;
+                    botGRejectedCandidates += botGResult.Rejected;
+                    botGAbstainedCandidates += botGResult.Abstained;
+
+                    var botGConfiguration = botGDefinition.GoalsMarketAnchoredConfiguration!;
+                    if (botGResult.SelectedForPublication is not null
+                        && botGDefinition.PublishEnabled
+                        && botGConfiguration.PublishEnabled
+                        && !botGConfiguration.ShadowMode
+                        && !historicalMode
+                        && !effectiveRequest.DryRun)
+                    {
+                        var sourceOdds = FindBotGSourceOdds(matchGroup, botGResult.SelectedForPublication);
+                        var eligibility = AutomatedBotProductionEligibilityPolicy.Evaluate(
+                            productionScorecards,
+                            botGResult.SelectedForPublication.BotKey,
+                            botGResult.SelectedForPublication.MarketFamily,
+                            botGResult.SelectedForPublication.MarketType.ToString(),
+                            botGResult.SelectedForPublication.Selection.ToString(),
+                            botGResult.SelectedForPublication.Bookmaker,
+                            botGResult.SelectedForPublication.AutomationVersion,
+                            botGResult.SelectedForPublication.Line,
+                            botGResult.SelectedForPublication.OddsTimestampUtc,
+                            botGResult.SelectedForPublication.PredictionTimestampUtc,
+                            immutableOddsSnapshotAvailable: sourceOdds.OddsSnapshotId is > 0
+                                && sourceOdds.OddsCapturedAtUtc.HasValue
+                                && sourceOdds.SnapshotOverOdds is > 1m
+                                && sourceOdds.SnapshotUnderOdds is > 1m);
+                        if (!eligibility.CanPublish)
+                        {
+                            skipped.Add(new SkippedMatchResult(
+                                league,
+                                homeTeam,
+                                awayTeam,
+                                representative.MatchDate,
+                                $"G2026: candidato aprobado en shadow, pero no promovible: {eligibility.Reason}"));
+                            continue;
+                        }
+                        var publishedCandidate = ToPublishedBotGCandidate(
+                            sourceOdds,
+                            predictionContext!,
+                            botGResult.SelectedForPublication);
+                        var published = await PersistCandidateAsync(
+                            botGResult.SelectedForPublication.RunId,
+                            BuildBotGPublishProfile(botGDefinition, botGResult.SelectedForPublication),
+                            publishedCandidate,
+                            baseStake: 1m,
+                            dryRun: false,
+                            maximumStakeUnits: eligibility.MaxStakeUnits,
+                            cancellationToken);
+                        if (published.RejectedByRobustLayer || published.Result is null)
+                        {
+                            skipped.Add(new SkippedMatchResult(
+                                league,
+                                homeTeam,
+                                awayTeam,
+                                representative.MatchDate,
+                                $"G2026: rechazado por la capa robusta: {published.RobustReason}"));
+                            continue;
+                        }
+                        insertedRows += published.Inserted ? 1 : 0;
+                        updatedRows += published.Updated ? 1 : 0;
+                        selections.Add(published.Result);
+                    }
+                }
+
+                if (predictionContext is null)
+                {
+                    skipped.Add(new SkippedMatchResult(league, homeTeam, awayTeam, representative.MatchDate, "Prediction context was empty."));
+                    continue;
                 }
 
                 if (!HasEnoughPredictionHistory(predictionContext, isNeutralMatch)
@@ -338,7 +539,9 @@ public sealed class AutomatedCornersSelectionService
                         isNeutralMatch);
                     await PersistPendingBotCEvaluationsAsync(
                         runId,
-                        selectorProfiles.Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)),
+                        selectorProfiles.Where(profile =>
+                            profile.MarketFamilies.Contains(currentMarketFamily)
+                            && profile.IsLeagueAllowed(currentMarketFamily, league)),
                         matchGroup,
                         historyReason,
                         effectiveRequest.DryRun,
@@ -352,12 +555,6 @@ public sealed class AutomatedCornersSelectionService
                     continue;
                 }
 
-                if (!teamInfoCache.TryGetValue($"{league}|{teamGender}", out var teamInfo))
-                {
-                    teamInfo = await _predictionApiClient.GetTeamInfoAsync(league, teamGender, cancellationToken);
-                    teamInfoCache[$"{league}|{teamGender}"] = teamInfo;
-                }
-
                 var predictionBundles = new List<PredictionBundle>();
                 var legacyPredictionCache = new Dictionary<string, PredictionResultDto>(StringComparer.Ordinal);
 
@@ -366,13 +563,16 @@ public sealed class AutomatedCornersSelectionService
                 // below, so skipping these calls preserves the decision while making
                 // historical simulations substantially faster.
                 var applicableLegacyProfiles = botProfiles
-                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))
+                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)
+                        && profile.IsLeagueAllowed(currentMarketFamily, league))
                     .ToArray();
                 var applicableLegacySelectorProfiles = legacySelectorProfiles
-                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))
+                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)
+                        && profile.IsLeagueAllowed(currentMarketFamily, league))
                     .ToArray();
                 var applicableNewGenerationProfiles = newGenerationProfiles
-                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))
+                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)
+                        && profile.IsLeagueAllowed(currentMarketFamily, league))
                     .ToArray();
                 IEnumerable<UpcomingOddsRecord> legacyOddsRows = applicableLegacyProfiles.Length == 0
                     && applicableLegacySelectorProfiles.Length == 0
@@ -410,7 +610,10 @@ public sealed class AutomatedCornersSelectionService
                             predictionBundle.OverUnderPrediction,
                             predictionBundle.Features,
                             botProfile,
-                            predictionBundle.IsNeutralAdjusted);
+                            predictionBundle.IsNeutralAdjusted,
+                            ResolveIntelligenceSnapshot(
+                                [predictionBundle.Odds],
+                                intelligenceSnapshotsByFixture));
 
                         if (candidateOrReason.candidate is null)
                         {
@@ -436,13 +639,54 @@ public sealed class AutomatedCornersSelectionService
                     }
 
                     matchHadSelection = true;
+                    if (!effectiveRequest.DryRun && !botProfile.PublishEnabled)
+                    {
+                        skipped.Add(new SkippedMatchResult(
+                            league,
+                            homeTeam,
+                            awayTeam,
+                            representative.MatchDate,
+                            $"{botProfile.Key}: candidato aprobado, pero PublishEnabled está deshabilitado."));
+                        continue;
+                    }
+                    decimal? maximumStakeUnits = null;
+                    if (enforceLiveProductionGate)
+                    {
+                        var eligibility = EvaluateProductionEligibility(
+                            productionScorecards,
+                            botProfile,
+                            bestCandidate);
+                        if (!eligibility.CanPublish)
+                        {
+                            skipped.Add(new SkippedMatchResult(
+                                league,
+                                homeTeam,
+                                awayTeam,
+                                representative.MatchDate,
+                                $"{botProfile.Key}: candidato aprobado y conservado en monitoreo; {eligibility.Reason}"));
+                            continue;
+                        }
+
+                        maximumStakeUnits = eligibility.MaxStakeUnits;
+                    }
                     var persisted = await PersistCandidateAsync(
                         runId,
                         botProfile,
                         bestCandidate,
                         stake,
                         effectiveRequest.DryRun,
+                        maximumStakeUnits,
                         cancellationToken);
+                    if (persisted.RejectedByRobustLayer || persisted.Result is null)
+                    {
+                        skipped.Add(new SkippedMatchResult(
+                            league,
+                            homeTeam,
+                            awayTeam,
+                            representative.MatchDate,
+                            $"{botProfile.Key}: rechazado por la capa robusta: {persisted.RobustReason}"));
+                        continue;
+                    }
                     insertedRows += persisted.Inserted ? 1 : 0;
                     updatedRows += persisted.Updated ? 1 : 0;
                     selections.Add(persisted.Result);
@@ -455,12 +699,15 @@ public sealed class AutomatedCornersSelectionService
                         applicableLegacySelectorProfiles,
                         predictionBundles,
                         calibrationHistoryBySourceBot,
+                        intelligenceSnapshotsByFixture,
                         league,
                         homeTeam,
                         awayTeam,
                         representative.MatchDate,
                         stake,
                         effectiveRequest.DryRun,
+                        enforceLiveProductionGate,
+                        productionScorecards,
                         cancellationToken);
                     matchHadSelection |= legacySelectorResult.HadSelection;
                     insertedRows += legacySelectorResult.InsertedRows;
@@ -493,7 +740,8 @@ public sealed class AutomatedCornersSelectionService
                                 var evaluation = EvaluateBotCCandidate(
                                     predictionBundle,
                                     newGenerationProfile,
-                                    calibrationHistoryBySourceBot);
+                                    calibrationHistoryBySourceBot,
+                                    intelligenceSnapshotsByFixture);
                                 botCEvaluations.Add(evaluation);
                                 if (evaluation.Candidate is null)
                                 {
@@ -506,6 +754,21 @@ public sealed class AutomatedCornersSelectionService
                                     bestCandidate = evaluation.Candidate;
                                     bestEvaluation = evaluation;
                                 }
+                            }
+
+                            if (!effectiveRequest.DryRun)
+                            {
+                                // Persist the decision audit before any productive write. If
+                                // publication fails, the approved/rejected evidence is still
+                                // present and no unaudited pick can be created.
+                                await PersistSelectorEvaluationsAsync(
+                                    runId,
+                                    newGenerationProfile,
+                                    botCEvaluations,
+                                    bestEvaluation,
+                                    publishedSelectionId: null,
+                                    winnerOnly: false,
+                                    cancellationToken);
                             }
 
                             long? publishedSelectionId = null;
@@ -521,52 +784,67 @@ public sealed class AutomatedCornersSelectionService
                             else
                             {
                                 matchHadSelection = true;
-                                var persisted = await PersistCandidateAsync(
-                                    runId,
-                                    newGenerationProfile,
-                                    bestCandidate,
-                                    stake,
-                                    effectiveRequest.DryRun,
-                                    cancellationToken);
-                                insertedRows += persisted.Inserted ? 1 : 0;
-                                updatedRows += persisted.Updated ? 1 : 0;
-                                selections.Add(persisted.Result);
-                                publishedSelectionId = persisted.Result.Selection.AutomatedCornerBetSelectionId;
+                                var publishEligibility = !enforceLiveProductionGate
+                                    ? new AutomatedBotProductionEligibility(true, "Dry-run.")
+                                    : EvaluateProductionEligibility(
+                                        productionScorecards,
+                                        newGenerationProfile,
+                                        bestCandidate);
+                                if (effectiveRequest.DryRun
+                                    || (newGenerationProfile.PublishEnabled
+                                        && (!enforceLiveProductionGate || publishEligibility.CanPublish)))
+                                {
+                                    var persisted = await PersistCandidateAsync(
+                                        runId,
+                                        newGenerationProfile,
+                                        bestCandidate,
+                                        stake,
+                                        effectiveRequest.DryRun,
+                                        enforceLiveProductionGate ? publishEligibility.MaxStakeUnits : null,
+                                        cancellationToken);
+                                    if (persisted.RejectedByRobustLayer || persisted.Result is null)
+                                    {
+                                        skipped.Add(new SkippedMatchResult(
+                                            league,
+                                            homeTeam,
+                                            awayTeam,
+                                            representative.MatchDate,
+                                            $"{newGenerationProfile.Key}: rechazado por la capa robusta: {persisted.RobustReason}"));
+                                    }
+                                    else
+                                    {
+                                        insertedRows += persisted.Inserted ? 1 : 0;
+                                        updatedRows += persisted.Updated ? 1 : 0;
+                                        selections.Add(persisted.Result);
+                                        publishedSelectionId = effectiveRequest.DryRun
+                                            ? null
+                                            : persisted.Result.Selection.AutomatedCornerBetSelectionId;
+                                    }
+                                }
+                                else
+                                {
+                                    var reason = !newGenerationProfile.PublishEnabled
+                                        ? "publicación deshabilitada"
+                                        : publishEligibility.Reason;
+                                    skipped.Add(new SkippedMatchResult(
+                                        league,
+                                        homeTeam,
+                                        awayTeam,
+                                        representative.MatchDate,
+                                        $"{newGenerationProfile.Key}: candidato aprobado y auditado; {reason}."));
+                                }
                             }
 
-                            if (!effectiveRequest.DryRun)
+                            if (!effectiveRequest.DryRun && publishedSelectionId.HasValue)
                             {
-                                foreach (var evaluation in botCEvaluations)
-                                {
-                                    var isPublished = ReferenceEquals(evaluation, bestEvaluation);
-                                    var storedDecision = evaluation.Decision;
-                                    if (storedDecision.Decision == "Approved" && !isPublished)
-                                    {
-                                        storedDecision = storedDecision with
-                                        {
-                                            Decision = "Rejected",
-                                            DecisionReasons = storedDecision.DecisionReasons
-                                                .Append("REJECTED_LOWER_RANKED_CANDIDATE")
-                                                .Distinct(StringComparer.Ordinal)
-                                                .ToArray(),
-                                            Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
-                                        };
-                                    }
-
-                                    await _repository.UpsertBotCEvaluationAsync(
-                                        new PersistBotCEvaluationCommand(
-                                            runId,
-                                            newGenerationProfile.Key,
-                                            newGenerationProfile.AutomationVersion,
-                                            evaluation.Bundle.Odds,
-                                            MapSelectionMarketType(evaluation.Bundle.Odds.MarketType),
-                                            "Models 2026",
-                                            evaluation.Bundle.CornersPrediction.ModelVersion ?? "unknown",
-                                            storedDecision,
-                                            ParseTrainedThroughUtc(evaluation.Bundle.CornersPrediction.TrainedThrough),
-                                            isPublished ? publishedSelectionId : null),
-                                        cancellationToken);
-                                }
+                                await PersistSelectorEvaluationsAsync(
+                                    runId,
+                                    newGenerationProfile,
+                                    botCEvaluations,
+                                    bestEvaluation,
+                                    publishedSelectionId,
+                                    winnerOnly: true,
+                                    cancellationToken);
                             }
                         }
                     }
@@ -639,12 +917,18 @@ public sealed class AutomatedCornersSelectionService
         }
 
         stopwatch.Stop();
-        var botCounts = allBotProfiles.ToDictionary(
-            profile => profile.Key,
-            profile => selections.Count(result => string.Equals(
-                result.Selection.AutomationVersion,
-                profile.AutomationVersion,
-                StringComparison.OrdinalIgnoreCase)),
+        var botCounts = botDefinitions.ToDictionary(
+            definition => definition.BotKey,
+            definition => definition.UsesBotG
+                ? selections.Count(result => result.Selection.AutomationVersion.EndsWith(
+                    "-G2026",
+                    StringComparison.OrdinalIgnoreCase))
+                : selections.Count(result => string.Equals(
+                    result.Selection.AutomationVersion,
+                    allBotProfiles.Single(profile => profile.Key.Equals(
+                        definition.BotKey,
+                        StringComparison.OrdinalIgnoreCase)).AutomationVersion,
+                    StringComparison.OrdinalIgnoreCase)),
             StringComparer.OrdinalIgnoreCase);
         _logger.LogInformation(
             "Automated corners bot run finished. RunId={RunId}, ElapsedSeconds={ElapsedSeconds:0.0}, Selected={Selected}, Skipped={Skipped}, Errors={Errors}, Inserted={Inserted}, Updated={Updated}",
@@ -676,7 +960,11 @@ public sealed class AutomatedCornersSelectionService
             BotCounts: botCounts,
             Selections: selections,
             Skipped: skipped,
-            Errors: errors);
+            Errors: errors,
+            BotGCandidatesEvaluated: botGCandidatesEvaluated,
+            BotGApprovedCandidates: botGApprovedCandidates,
+            BotGRejectedCandidates: botGRejectedCandidates,
+            BotGAbstainedCandidates: botGAbstainedCandidates);
     }
 
     public async Task<AutomatedOddsAvailabilityResponse> GetAvailabilityAsync(
@@ -751,12 +1039,15 @@ public sealed class AutomatedCornersSelectionService
         IReadOnlyList<BotVariantProfile> profiles,
         IReadOnlyList<PredictionBundle> bundles,
         IReadOnlyDictionary<string, IReadOnlyList<BotECalibrationObservation>> calibrationHistoryBySourceBot,
+        IReadOnlyDictionary<long, MatchIntelligenceSnapshotPair> intelligenceSnapshotsByFixture,
         string league,
         string homeTeam,
         string awayTeam,
         DateTime matchDate,
         decimal stake,
         bool dryRun,
+        bool enforceLiveProductionGate,
+        IReadOnlyCollection<AutomatedBotPerformanceScorecard> productionScorecards,
         CancellationToken cancellationToken)
     {
         var selections = new List<AutomatedSelectionResult>();
@@ -772,7 +1063,11 @@ public sealed class AutomatedCornersSelectionService
             string? rejectedReason = null;
             foreach (var bundle in bundles)
             {
-                var evaluation = EvaluateBotCCandidate(bundle, profile, calibrationHistoryBySourceBot);
+                var evaluation = EvaluateBotCCandidate(
+                    bundle,
+                    profile,
+                    calibrationHistoryBySourceBot,
+                    intelligenceSnapshotsByFixture);
                 evaluations.Add(evaluation);
                 if (evaluation.Candidate is null)
                 {
@@ -785,6 +1080,18 @@ public sealed class AutomatedCornersSelectionService
                 }
             }
 
+            if (!dryRun)
+            {
+                await PersistSelectorEvaluationsAsync(
+                    runId,
+                    profile,
+                    evaluations,
+                    bestEvaluation,
+                    publishedSelectionId: null,
+                    winnerOnly: false,
+                    cancellationToken);
+            }
+
             long? publishedSelectionId = null;
             if (bestCandidate is null)
             {
@@ -793,47 +1100,116 @@ public sealed class AutomatedCornersSelectionService
             }
             else
             {
-                var persisted = await PersistCandidateAsync(runId, profile, bestCandidate, stake, dryRun, cancellationToken);
-                inserted += persisted.Inserted ? 1 : 0;
-                updated += persisted.Updated ? 1 : 0;
-                selections.Add(persisted.Result);
-                publishedSelectionId = persisted.Result.Selection.AutomatedCornerBetSelectionId;
+                var publishEligibility = !enforceLiveProductionGate
+                    ? new AutomatedBotProductionEligibility(true, "Dry-run.")
+                    : EvaluateProductionEligibility(productionScorecards, profile, bestCandidate);
+                if (dryRun
+                    || (profile.PublishEnabled
+                        && (!enforceLiveProductionGate || publishEligibility.CanPublish)))
+                {
+                    var persisted = await PersistCandidateAsync(
+                        runId,
+                        profile,
+                        bestCandidate,
+                        stake,
+                        dryRun,
+                        enforceLiveProductionGate ? publishEligibility.MaxStakeUnits : null,
+                        cancellationToken);
+                    if (persisted.RejectedByRobustLayer || persisted.Result is null)
+                    {
+                        skipped.Add(new SkippedMatchResult(
+                            league,
+                            homeTeam,
+                            awayTeam,
+                            matchDate,
+                            $"{profile.Key}: rechazado por la capa robusta: {persisted.RobustReason}"));
+                    }
+                    else
+                    {
+                        inserted += persisted.Inserted ? 1 : 0;
+                        updated += persisted.Updated ? 1 : 0;
+                        selections.Add(persisted.Result);
+                        publishedSelectionId = dryRun
+                            ? null
+                            : persisted.Result.Selection.AutomatedCornerBetSelectionId;
+                    }
+                }
+                else
+                {
+                    var reason = !profile.PublishEnabled
+                        ? "publicación deshabilitada"
+                        : publishEligibility.Reason;
+                    skipped.Add(new SkippedMatchResult(
+                        league,
+                        homeTeam,
+                        awayTeam,
+                        matchDate,
+                        $"{profile.Key}: candidato aprobado y auditado; {reason}."));
+                }
             }
 
-            if (dryRun) continue;
-            foreach (var evaluation in evaluations)
+            if (!dryRun && publishedSelectionId.HasValue)
             {
-                var isPublished = ReferenceEquals(evaluation, bestEvaluation);
-                var storedDecision = evaluation.Decision;
-                if (storedDecision.Decision == "Approved" && !isPublished)
-                {
-                    storedDecision = storedDecision with
-                    {
-                        Decision = "Rejected",
-                        DecisionReasons = storedDecision.DecisionReasons.Append("REJECTED_LOWER_RANKED_CANDIDATE").Distinct(StringComparer.Ordinal).ToArray(),
-                        Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
-                    };
-                }
-
-                var modelName = BaseModelName(profile);
-                var modelVersion = BaseModelVersion(profile, evaluation.Bundle.CornersPrediction, evaluation.Bundle.Odds.MarketType);
-                await _repository.UpsertBotCEvaluationAsync(
-                    new PersistBotCEvaluationCommand(
-                        runId,
-                        profile.Key,
-                        profile.AutomationVersion,
-                        evaluation.Bundle.Odds,
-                        MapSelectionMarketType(evaluation.Bundle.Odds.MarketType),
-                        modelName,
-                        modelVersion,
-                        storedDecision,
-                        BaseModelTrainedThrough(profile, evaluation.Bundle.CornersPrediction),
-                        isPublished ? publishedSelectionId : null),
+                await PersistSelectorEvaluationsAsync(
+                    runId,
+                    profile,
+                    evaluations,
+                    bestEvaluation,
+                    publishedSelectionId,
+                    winnerOnly: true,
                     cancellationToken);
             }
         }
 
         return new SelectorProfilesRunResult(selections.Count > 0, inserted, updated, selections, skipped);
+    }
+
+    private async Task PersistSelectorEvaluationsAsync(
+        Guid runId,
+        BotVariantProfile profile,
+        IReadOnlyCollection<BotCEvaluation> evaluations,
+        BotCEvaluation? winner,
+        long? publishedSelectionId,
+        bool winnerOnly,
+        CancellationToken cancellationToken)
+    {
+        foreach (var evaluation in evaluations)
+        {
+            var isWinner = ReferenceEquals(evaluation, winner);
+            if (winnerOnly && !isWinner)
+                continue;
+
+            var storedDecision = evaluation.Decision;
+            if (storedDecision.Decision == "Approved" && !isWinner)
+            {
+                storedDecision = storedDecision with
+                {
+                    Decision = "Rejected",
+                    DecisionReasons = storedDecision.DecisionReasons
+                        .Append("REJECTED_LOWER_RANKED_CANDIDATE")
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray(),
+                    Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
+                };
+            }
+
+            await _repository.UpsertBotCEvaluationAsync(
+                new PersistBotCEvaluationCommand(
+                    runId,
+                    profile.Key,
+                    profile.AutomationVersion,
+                    evaluation.Bundle.Odds,
+                    MapSelectionMarketType(evaluation.Bundle.Odds.MarketType),
+                    BaseModelName(profile),
+                    BaseModelVersion(
+                        profile,
+                        evaluation.Bundle.CornersPrediction,
+                        evaluation.Bundle.Odds.MarketType),
+                    storedDecision,
+                    BaseModelTrainedThrough(profile, evaluation.Bundle.CornersPrediction),
+                    isWinner ? publishedSelectionId : null),
+                cancellationToken);
+        }
     }
 
     private BotVariantProfile BuildBotProfile(
@@ -854,14 +1230,18 @@ public sealed class AutomatedCornersSelectionService
             ? Convert.ToDecimal(Math.Clamp(_options.ConservativeStakeMultiplier, 0.01d, 1d))
             : 1m;
         var markets = definition.MarketFamilies.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var footballIntelligence = definition.FootballIntelligenceConfiguration;
+        var configurationLineage = usesPickSelector
+            ? definition.SelectorConfiguration?.ToJson()
+            : footballIntelligence.Enabled
+                ? definition.StrategyConfigurationJson
+                : null;
 
         return new BotVariantProfile(
             Key: definition.BotKey,
             AutomationVersion: BuildAutomationVersion(
                 definition.BotKey,
-                definition.SelectorConfiguration?.EmpiricalCalibration.Enabled == true
-                    ? definition.SelectorConfiguration.ToJson()
-                    : null),
+                configurationLineage),
             DisplayName: definition.DisplayName,
             UsesPickSelector: usesPickSelector,
             UsesNewGenerationModels: usesNewGenerationModels,
@@ -876,7 +1256,152 @@ public sealed class AutomatedCornersSelectionService
             MinOddsExclusive: definition.MinOddsExclusive ?? (isConservative ? _options.ConservativeMinOdds : null),
             MinProbabilityLiftOverImplied: definition.MinProbabilityLiftOverImplied ?? (isConservative ? lift : 0),
             StakeMultiplier: definition.StakeMultiplier ?? defaultStakeMultiplier,
-            SelectorConfiguration: definition.SelectorConfiguration);
+            SelectorConfiguration: definition.SelectorConfiguration,
+            FootballIntelligence: footballIntelligence)
+        {
+            PublishEnabled = definition.PublishEnabled,
+            LeagueFilters = definition.LeagueFilters
+        };
+    }
+
+    private static UpcomingOddsRecord FindBotGSourceOdds(
+        IEnumerable<UpcomingOddsRecord> rows,
+        BotGCandidate candidate)
+    {
+        var expectedSourceMarket = candidate.MarketType switch
+        {
+            BotGMarketType.TotalGoals => "GoalsTotal",
+            BotGMarketType.HomeTeamGoals => "GoalsHomeTeam",
+            BotGMarketType.AwayTeamGoals => "GoalsAwayTeam",
+            _ => throw new ArgumentOutOfRangeException(nameof(candidate.MarketType))
+        };
+        var match = rows.FirstOrDefault(row =>
+            row.OddsSnapshotId == candidate.SourceOddsId
+            && row.Source.Equals(candidate.Bookmaker, StringComparison.OrdinalIgnoreCase)
+            && row.MarketType.Equals(expectedSourceMarket, StringComparison.Ordinal)
+            && row.LineValue == candidate.Line)
+            ?? rows.FirstOrDefault(row =>
+                row.Source.Equals(candidate.Bookmaker, StringComparison.OrdinalIgnoreCase)
+                && row.MarketType.Equals(expectedSourceMarket, StringComparison.Ordinal)
+                && row.LineValue == candidate.Line)
+            ?? throw new InvalidOperationException("The approved Bot G candidate lost its immutable source quote.");
+        return match with
+        {
+            ApiFootballFixtureId = match.ApiFootballFixtureId ?? candidate.OfficialFixtureId,
+            OverOdds = candidate.OverOdds,
+            UnderOdds = candidate.UnderOdds
+        };
+    }
+
+    private static BotVariantProfile BuildBotGPublishProfile(
+        RecommendationBotDefinitionDto definition,
+        BotGCandidate candidate)
+    {
+        var configuration = definition.GoalsMarketAnchoredConfiguration
+            ?? throw new InvalidOperationException("Bot G configuration was unavailable at publication time.");
+        if (!definition.PublishEnabled || !configuration.PublishEnabled || configuration.ShadowMode)
+            throw new InvalidOperationException("Bot G publication is disabled. The candidate must remain shadow.");
+        return new BotVariantProfile(
+            Key: BotGConfiguration.DefaultBotKey,
+            AutomationVersion: candidate.AutomationVersion,
+            DisplayName: definition.DisplayName,
+            UsesPickSelector: false,
+            UsesNewGenerationModels: false,
+            MarketFamilies: new HashSet<string>(["GOALS"], StringComparer.OrdinalIgnoreCase),
+            MinEdge: configuration.Thresholds.MinimumConservativeEdge,
+            MinExpectedValue: configuration.Thresholds.MinimumConservativeExpectedValue,
+            MinDistanceToLine: 0d,
+            MaxContextDifference: double.MaxValue,
+            AllowModelDisagreement: false,
+            MinOddsExclusive: configuration.Thresholds.MinimumOdds,
+            MinProbabilityLiftOverImplied: 0d,
+            StakeMultiplier: configuration.Stake,
+            SelectorConfiguration: null,
+            FootballIntelligence: definition.FootballIntelligenceConfiguration)
+        {
+            PublishEnabled = true,
+            LeagueFilters = definition.LeagueFilters
+        };
+    }
+
+    private static AutomatedSelectionCandidate ToPublishedBotGCandidate(
+        UpcomingOddsRecord odds,
+        PredictionContextDto context,
+        BotGCandidate candidate)
+    {
+        if (candidate.Decision != BotGDecisionStatus.Approved)
+            throw new InvalidOperationException("Only an approved Bot G candidate can be published.");
+        var quantitySignal = (candidate.LegacyPrediction + candidate.Prediction2026) / 2d;
+        var contextDifference = Math.Abs(quantitySignal - candidate.ContextPrediction);
+        var prediction = new PredictionResultDto
+        {
+            PredictedTotalCorners = quantitySignal,
+            PredTotalDirect = candidate.MarketType == BotGMarketType.TotalGoals ? quantitySignal : null,
+            PredHomeCorners = candidate.MarketType == BotGMarketType.HomeTeamGoals ? quantitySignal : null,
+            PredAwayCorners = candidate.MarketType == BotGMarketType.AwayTeamGoals ? quantitySignal : null,
+            BettingLine = Convert.ToDouble(candidate.Line),
+            DistanceToLine = Math.Abs(quantitySignal - Convert.ToDouble(candidate.Line)),
+            RecommendedSide = candidate.Selection.ToString().ToUpperInvariant(),
+            Confidence = "MARKET_ANCHORED",
+            Message = "Bot G2026 market-anchored probability with calibrated conservative EV.",
+            ModelDifference = candidate.ModelDisagreement,
+            ModelConsensus = candidate.ModelDisagreement <= 0.5d ? "HIGH" : "LOW",
+            Mae = 0d,
+            Rmse = 0d,
+            ModelGeneration = "G2026",
+            ModelVersion = candidate.BaseModelVersion,
+            TrainedThrough = candidate.BaseModelTrainedThroughUtc?.ToString("O"),
+            FeatureSet = candidate.FeatureSchemaVersion
+        };
+        var featureSnapshot = JsonSerializer.Deserialize<JsonElement>(candidate.FeatureSnapshotJson);
+        var decisionReason = JsonSerializer.Serialize(new
+        {
+            botProfile = candidate.BotKey,
+            automationVersion = candidate.AutomationVersion,
+            strategy = "Goals Market Anchored",
+            decision = candidate.Decision.ToString(),
+            probabilityEdge = candidate.ConservativeEdge,
+            expectedValue = candidate.ConservativeExpectedValue,
+            featureSnapshot,
+            model = new
+            {
+                name = "Bot G market-anchored ensemble",
+                version = candidate.BaseModelVersion,
+                trainedThrough = candidate.BaseModelTrainedThroughUtc
+            }
+        });
+        return new AutomatedSelectionCandidate
+        {
+            BotGCandidateId = candidate.CandidateId > 0
+                ? candidate.CandidateId
+                : throw new InvalidOperationException("Bot G publication requires a persisted audit candidate."),
+            Odds = odds,
+            CornersPrediction = prediction,
+            PredictionContext = context,
+            Features = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["botGCandidateId"] = candidate.CandidateId,
+                ["configurationVersion"] = candidate.ConfigurationVersion,
+                ["marketNoVigProbability"] = candidate.NoVigMarketProbability,
+                ["candidateProbability"] = candidate.CandidateProbability,
+                ["calibratedProbability"] = candidate.CalibratedProbability,
+                ["conservativeProbability"] = candidate.ConservativeProbability,
+                ["uncertainty"] = candidate.ProbabilityUncertainty,
+                ["ood"] = candidate.OutOfDistributionScore
+            },
+            SelectedSide = candidate.Selection.ToString(),
+            SelectedOdds = candidate.SelectedOdds,
+            ModelProbability = candidate.ConservativeProbability,
+            ImpliedProbability = candidate.RawImpliedProbability,
+            ProbabilityEdge = candidate.ConservativeEdge,
+            ExpectedValue = candidate.ConservativeExpectedValue,
+            KellyFraction = 0d,
+            DistanceToLine = Math.Abs(quantitySignal - Convert.ToDouble(candidate.Line)),
+            ContextDifference = contextDifference,
+            SelectionScore = candidate.GSelectionScore,
+            DecisionReason = decisionReason,
+            SelectionStatus = "Pending"
+        };
     }
 
     private static string BaseModelName(BotVariantProfile profile) =>
@@ -923,9 +1448,89 @@ public sealed class AutomatedCornersSelectionService
         AutomatedSelectionCandidate candidate,
         decimal baseStake,
         bool dryRun,
+        decimal? maximumStakeUnits,
         CancellationToken cancellationToken)
     {
         var profileStake = CalculateProfileStake(baseStake, botProfile);
+        if (!dryRun && maximumStakeUnits.HasValue)
+        {
+            if (maximumStakeUnits.Value <= 0m)
+            {
+                throw new InvalidOperationException(
+                    $"Bot {botProfile.Key} cannot publish without a positive production stake cap.");
+            }
+
+            profileStake = Math.Min(profileStake, maximumStakeUnits.Value);
+        }
+        if (!dryRun && !botProfile.PublishEnabled)
+        {
+            throw new InvalidOperationException(
+                $"Bot {botProfile.Key} cannot publish because PublishEnabled is false.");
+        }
+
+        RobustPickEvaluationExecution? robustEvaluation = null;
+        if (_robustOptions.Enabled)
+        {
+            try
+            {
+                robustEvaluation = await _robustPickEvaluationService.EvaluateAsync(
+                    BuildRobustEvaluationInput(
+                        runId,
+                        botProfile,
+                        candidate,
+                        profileStake,
+                        botPickSelectionId: null),
+                    persist: false,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(
+                    exception,
+                    "Robust pre-publication evaluation failed. BotKey={BotKey}, Match={HomeTeam} vs {AwayTeam}, Market={Market}, Line={Line}, ConfiguredMode={Mode}",
+                    botProfile.Key,
+                    candidate.Odds.EffectiveHomeTeam,
+                    candidate.Odds.EffectiveAwayTeam,
+                    candidate.Odds.MarketType,
+                    candidate.Odds.LineValue,
+                    _robustOptions.Mode);
+                if (_robustOptions.Mode.Equals("Enforce", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Robust evaluation is in Enforce mode and failed before publication.",
+                        exception);
+                }
+            }
+        }
+
+        if (robustEvaluation?.Decision.Mode == RobustEvaluationMode.Enforce)
+        {
+            if (robustEvaluation.Decision.EffectiveDecision is RobustDecision.Reject or RobustDecision.ManualReview
+                || robustEvaluation.Decision.EffectiveStake <= 0m)
+            {
+                if (!dryRun)
+                {
+                    await _robustPickEvaluationService.PersistAsync(
+                        robustEvaluation,
+                        botPickSelectionId: null,
+                        cancellationToken);
+                }
+
+                return new PersistCandidateResult(
+                    Result: null,
+                    Inserted: false,
+                    Updated: false,
+                    RejectedByRobustLayer: true,
+                    RobustReason: robustEvaluation.Decision.HumanReadableReason);
+            }
+
+            profileStake = Math.Min(profileStake, robustEvaluation.Decision.EffectiveStake);
+        }
+
         if (dryRun)
         {
             return new PersistCandidateResult(
@@ -933,13 +1538,17 @@ public sealed class AutomatedCornersSelectionService
                     "DRY_RUN",
                     ToPersistedSelection(runId, botProfile.AutomationVersion, candidate, profileStake)),
                 Inserted: false,
-                Updated: false);
+                Updated: false,
+                RejectedByRobustLayer: false,
+                RobustReason: robustEvaluation?.Decision.HumanReadableReason);
         }
 
         var upsert = await _repository.UpsertSelectionAsync(
             new PersistSelectionCommand
             {
+                BotGCandidateId = candidate.BotGCandidateId,
                 RunId = runId,
+                BotKey = botProfile.Key,
                 AutomationVersion = botProfile.AutomationVersion,
                 Odds = candidate.Odds,
                 SelectedSide = candidate.SelectedSide,
@@ -965,11 +1574,643 @@ public sealed class AutomatedCornersSelectionService
         {
             AutomatedCornerBetSelectionId = upsert.SelectionId
         };
+
+        if (robustEvaluation is not null)
+        {
+            try
+            {
+                await _robustPickEvaluationService.PersistAsync(
+                    robustEvaluation,
+                    upsert.SelectionId,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(
+                    exception,
+                    "Robust evaluation persistence failed after pick upsert. SelectionId={SelectionId}, BotKey={BotKey}, Mode={Mode}",
+                    upsert.SelectionId,
+                    botProfile.Key,
+                    robustEvaluation.Decision.Mode);
+                if (robustEvaluation.Decision.Mode == RobustEvaluationMode.Enforce)
+                {
+                    throw new InvalidOperationException(
+                        $"Robust Enforce evaluation could not be persisted for selection {upsert.SelectionId}.",
+                        exception);
+                }
+            }
+        }
+
         return new PersistCandidateResult(
             new AutomatedSelectionResult(upsert.MergeAction, selection),
             Inserted: upsert.MergeAction.Equals("INSERT", StringComparison.OrdinalIgnoreCase),
-            Updated: upsert.MergeAction.Equals("UPDATE", StringComparison.OrdinalIgnoreCase));
+            Updated: upsert.MergeAction.Equals("UPDATE", StringComparison.OrdinalIgnoreCase),
+            RejectedByRobustLayer: false,
+            RobustReason: robustEvaluation?.Decision.HumanReadableReason);
     }
+
+    private RobustPickEvaluationInput BuildRobustEvaluationInput(
+        Guid runId,
+        BotVariantProfile botProfile,
+        AutomatedSelectionCandidate candidate,
+        decimal originalStake,
+        long? botPickSelectionId)
+    {
+        var odds = candidate.Odds;
+        var prediction = candidate.CornersPrediction;
+        var fixtureStartUtc = ToUtcFromSantiago(odds.MatchDate);
+        var quoteTimestampUtc = EnsureUtc(odds.OddsCapturedAtUtc ?? odds.UpdatedAtUtc);
+        var decisionRoot = TryParseJson(candidate.DecisionReason);
+        var predictionAsOfUtc = ReadJsonDateTime(
+                decisionRoot,
+                "featureSnapshot", "predictionTimestampUtc")
+            ?? ReadJsonDateTime(decisionRoot, "predictionTimestampUtc")
+            ?? quoteTimestampUtc;
+        predictionAsOfUtc = EnsureUtc(predictionAsOfUtc);
+        // The robust snapshot must not claim an AsOf earlier than any evidence it
+        // consumes. Quotes and the feature snapshot can differ by milliseconds;
+        // persisting the prediction time alone made the temporal SQL guard reject
+        // otherwise valid live evaluations after the pick had already been saved.
+        var evaluationAsOfUtc = predictionAsOfUtc >= quoteTimestampUtc
+            ? predictionAsOfUtc
+            : quoteTimestampUtc;
+
+        var rawProbability = FirstFinite(
+            ReadJsonDouble(decisionRoot, "BaseRawProbability"),
+            ReadJsonDouble(decisionRoot, "featureSnapshot", "model", "baseRawProbability"),
+            ReadJsonDouble(decisionRoot, "featureSnapshot", "footballIntelligence", "probabilityBeforeFootballIntelligence"),
+            candidate.ModelProbability);
+        var calibratedProbability = Math.Clamp(
+            FirstFinite(
+                ReadJsonDouble(decisionRoot, "FinalProbability"),
+                ReadJsonDouble(decisionRoot, "featureSnapshot", "marketProbability", "finalProbability"),
+                candidate.ModelProbability),
+            0d,
+            1d);
+        rawProbability = Math.Clamp(rawProbability, 0d, 1d);
+
+        var uncertainty = Math.Max(0d, FirstFinite(
+            ReadJsonDouble(decisionRoot, "featureSnapshot", "empiricalCalibration", "result", "StandardError"),
+            ReadFeatureDouble(candidate.Features, "uncertainty"),
+            0d));
+        var conservativeProbability = ReadJsonDouble(
+            decisionRoot,
+            "featureSnapshot", "empiricalCalibration", "result", "ConservativeEquivalentProbability");
+        var probabilityLower = Math.Clamp(
+            conservativeProbability
+                ?? Math.Min(rawProbability, calibratedProbability) - uncertainty,
+            0d,
+            1d);
+        var probabilityUpper = Math.Clamp(
+            Math.Max(rawProbability, calibratedProbability) + uncertainty,
+            0d,
+            1d);
+
+        var dataQuality = Math.Clamp(
+            FirstFinite(
+                ReadJsonDouble(decisionRoot, "DataQualityScore"),
+                ReadJsonDouble(decisionRoot, "featureSnapshot", "quality", "dataQuality"),
+                ReadFeatureDouble(candidate.Features, "dataQualityScore"),
+                0.50d),
+            0d,
+            1d);
+        var directPrediction = ResolveBasePredictedValue(prediction, odds.MarketType);
+        var isTotalMarket = odds.MarketType.EndsWith("Total", StringComparison.OrdinalIgnoreCase);
+        var modelMae = prediction.Mae > 0d && double.IsFinite(prediction.Mae)
+            ? prediction.Mae
+            : (double?)null;
+        var calibrationTier = ReadJsonString(
+            decisionRoot,
+            "featureSnapshot", "empiricalCalibration", "result", "EvidenceTier");
+        var calibrationFallback = ParseCalibrationFallback(calibrationTier);
+        var intelligenceStatus = ResolveRobustIntelligenceStatus(
+            botProfile.FootballIntelligence.Enabled,
+            decisionRoot);
+        var officialLineupAvailable = ReadJsonBoolean(
+            decisionRoot,
+            "featureSnapshot", "intelligenceEvidence", "officialLineupAvailable")
+            ?? ReadJsonBoolean(decisionRoot, "intelligenceEvidence", "officialLineupAvailable");
+        var actionableFactCount = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "intelligenceEvidence", "actionableFactCount")
+            ?? ReadJsonInt32(decisionRoot, "intelligenceEvidence", "actionableFactCount")
+            ?? 0;
+        var independentSourceCount = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "intelligenceEvidence", "independentSourceCount")
+            ?? ReadJsonInt32(decisionRoot, "intelligenceEvidence", "independentSourceCount")
+            ?? 0;
+        var intelligenceSnapshotAgeMinutes = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "intelligenceEvidence", "snapshotAgeMinutes")
+            ?? ReadJsonInt32(decisionRoot, "intelligenceEvidence", "snapshotAgeMinutes");
+
+        var logicalFixtureId = ResolveLogicalFixtureId(odds);
+        var baseModelVersion = BaseModelVersion(botProfile, prediction, odds.MarketType);
+        var baseEvidenceIds = new List<string> { $"model:{baseModelVersion}" };
+        if (odds.OddsSnapshotId is > 0)
+        {
+            baseEvidenceIds.Add($"odds-snapshot:{odds.OddsSnapshotId.Value}");
+        }
+        var scenarioEvidence = new Dictionary<RobustScenarioType, RobustScenarioEvidenceSnapshot>
+        {
+            [RobustScenarioType.Base] = new(
+                RobustScenarioType.Base,
+                "Base model snapshot",
+                RobustEvidenceStatus.ReviewedNeutral,
+                HasStructuredEvidence: true,
+                IsAdjustmentValidated: true,
+                ProbabilityWeight: 1m,
+                PredictionAdjustment: 0m,
+                ProbabilityAdjustment: 0m,
+                Confidence: Math.Max(0.01m, ToRobustDecimal(dataQuality)),
+                EvidenceIds: baseEvidenceIds,
+                AsOfUtc: predictionAsOfUtc,
+                ExpiresUtc: fixtureStartUtc,
+                AdjustmentVersion: baseModelVersion,
+                HistoricalEventObservationCount: 0,
+                Reason: "BASE_MODEL_AND_QUOTE_CAPTURED_PREMATCH")
+        };
+        if (botProfile.FootballIntelligence.Enabled)
+        {
+            var intelligenceIds = new[]
+                {
+                    ReadJsonInt64(decisionRoot, "featureSnapshot", "footballIntelligence", "result", "HomeSnapshotId"),
+                    ReadJsonInt64(decisionRoot, "featureSnapshot", "footballIntelligence", "result", "AwaySnapshotId")
+                }
+                .Where(value => value is > 0)
+                .Select(value => $"intelligence-snapshot:{value!.Value}")
+                .ToArray();
+            var intelligenceAdjustment = ToRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "footballIntelligence", "result", "ProbabilityAdjustment") ?? 0d);
+            var intelligenceConfidence = Math.Clamp(ToRobustDecimal(FirstFinite(
+                ReadJsonDouble(decisionRoot, "featureSnapshot", "intelligenceEvidence", "home", "OverallNewsConfidence"),
+                ReadJsonDouble(decisionRoot, "intelligenceEvidence", "home", "OverallNewsConfidence"),
+                ReadJsonDouble(decisionRoot, "featureSnapshot", "intelligenceEvidence", "away", "OverallNewsConfidence"),
+                ReadJsonDouble(decisionRoot, "intelligenceEvidence", "away", "OverallNewsConfidence"),
+                dataQuality)), 0.01m, 1m);
+            var evidenceAsOf = ReadJsonDateTime(
+                    decisionRoot,
+                    "featureSnapshot", "intelligenceEvidence", "asOfUtc")
+                ?? ReadJsonDateTime(decisionRoot, "intelligenceEvidence", "asOfUtc")
+                ?? predictionAsOfUtc;
+            scenarioEvidence[RobustScenarioType.Intelligence] = new(
+                RobustScenarioType.Intelligence,
+                "Pre-match intelligence",
+                intelligenceStatus,
+                HasStructuredEvidence: intelligenceIds.Length > 0 && actionableFactCount > 0,
+                IsAdjustmentValidated: intelligenceStatus is RobustEvidenceStatus.AppliedPositive
+                    or RobustEvidenceStatus.AppliedNegative,
+                ProbabilityWeight: intelligenceConfidence,
+                PredictionAdjustment: 0m,
+                ProbabilityAdjustment: intelligenceAdjustment,
+                Confidence: intelligenceConfidence,
+                EvidenceIds: intelligenceIds,
+                AsOfUtc: EnsureUtc(evidenceAsOf),
+                ExpiresUtc: fixtureStartUtc,
+                AdjustmentVersion: botProfile.FootballIntelligence.Version,
+                HistoricalEventObservationCount: 0,
+                Reason: intelligenceStatus.ToString());
+            if (officialLineupAvailable == true && intelligenceIds.Length > 0)
+            {
+                scenarioEvidence[RobustScenarioType.Lineup] = new(
+                    RobustScenarioType.Lineup,
+                    "Confirmed lineup reviewed",
+                    RobustEvidenceStatus.ReviewedNeutral,
+                    HasStructuredEvidence: true,
+                    IsAdjustmentValidated: true,
+                    ProbabilityWeight: intelligenceConfidence,
+                    PredictionAdjustment: 0m,
+                    ProbabilityAdjustment: 0m,
+                    Confidence: intelligenceConfidence,
+                    EvidenceIds: intelligenceIds,
+                    AsOfUtc: EnsureUtc(evidenceAsOf),
+                    ExpiresUtc: fixtureStartUtc,
+                    AdjustmentVersion: botProfile.FootballIntelligence.Version,
+                    HistoricalEventObservationCount: 0,
+                    Reason: "CONFIRMED_LINEUP_REVIEWED_WITHOUT_SEPARATE_ADJUSTMENT");
+            }
+        }
+        var subjectKey = string.Join(
+            "|",
+            botProfile.Key.Trim().ToUpperInvariant(),
+            logicalFixtureId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            odds.MarketType.Trim().ToUpperInvariant(),
+            odds.LineValue.ToString("G29", System.Globalization.CultureInfo.InvariantCulture),
+            candidate.SelectedSide.Trim().ToUpperInvariant(),
+            odds.Source.Trim().ToUpperInvariant());
+
+        return new RobustPickEvaluationInput
+        {
+            BotPickSelectionId = botPickSelectionId,
+            SourceOddsSnapshotId = odds.OddsSnapshotId is > 0 ? odds.OddsSnapshotId : null,
+            EvaluationSubjectKey = subjectKey,
+            BotKey = botProfile.Key,
+            MarketFamily = MarketFamily(odds.MarketType),
+            MarketType = MapSelectionMarketType(odds.MarketType),
+            SelectedSide = candidate.SelectedSide,
+            League = odds.EffectiveLeague,
+            HomeTeam = odds.EffectiveHomeTeam,
+            AwayTeam = odds.EffectiveAwayTeam,
+            Bookmaker = odds.Source,
+            AutomationVersion = botProfile.AutomationVersion,
+            FixtureId = logicalFixtureId,
+            ExternalFixtureId = odds.ApiFootballFixtureId is > 0 ? odds.ApiFootballFixtureId : null,
+            FixtureStartUtc = fixtureStartUtc,
+            PredictionAsOfUtc = predictionAsOfUtc,
+            EvaluationAsOfUtc = evaluationAsOfUtc,
+            QuoteTimestampUtc = quoteTimestampUtc,
+            Line = odds.LineValue,
+            SelectedOdds = candidate.SelectedOdds,
+            OverOdds = odds.SnapshotOverOdds is > 1m ? odds.SnapshotOverOdds : odds.OverOdds,
+            UnderOdds = odds.SnapshotUnderOdds is > 1m ? odds.SnapshotUnderOdds : odds.UnderOdds,
+            OriginalStake = originalStake,
+            CurrentMinimumPointEdge = Convert.ToDecimal(Math.Max(0d, botProfile.MinEdge)),
+            CurrentMinimumPointExpectedValue = Convert.ToDecimal(Math.Max(0d, botProfile.MinExpectedValue)),
+            CurrentDecision = RobustCurrentSystemDecision.Bet,
+            PrimaryPrediction = ToRobustDecimal(directPrediction),
+            DirectPrediction = ToRobustDecimal(
+                isTotalMarket
+                    ? prediction.PredTotalDirect ?? prediction.PredictedTotalCorners
+                    : directPrediction),
+            HomePrediction = isTotalMarket ? ToNullableRobustDecimal(prediction.PredHomeCorners) : null,
+            AwayPrediction = isTotalMarket ? ToNullableRobustDecimal(prediction.PredAwayCorners) : null,
+            ContextPrediction = ToNullableRobustDecimal(
+                ResolveContextPrediction(odds.MarketType, candidate.PredictionContext)),
+            ConfiguredModelMae = ToNullableRobustDecimal(modelMae),
+            RawProbability = ToRobustDecimal(rawProbability),
+            CalibratedProbability = ToRobustDecimal(calibratedProbability),
+            ProbabilityBeforeIntelligence = ToNullableRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "footballIntelligence", "probabilityBeforeFootballIntelligence")),
+            ProbabilityLowerBound = ToRobustDecimal(probabilityLower),
+            ProbabilityUpperBound = ToRobustDecimal(Math.Max(probabilityLower, probabilityUpper)),
+            DataQualityScore = ToRobustDecimal(dataQuality),
+            BaseModelVersion = baseModelVersion,
+            ModelTrainedThroughUtc = BaseModelTrainedThrough(botProfile, prediction),
+            SelectorVersion = botProfile.SelectorConfiguration?.ConfigurationVersion,
+            CalibrationVersion = botProfile.SelectorConfiguration?.EmpiricalCalibration.Version,
+            IntelligenceVersion = botProfile.FootballIntelligence.Version,
+            CalibrationEffectiveN = ToNullableRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "EffectiveSampleSize")),
+            CalibrationExactMarketN = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "ExactMarketRows") ?? 0,
+            CalibrationFamilyN = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "FamilyRows") ?? 0,
+            CalibrationGlobalN = ReadJsonInt32(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "GlobalRows") ?? 0,
+            CalibrationFallbackLevel = calibrationFallback,
+            CalibrationError = ToNullableRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "SourceBrierScore")),
+            CalibrationPriorWeight = ToNullableRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "PriorWeight")),
+            CalibrationIntervalMethod = ReadJsonString(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "IntervalMethod"),
+            CalibrationConfidenceLevel = ToNullableRobustDecimal(ReadJsonDouble(
+                decisionRoot,
+                "featureSnapshot", "empiricalCalibration", "result", "ConfidenceLevel")),
+            ScenarioEvidence = scenarioEvidence,
+            IntelligenceEvidenceStatus = intelligenceStatus,
+            LineupStatus = !botProfile.FootballIntelligence.Enabled
+                ? nameof(RobustEvidenceStatus.NotApplicable)
+                : officialLineupAvailable == true
+                    ? nameof(RobustEvidenceStatus.ReviewedNeutral)
+                    : nameof(RobustEvidenceStatus.InsufficientEvidence),
+            // General news/intelligence evidence is not proof that fatigue was
+            // actually measured. Keep this provider explicitly unavailable until
+            // a versioned, validated fatigue snapshot is wired into ScenarioEvidence.
+            FatigueDataStatus = nameof(RobustEvidenceStatus.NotApplicable),
+            GameStateModelStatus = nameof(RobustEvidenceStatus.NotApplicable),
+            ActionableFactCount = actionableFactCount,
+            IndependentSourceCount = independentSourceCount,
+            IntelligenceSnapshotAgeMinutes = intelligenceSnapshotAgeMinutes
+        };
+    }
+
+    private static object BuildIntelligenceEvidenceSummary(MatchIntelligenceSnapshotPair? snapshots)
+    {
+        var home = snapshots?.Home;
+        var away = snapshots?.Away;
+        return new
+        {
+            actionableFactCount = (home?.ActionableFactCount ?? 0) + (away?.ActionableFactCount ?? 0),
+            independentSourceCount = Math.Max(home?.IndependentSourceCount ?? 0, away?.IndependentSourceCount ?? 0),
+            snapshotAgeMinutes = Math.Max(home?.SnapshotAgeMinutes ?? 0, away?.SnapshotAgeMinutes ?? 0),
+            officialLineupAvailable = home?.OfficialLineupAvailable == true || away?.OfficialLineupAvailable == true,
+            asOfUtc = new[] { home?.CutoffAtUtc, away?.CutoffAtUtc }
+                .Where(value => value.HasValue)
+                .Select(value => EnsureUtc(value!.Value))
+                .DefaultIfEmpty(DateTime.MinValue)
+                .Max(),
+            home = home is null ? null : new
+            {
+                home.ActionableFactCount,
+                home.IndependentSourceCount,
+                home.SnapshotAgeMinutes,
+                home.OfficialLineupAvailable,
+                home.OverallNewsConfidence,
+                home.ConflictCount
+            },
+            away = away is null ? null : new
+            {
+                away.ActionableFactCount,
+                away.IndependentSourceCount,
+                away.SnapshotAgeMinutes,
+                away.OfficialLineupAvailable,
+                away.OverallNewsConfidence,
+                away.ConflictCount
+            }
+        };
+    }
+
+    private static RobustEvidenceStatus ResolveRobustIntelligenceStatus(
+        bool enabled,
+        JsonElement? root)
+    {
+        if (!enabled)
+        {
+            return RobustEvidenceStatus.NotApplicable;
+        }
+
+        var isApplied = ReadJsonBoolean(
+            root,
+            "featureSnapshot", "footballIntelligence", "result", "IsApplied") ?? false;
+        var adjustment = ReadJsonDouble(
+            root,
+            "featureSnapshot", "footballIntelligence", "result", "ProbabilityAdjustment") ?? 0d;
+        if (isApplied)
+        {
+            return adjustment < 0d
+                ? RobustEvidenceStatus.AppliedNegative
+                : RobustEvidenceStatus.AppliedPositive;
+        }
+
+        var homeStatus = ReadJsonString(
+            root,
+            "featureSnapshot", "footballIntelligence", "result", "HomeEvidenceStatus");
+        var awayStatus = ReadJsonString(
+            root,
+            "featureSnapshot", "footballIntelligence", "result", "AwayEvidenceStatus");
+        var statuses = new[] { homeStatus, awayStatus }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        if (statuses.Any(value => value!.Equals("Stale", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("FutureCutoff", StringComparison.OrdinalIgnoreCase)))
+        {
+            return RobustEvidenceStatus.SnapshotExpired;
+        }
+        if (statuses.Any(value => value!.Equals("Available", StringComparison.OrdinalIgnoreCase)))
+        {
+            return RobustEvidenceStatus.ReviewedNeutral;
+        }
+        return statuses.Length > 0
+            ? RobustEvidenceStatus.InsufficientEvidence
+            : RobustEvidenceStatus.SourceUnavailable;
+    }
+
+    private static RobustCalibrationFallbackLevel ParseCalibrationFallback(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return RobustCalibrationFallbackLevel.Unavailable;
+        }
+        if (value.Contains("Exact", StringComparison.OrdinalIgnoreCase))
+        {
+            return RobustCalibrationFallbackLevel.ExactMarket;
+        }
+        if (value.Contains("Family", StringComparison.OrdinalIgnoreCase))
+        {
+            return RobustCalibrationFallbackLevel.MarketFamily;
+        }
+        if (value.Contains("Global", StringComparison.OrdinalIgnoreCase))
+        {
+            return RobustCalibrationFallbackLevel.Global;
+        }
+        return RobustCalibrationFallbackLevel.Unavailable;
+    }
+
+    private static long ResolveLogicalFixtureId(UpcomingOddsRecord odds)
+    {
+        if (odds.ApiFootballFixtureId is > 0)
+        {
+            return odds.ApiFootballFixtureId.Value;
+        }
+        if (odds.PartidoProximoCuotaId > 0)
+        {
+            return odds.PartidoProximoCuotaId;
+        }
+
+        var identity = string.Join(
+            "|",
+            odds.MatchDate.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            odds.EffectiveLeague,
+            odds.EffectiveHomeTeam,
+            odds.EffectiveAwayTeam);
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity));
+        var value = System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(hash.AsSpan(0, sizeof(long)))
+            & long.MaxValue;
+        return value == 0 ? 1 : value;
+    }
+
+    private static JsonElement? TryParseJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryGetJsonPath(
+        JsonElement? root,
+        out JsonElement value,
+        params string[] path)
+    {
+        value = default;
+        if (!root.HasValue)
+        {
+            return false;
+        }
+
+        var current = root.Value;
+        foreach (var segment in path)
+        {
+            if (current.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+            var found = false;
+            foreach (var property in current.EnumerateObject())
+            {
+                if (!property.Name.Equals(segment, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                current = property.Value;
+                found = true;
+                break;
+            }
+            if (!found)
+            {
+                return false;
+            }
+        }
+        value = current;
+        return true;
+    }
+
+    private static double? ReadJsonDouble(JsonElement? root, params string[] path)
+    {
+        if (!TryGetJsonPath(root, out var value, path))
+        {
+            return null;
+        }
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)
+            && double.IsFinite(number))
+        {
+            return number;
+        }
+        return value.ValueKind == JsonValueKind.String
+            && double.TryParse(
+                value.GetString(),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number)
+            && double.IsFinite(number)
+                ? number
+                : null;
+    }
+
+    private static int? ReadJsonInt32(JsonElement? root, params string[] path)
+    {
+        if (!TryGetJsonPath(root, out var value, path))
+        {
+            return null;
+        }
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+        {
+            return number;
+        }
+        return value.ValueKind == JsonValueKind.String
+            && int.TryParse(
+                value.GetString(),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number)
+                ? number
+                : null;
+    }
+
+    private static long? ReadJsonInt64(JsonElement? root, params string[] path)
+    {
+        if (!TryGetJsonPath(root, out var value, path))
+        {
+            return null;
+        }
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+        return value.ValueKind == JsonValueKind.String
+            && long.TryParse(
+                value.GetString(),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number)
+                ? number
+                : null;
+    }
+
+    private static bool? ReadJsonBoolean(JsonElement? root, params string[] path)
+    {
+        if (!TryGetJsonPath(root, out var value, path))
+        {
+            return null;
+        }
+        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return value.GetBoolean();
+        }
+        return value.ValueKind == JsonValueKind.String
+            && bool.TryParse(value.GetString(), out var result)
+                ? result
+                : null;
+    }
+
+    private static string? ReadJsonString(JsonElement? root, params string[] path)
+    {
+        if (!TryGetJsonPath(root, out var value, path))
+        {
+            return null;
+        }
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                ? null
+                : value.ToString();
+    }
+
+    private static DateTime? ReadJsonDateTime(JsonElement? root, params string[] path)
+    {
+        var value = ReadJsonString(root, path);
+        return DateTime.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var timestamp)
+                ? timestamp
+                : null;
+    }
+
+    private static double? ReadFeatureDouble(
+        IReadOnlyDictionary<string, object?> features,
+        string key)
+    {
+        if (!features.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+        try
+        {
+            var converted = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+            return double.IsFinite(converted) ? converted : null;
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static double FirstFinite(params double?[] values) =>
+        values.First(value => value.HasValue && double.IsFinite(value.Value))!.Value;
+
+    private static decimal ToRobustDecimal(double value) =>
+        Convert.ToDecimal(double.IsFinite(value) ? value : 0d);
+
+    private static decimal? ToNullableRobustDecimal(double? value) =>
+        value.HasValue && double.IsFinite(value.Value)
+            ? Convert.ToDecimal(value.Value)
+            : null;
 
     private async Task<IReadOnlyList<PredictionBundle>> BuildNewGenerationPredictionBundlesAsync(
         IReadOnlyList<UpcomingOddsRecord> oddsRows,
@@ -1591,7 +2832,8 @@ public sealed class AutomatedCornersSelectionService
         OverUnderPredictionResultDto? overUnderPrediction,
         Dictionary<string, object?> features,
         BotVariantProfile botProfile,
-        bool isNeutralAdjusted)
+        bool isNeutralAdjusted,
+        MatchIntelligenceSnapshotPair? intelligenceSnapshot)
     {
         var marketSnapshot = ResolveMarketSnapshot(odds, cornersPrediction, features, context);
         if (marketSnapshot is null)
@@ -1645,12 +2887,23 @@ public sealed class AutomatedCornersSelectionService
             return (null, $"Line {lineValue:0.0}: selected odds {selectedOdds:0.00} were not greater than {minOddsExclusive:0.00}.");
         }
 
-        var modelProbability = selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
+        var probabilityBeforeFootballIntelligence = selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
             ? overUnderPrediction?.OverProbability ?? approximateOverProbability
             : overUnderPrediction?.UnderProbability ?? approximateUnderProbability;
+        var predictionTimestampUtc = DateTime.UtcNow;
+        var footballIntelligence = FootballIntelligenceAdjustmentCalculator.Calculate(
+            predictionTimestampUtc,
+            marketSnapshot.SelectionMarketType,
+            selectedSide,
+            probabilityBeforeFootballIntelligence,
+            intelligenceSnapshot,
+            botProfile.FootballIntelligence);
+        var modelProbability = footballIntelligence.ProbabilityAfter;
 
         var impliedProbability = 1d / (double)selectedOdds.Value;
         var probabilityEdge = modelProbability - impliedProbability;
+        var expectedValueBeforeFootballIntelligence =
+            probabilityBeforeFootballIntelligence * (double)selectedOdds.Value - 1d;
         var expectedValue = modelProbability * (double)selectedOdds.Value - 1d;
         var kellyFraction = CalculateKellyFraction(modelProbability, (double)selectedOdds.Value);
         var minimumLiftedProbability = impliedProbability * (1d + botProfile.MinProbabilityLiftOverImplied);
@@ -1716,6 +2969,23 @@ public sealed class AutomatedCornersSelectionService
             distanceToLine,
             contextPrediction,
             contextDifference,
+            featureSnapshot = new
+            {
+                predictionTimestampUtc,
+                footballIntelligence = new
+                {
+                    enabled = botProfile.FootballIntelligence.Enabled,
+                    botProfile.FootballIntelligence.Version,
+                    probabilityBeforeFootballIntelligence,
+                    expectedValueBeforeFootballIntelligence,
+                    result = footballIntelligence
+                },
+                intelligenceEvidence = BuildIntelligenceEvidenceSummary(intelligenceSnapshot),
+                configuration = new
+                {
+                    footballIntelligence = botProfile.FootballIntelligence
+                }
+            },
             cornersModel = new
             {
                 cornersPrediction.PredictedTotalCorners,
@@ -1767,10 +3037,27 @@ public sealed class AutomatedCornersSelectionService
         }, null);
     }
 
+    private static MatchIntelligenceSnapshotPair? ResolveIntelligenceSnapshot(
+        IEnumerable<UpcomingOddsRecord> rows,
+        IReadOnlyDictionary<long, MatchIntelligenceSnapshotPair> snapshotsByFixture)
+    {
+        foreach (var fixtureId in rows
+                     .Where(row => row.ApiFootballFixtureId is > 0)
+                     .Select(row => row.ApiFootballFixtureId!.Value)
+                     .Distinct())
+        {
+            if (snapshotsByFixture.TryGetValue(fixtureId, out var snapshot))
+                return snapshot;
+        }
+
+        return null;
+    }
+
     private BotCEvaluation EvaluateBotCCandidate(
         PredictionBundle bundle,
         BotVariantProfile botProfile,
-        IReadOnlyDictionary<string, IReadOnlyList<BotECalibrationObservation>> calibrationHistoryBySourceBot)
+        IReadOnlyDictionary<string, IReadOnlyList<BotECalibrationObservation>> calibrationHistoryBySourceBot,
+        IReadOnlyDictionary<long, MatchIntelligenceSnapshotPair> intelligenceSnapshotsByFixture)
     {
         var configuration = botProfile.SelectorConfiguration
             ?? throw new InvalidOperationException($"Bot {botProfile.Key} has no Pick Selector configuration.");
@@ -1785,7 +3072,7 @@ public sealed class AutomatedCornersSelectionService
             bundle.Odds.LineValue,
             bundle.Odds.OverOdds,
             bundle.Odds.UnderOdds,
-            EnsureUtc(bundle.Odds.UpdatedAtUtc),
+            EnsureUtc(bundle.Odds.OddsCapturedAtUtc ?? bundle.Odds.UpdatedAtUtc),
             ToUtcFromSantiago(bundle.Odds.MatchDate),
             basePredictedValue,
             sigma,
@@ -1807,10 +3094,18 @@ public sealed class AutomatedCornersSelectionService
                     configuration.EmpiricalCalibration.SourceBotKey,
                     out var calibrationHistory)
                     ? calibrationHistory
-                    : Array.Empty<BotECalibrationObservation>());
+                    : Array.Empty<BotECalibrationObservation>(),
+            FootballIntelligenceSnapshot: configuration.FootballIntelligence.Enabled
+                && bundle.Odds.ApiFootballFixtureId.HasValue
+                && intelligenceSnapshotsByFixture.TryGetValue(
+                    bundle.Odds.ApiFootballFixtureId.Value,
+                    out var intelligenceSnapshot)
+                    ? intelligenceSnapshot
+                    : null,
+            PredictionTimestampUtc: DateTime.UtcNow);
         var decision = _botCPickDecisionEngine.Evaluate(input, configuration);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Selector candidate evaluated. BotKey={BotKey}, BaseModel={BaseModel}, Match={HomeTeam} vs {AwayTeam}, Market={Market}, Line={Line}, Decision={Decision}, Engine={Engine}, Edge={Edge:0.0000}, EV={ExpectedValue:0.0000}, Quality={Quality:0.0000}, Agreement={Agreement:0.0000}, FeatureSchema={FeatureSchema}",
             botProfile.Key,
             baseModelName,
@@ -1859,6 +3154,7 @@ public sealed class AutomatedCornersSelectionService
             decision.RiskFlags,
             decision.Summary,
             featureSnapshot = JsonSerializer.Deserialize<JsonElement>(decision.FeatureSnapshotJson),
+            intelligenceEvidence = BuildIntelligenceEvidenceSummary(input.FootballIntelligenceSnapshot),
             model = new
             {
                 name = baseModelName,
@@ -1942,7 +3238,7 @@ public sealed class AutomatedCornersSelectionService
             featureSchemaVersion = configuration.FeatureSchemaVersion,
             configurationVersion = configuration.ConfigurationVersion,
             asOfDateUtc = EnsureUtc(odds.MatchDate),
-            oddsCapturedAtUtc = EnsureUtc(odds.UpdatedAtUtc),
+            oddsCapturedAtUtc = EnsureUtc(odds.OddsCapturedAtUtc ?? odds.UpdatedAtUtc),
             leakageGuard = new { strictBeforeAsOf = true },
             pendingReason = reason,
             reasons,
@@ -2035,6 +3331,56 @@ public sealed class AutomatedCornersSelectionService
         }
         return home ? match.HomeCorners : match.AwayCorners;
     }
+
+    private async Task<IReadOnlyList<AutomatedBotPerformanceScorecard>> LoadProductionScorecardsAsync(
+        bool required,
+        CancellationToken cancellationToken)
+    {
+        if (!required)
+            return [];
+
+        try
+        {
+            return await _cache.GetOrCreateAsync<IReadOnlyList<AutomatedBotPerformanceScorecard>>(
+                PerformanceScorecardsCacheKey,
+                async entry =>
+                {
+                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+                    return await _performanceService.GetScorecardsAsync(cancellationToken);
+                }) ?? [];
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Production scorecards could not be loaded. Publication will fail closed for this run.");
+            return [];
+        }
+    }
+
+    private static AutomatedBotProductionEligibility EvaluateProductionEligibility(
+        IReadOnlyCollection<AutomatedBotPerformanceScorecard> scorecards,
+        BotVariantProfile profile,
+        AutomatedSelectionCandidate candidate) =>
+        AutomatedBotProductionEligibilityPolicy.Evaluate(
+            scorecards,
+            profile.Key,
+            MarketFamily(candidate.Odds.MarketType),
+            MapSelectionMarketType(candidate.Odds.MarketType),
+            candidate.SelectedSide,
+            candidate.Odds.Source,
+            profile.AutomationVersion,
+            candidate.Odds.LineValue,
+            EnsureUtc(candidate.Odds.OddsCapturedAtUtc ?? candidate.Odds.UpdatedAtUtc),
+            DateTime.UtcNow,
+            immutableOddsSnapshotAvailable: candidate.Odds.OddsSnapshotId is > 0
+                && candidate.Odds.OddsCapturedAtUtc.HasValue
+                && candidate.Odds.SnapshotOverOdds is > 1m
+                && candidate.Odds.SnapshotUnderOdds is > 1m);
 
     private static DateTime EnsureUtc(DateTime value) => value.Kind switch
     {
@@ -2294,6 +3640,23 @@ public sealed class AutomatedCornersSelectionService
             MarketFamily(row.MarketType));
     }
 
+    private static UpcomingOddsRecord[] SelectBatchOddsRows(
+        IReadOnlyList<UpcomingOddsRecord> eligibleOddsRows,
+        int batchOffset,
+        int batchSize,
+        bool completeFixtures)
+    {
+        if (!completeFixtures)
+            return eligibleOddsRows.Skip(batchOffset).Take(batchSize).ToArray();
+
+        return eligibleOddsRows
+            .GroupBy(BuildMatchIdentity)
+            .Skip(batchOffset)
+            .Take(batchSize)
+            .SelectMany(group => group)
+            .ToArray();
+    }
+
     private static string MarketFamily(string sourceMarketType) => sourceMarketType switch
     {
         "GoalsTotal" or "GoalsHomeTeam" or "GoalsAwayTeam" => "GOALS",
@@ -2333,7 +3696,7 @@ public sealed class AutomatedCornersSelectionService
         if (string.IsNullOrWhiteSpace(value))
         {
             return new HashSet<string>(
-                runBotC ? ["A", "B", "C2026"] : ["A", "B"],
+                runBotC ? ["A", "C2026"] : ["A"],
                 StringComparer.OrdinalIgnoreCase);
         }
 
@@ -2662,9 +4025,11 @@ public sealed class AutomatedCornersSelectionService
         AutomatedSelectionCandidate? Candidate);
 
     private sealed record PersistCandidateResult(
-        AutomatedSelectionResult Result,
+        AutomatedSelectionResult? Result,
         bool Inserted,
-        bool Updated);
+        bool Updated,
+        bool RejectedByRobustLayer,
+        string? RobustReason);
 
     private sealed record SelectorProfilesRunResult(
         bool HadSelection,

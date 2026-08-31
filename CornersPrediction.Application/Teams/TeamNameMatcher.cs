@@ -7,6 +7,7 @@ public enum TeamNameMatchKind
 {
     Normalized,
     ClubTokens,
+    OptionalSuffix,
     RegionalSuffix,
     TokenOrder,
     Acronym,
@@ -34,12 +35,32 @@ public static class TeamNameMatcher
         "ba", "go", "mg", "pe", "pr", "rj", "rn", "rs", "sp"
     };
 
+    // Some providers omit a legal part of the club name (for example API-Football
+    // exposes "Coventry" while the bookmaker uses "Coventry City"). This is kept
+    // separate from ClubTokens: it requires an otherwise exact token sequence and
+    // is never persisted as a global alias automatically.
+    private static readonly HashSet<string> OptionalSuffixTokens = new(StringComparer.Ordinal)
+    {
+        "city"
+    };
+
     private static readonly IReadOnlyDictionary<string, string> TokenAliases =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["espana"] = "spain",
             ["st"] = "saint",
             ["utd"] = "united"
+        };
+
+    // Exact provider variants observed in official fixture feeds. Keeping these
+    // as full-name aliases is intentionally stricter than dropping geographic
+    // tokens such as "Boyaca" or "de Cordoba" for every club in the world.
+    private static readonly IReadOnlyDictionary<string, string> KnownTeamAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["boyaca chico"] = "chico",
+            ["jaguares de cordoba"] = "jaguares",
+            ["vicenza virtus"] = "vicenza"
         };
 
     public static bool AreEquivalent(string? left, string? right)
@@ -90,6 +111,18 @@ public static class TeamNameMatcher
                 TeamNameMatchKind.ClubTokens,
                 0.99,
                 canPersistAlias);
+        }
+
+        var optionalSuffixMatches = candidateIdentities
+            .Where(candidate => IsOptionalSuffixVariant(inputIdentity.LooseTokens, candidate.LooseTokens))
+            .ToArray();
+        if (optionalSuffixMatches.Length == 1)
+        {
+            return new TeamNameMatch(
+                optionalSuffixMatches[0].Original,
+                TeamNameMatchKind.OptionalSuffix,
+                0.98,
+                CanPersistAlias: false);
         }
 
         var regionalMatches = candidateIdentities
@@ -168,6 +201,11 @@ public static class TeamNameMatcher
     private static TeamNameIdentity CreateIdentity(string value)
     {
         var tokens = Tokenize(value);
+        var tokenKey = string.Join(' ', tokens);
+        if (KnownTeamAliases.TryGetValue(tokenKey, out var canonicalName))
+        {
+            tokens = canonicalName.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
         var looseTokens = tokens.Where(token => !ClubTokens.Contains(token)).ToArray();
         if (looseTokens.Length == 0)
         {
@@ -301,6 +339,29 @@ public static class TeamNameMatcher
         for (var index = 0; index < leftCoreCount; index++)
         {
             if (left[index] != right[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsOptionalSuffixVariant(
+        IReadOnlyList<string> left,
+        IReadOnlyList<string> right)
+    {
+        var longer = left.Count > right.Count ? left : right;
+        var shorter = left.Count > right.Count ? right : left;
+        if (shorter.Count == 0 || longer.Count != shorter.Count + 1 ||
+            !OptionalSuffixTokens.Contains(longer[^1]))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < shorter.Count; index++)
+        {
+            if (longer[index] != shorter[index])
             {
                 return false;
             }

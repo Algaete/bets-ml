@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using CornersPrediction.Application.Automation;
 using Dapper;
 using Microsoft.Data.SqlClient;
@@ -29,6 +30,76 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
         CancellationToken cancellationToken) =>
         (await QueryAsync(botKey, cancellationToken)).SingleOrDefault();
 
+    public async Task<IReadOnlyList<RecommendationBotLeagueCatalogItem>> GetLeagueCatalogAsync(
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+WITH LeagueSources AS
+(
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(COALESCE(NULLIF(StandardizedLeague, N''), League))), N'') AS League,
+        N'Cuotas actuales' AS Source,
+        CAST(NULL AS nvarchar(100)) AS Country
+    FROM dbo.PartidosProximosCuotas
+    UNION ALL
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(DbLeagueName)), N''),
+        N'API-Football',
+        NULLIF(LTRIM(RTRIM(Country)), N'')
+    FROM dbo.ApiFootballLeagueSeasons
+    UNION ALL
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(LeagueName)), N''),
+        N'API-Football',
+        NULLIF(LTRIM(RTRIM(Country)), N'')
+    FROM dbo.ApiFootballLeagueSeasons
+    UNION ALL
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(StandardizedLeague)), N''),
+        N'Mapeo de ligas',
+        CAST(NULL AS nvarchar(100))
+    FROM dbo.LeagueMapping
+    UNION ALL
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(SourceLeague)), N''),
+        N'Mapeo de ligas',
+        CAST(NULL AS nvarchar(100))
+    FROM dbo.LeagueMapping
+), DistinctSources AS
+(
+    SELECT DISTINCT League, Source, Country
+    FROM LeagueSources
+    WHERE League IS NOT NULL
+)
+SELECT
+    League,
+    Source,
+    Country
+FROM DistinctSources
+ORDER BY League, Source;
+""";
+
+        await using var connection = new SqlConnection(_connectionString);
+        var rows = (await connection.QueryAsync<LeagueCatalogRow>(new CommandDefinition(
+            sql,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken))).ToArray();
+
+        return rows
+            .GroupBy(row => row.League.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => new RecommendationBotLeagueCatalogItem(
+                ResolveCountry(group.Key, group.Select(row => row.Country)),
+                group.Key,
+                group.Select(row => row.Source)
+                    .Where(source => !string.IsNullOrWhiteSpace(source))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()))
+            .OrderBy(item => item.Country, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.League, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public async Task<RecommendationBotDefinitionDto> UpsertAsync(
         SaveRecommendationBotDefinitionCommand command,
         CancellationToken cancellationToken)
@@ -39,6 +110,7 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
         parameters.Add("Description", command.Description, DbType.String, size: 1000);
         parameters.Add("BaseStrategy", command.BaseStrategy, DbType.String, size: 30);
         parameters.Add("IsEnabled", command.IsEnabled, DbType.Boolean);
+        parameters.Add("PublishEnabled", command.PublishEnabled ?? true, DbType.Boolean);
         parameters.Add("MarketFamilies", string.Join(',', command.MarketFamilies!), DbType.String, size: 200);
         parameters.Add("MinEdge", command.MinEdge, DbType.Double);
         parameters.Add("MinExpectedValue", command.MinExpectedValue, DbType.Double);
@@ -49,6 +121,10 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
         parameters.Add("MinProbabilityLiftOverImplied", command.MinProbabilityLiftOverImplied, DbType.Double);
         parameters.Add("StakeMultiplier", command.StakeMultiplier, DbType.Decimal, precision: 9, scale: 4);
         parameters.Add("StrategyConfigurationJson", command.StrategyConfigurationJson, DbType.String);
+        parameters.Add(
+            "LeagueFilterJson",
+            RecommendationBotLeaguePolicy.ToJson(command.LeagueFilters),
+            DbType.String);
 
         await using var connection = new SqlConnection(_connectionString);
         var row = await connection.QuerySingleAsync<BotDefinitionRow>(new CommandDefinition(
@@ -92,6 +168,7 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
             row.Description,
             row.BaseStrategy,
             row.IsEnabled,
+            row.PublishEnabled,
             row.IsBuiltIn,
             row.MarketFamilies.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             row.MinEdge,
@@ -104,7 +181,10 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
             row.StakeMultiplier,
             row.StrategyConfigurationJson,
             row.CreatedAtUtc,
-            row.UpdatedAtUtc);
+            row.UpdatedAtUtc)
+        {
+            LeagueFilters = RecommendationBotLeaguePolicy.FromJson(row.LeagueFilterJson)
+        };
 
     private sealed class BotDefinitionRow
     {
@@ -113,6 +193,7 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
         public string Description { get; init; } = string.Empty;
         public string BaseStrategy { get; init; } = string.Empty;
         public bool IsEnabled { get; init; }
+        public bool PublishEnabled { get; init; } = true;
         public bool IsBuiltIn { get; init; }
         public string MarketFamilies { get; init; } = string.Empty;
         public double? MinEdge { get; init; }
@@ -124,7 +205,45 @@ public sealed class SqlServerRecommendationBotDefinitionRepository : IRecommenda
         public double? MinProbabilityLiftOverImplied { get; init; }
         public decimal? StakeMultiplier { get; init; }
         public string? StrategyConfigurationJson { get; init; }
+        public string? LeagueFilterJson { get; init; }
         public DateTime CreatedAtUtc { get; init; }
         public DateTime UpdatedAtUtc { get; init; }
+    }
+
+    private static string ResolveCountry(string league, IEnumerable<string?> mappedCountries)
+    {
+        var mapped = mappedCountries.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (!string.IsNullOrWhiteSpace(mapped))
+        {
+            return mapped.Trim();
+        }
+
+        if (league.Contains("Chile", StringComparison.OrdinalIgnoreCase)
+            || league.Contains("Chilen", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Chile";
+        }
+
+        var prefix = Regex.Match(league, @"^([^()]{2,40}?)\s+-\s+");
+        if (prefix.Success)
+        {
+            var candidate = prefix.Groups[1].Value.Trim();
+            if (candidate is "UEFA" or "CONMEBOL" or "CONCACAF" or "AFC" or "CAF")
+            {
+                return "Internacional";
+            }
+
+            return candidate;
+        }
+
+        var suffix = Regex.Match(league, @"\(([^()]{2,40})\)\s*$");
+        return suffix.Success ? suffix.Groups[1].Value.Trim() : "Otros";
+    }
+
+    private sealed class LeagueCatalogRow
+    {
+        public string League { get; init; } = string.Empty;
+        public string Source { get; init; } = string.Empty;
+        public string? Country { get; init; }
     }
 }

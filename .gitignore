@@ -21,3 +21,6 @@ CornersPredictionApi/.runtime/
 
 # Local backup files
 *.bak
+
+# macOS metadata
+.DS_Store

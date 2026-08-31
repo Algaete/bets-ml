@@ -33,6 +33,8 @@
     .bot-editor { border:1px solid var(--accent-ml); box-shadow:0 18px 45px var(--ml-soft); }
     .optional-field label::after { content:' opcional'; font-size:.68rem; color:var(--text-muted); font-weight:400; }
     .metric-mini { min-width:105px; }
+    .job-selection-summary { border:1px solid var(--border-color); border-radius:.75rem; background:var(--card-bg-soft); padding:.65rem .75rem; }
+    .bot-lifecycle { display:inline-flex; align-items:center; border-radius:999px; padding:.2rem .5rem; font-size:.7rem; font-weight:800; background:var(--ml-soft); color:var(--accent-ml); }
     .strategy-details { border-top:1px solid var(--border-color); margin-top:.8rem; padding-top:.8rem; }
     .strategy-details summary { color:var(--accent-ml); cursor:pointer; font-weight:800; }
     .strategy-section { border:1px solid var(--border-color); border-radius:.75rem; background:var(--card-bg-soft); padding:.75rem; margin-top:.75rem; }
@@ -44,6 +46,14 @@
     .strategy-config-item strong { color:var(--text-main); }
     .strategy-config-value { white-space:pre-wrap; overflow-wrap:anywhere; }
     .strategy-json { min-height:260px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem; }
+    .league-filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:.75rem; }
+    .league-filter-card { border:1px solid var(--border-color); border-radius:.75rem; background:var(--card-bg-soft); padding:.75rem; }
+    .league-filter-picker { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+    .league-filter-picker .form-control,.league-filter-picker .form-select { min-width:180px; flex:1 1 180px; }
+    .league-rule-list { display:flex; flex-wrap:wrap; gap:.35rem; min-height:1.7rem; }
+    .league-rule-chip { display:inline-flex; align-items:center; gap:.35rem; border:1px solid var(--border-color); border-radius:999px; padding:.18rem .3rem .18rem .55rem; background:var(--card-bg); color:var(--text-main); font-size:.72rem; }
+    .league-rule-chip.is-excluded { border-color:color-mix(in srgb,var(--danger) 45%,var(--border-color)); color:var(--danger); }
+    .league-rule-chip button { border:0; background:transparent; color:inherit; line-height:1; padding:0 .15rem; font-weight:900; }
     .table-automation td { vertical-align:middle; }
     .automation-panel .table-responsive { background:var(--card-bg); }
     .automation-panel .form-check-input:checked { background-color:var(--accent-ml) !important; border-color:var(--accent-ml) !important; }
@@ -72,6 +82,29 @@
         </div>
     }
 
+    @if (!string.IsNullOrWhiteSpace(Model.BotsLoadError)
+        || !string.IsNullOrWhiteSpace(Model.JobsLoadError)
+        || !string.IsNullOrWhiteSpace(Model.LeagueCatalogLoadError))
+    {
+        <div class="alert alert-warning" role="status">
+            <strong>Carga parcial.</strong> Los componentes que respondieron siguen disponibles.
+            <ul class="mb-0 mt-1">
+                @if (!string.IsNullOrWhiteSpace(Model.BotsLoadError))
+                {
+                    <li>@Model.BotsLoadError</li>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.JobsLoadError))
+                {
+                    <li>@Model.JobsLoadError</li>
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.LeagueCatalogLoadError))
+                {
+                    <li>@Model.LeagueCatalogLoadError</li>
+                }
+            </ul>
+        </div>
+    }
+
     <div id="AutomationNotice" class="alert d-none" role="status"></div>
 
     <div class="automation-tabs" role="tablist">
@@ -90,7 +123,7 @@
                     <form id="JobForm" class="row g-3">
                         <div class="col-12">
                             <label class="form-label" for="JobName">Nombre</label>
-                            <input class="form-control" id="JobName" maxlength="150" placeholder="Ej. Backfill junio-agosto Bot C" />
+                            <input class="form-control" id="JobName" maxlength="150" placeholder="Ej. Backfill histórico de bots activos" />
                         </div>
                         <div class="col-6">
                             <label class="form-label" for="DateFrom">Desde</label>
@@ -112,7 +145,13 @@
                             </select>
                         </div>
                         <div class="col-12">
-                            <div class="form-label">Bots habilitados</div>
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+                                <div class="form-label mb-0">Bots habilitados</div>
+                                <div class="btn-group btn-group-sm" role="group" aria-label="Selección rápida de bots">
+                                    <button class="btn btn-outline-secondary" id="SelectAllJobBots" type="button">Todos</button>
+                                    <button class="btn btn-outline-secondary" id="ClearAllJobBots" type="button">Ninguno</button>
+                                </div>
+                            </div>
                             <div id="JobBotOptions" class="d-flex flex-wrap gap-3"></div>
                         </div>
                         <div class="col-12">
@@ -129,11 +168,14 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label" for="BatchSize">Partidos por lote</label>
-                            <input class="form-control" id="BatchSize" type="number" min="1" max="100" value="25" />
+                            <input class="form-control" id="BatchSize" type="number" min="1" max="100" value="10" />
                         </div>
                         <div class="col-6">
                             <label class="form-label" for="MaxAttempts">Reintentos</label>
                             <input class="form-control" id="MaxAttempts" type="number" min="1" max="10" value="3" />
+                        </div>
+                        <div class="col-12">
+                            <div id="JobSelectionSummary" class="job-selection-summary small" role="status" aria-live="polite"></div>
                         </div>
                         <div class="col-12">
                             <button class="btn btn-primary w-100" id="EnqueueButton" type="submit">Guardar y ejecutar</button>
@@ -182,7 +224,7 @@
         </div>
 
         <div class="alert alert-info small">
-            Puedes crear variantes reales de A, B o Modelos 2026. Para agregar una señal completamente nueva —por ejemplo lesiones,
+            Puedes crear variantes reales de A, ML legacy calibrado o Modelos 2026. Para agregar una señal completamente nueva —por ejemplo lesiones,
             clima o noticias— primero se implementa esa estrategia en código y luego queda disponible aquí para configurarla.
         </div>
 
@@ -215,8 +257,8 @@
                     <select class="form-select" id="BotBaseStrategy">
                         <option value="MODELS_2026">Modelos 2026: 12 modelos ML</option>
                         <option value="LEGACY_EMPIRICAL">ML legacy + calibración empírica</option>
+                        <option value="GOALS_MARKET_ANCHORED">G2026: Goals anclado al mercado</option>
                         <option value="LEGACY_A">Legacy A: configuración actual</option>
-                        <option value="LEGACY_B">Legacy B: conservador</option>
                     </select>
                 </div>
                 <div class="col-md-6 d-flex align-items-end">
@@ -224,6 +266,13 @@
                         <input class="form-check-input" id="BotIsEnabled" type="checkbox" checked />
                         <span class="form-check-label">Habilitado para ejecutar</span>
                     </label>
+                </div>
+                <div class="col-md-6 d-flex align-items-end" id="BotPublishGroup" hidden>
+                    <label class="form-check form-switch mb-2">
+                        <input class="form-check-input" id="BotPublishEnabled" type="checkbox" />
+                        <span class="form-check-label">Permitir publicación productiva</span>
+                    </label>
+                    <div class="form-text ms-3">G2026 permanece Shadow mientras esté desactivado.</div>
                 </div>
                 <div class="col-12" id="BotStrategyConfigurationGroup">
                     <label class="form-label" for="BotStrategyConfiguration">Configuración completa del Pick Selector</label>
@@ -244,8 +293,56 @@
                         }
                     </div>
                 </div>
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                        <div>
+                            <div class="form-label mb-1">Ligas permitidas por mercado</div>
+                            <div class="small text-body-secondary">
+                                Selecciona un país completo o busca una liga por su nombre real. “Solo incluir” vacío permite todas;
+                                “Excluir” siempre tiene prioridad.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="league-filter-grid">
+                        @foreach (var market in new[] { "CORNERS", "GOALS", "SHOTS", "SOG" })
+                        {
+                            <div class="league-filter-card" data-league-filter-row="@market">
+                                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                                    <div class="fw-bold">@market</div>
+                                    <button class="btn btn-sm btn-link text-body-secondary p-0" type="button" data-clear-league-rules="@market">Limpiar</button>
+                                </div>
+                                <label class="form-label small" for="BotLeagueCountry-@market">País</label>
+                                <div class="league-filter-picker mb-3">
+                                    <select class="form-select form-select-sm" id="BotLeagueCountry-@market" data-league-country="@market">
+                                        <option value="">Seleccionar país…</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-outline-primary" type="button" data-include-country="@market">Solo este país</button>
+                                    <button class="btn btn-sm btn-outline-danger" type="button" data-exclude-country="@market">Excluir país</button>
+                                </div>
+                                <label class="form-label small" for="BotLeagueSearch-@market">Liga específica</label>
+                                <div class="league-filter-picker mb-3">
+                                    <input class="form-control form-control-sm" id="BotLeagueSearch-@market" data-league-search="@market" list="BotLeagueCatalogList" placeholder="Buscar liga…" autocomplete="off" />
+                                    <button class="btn btn-sm btn-outline-primary" type="button" data-include-league="@market">Solo incluir</button>
+                                    <button class="btn btn-sm btn-outline-danger" type="button" data-exclude-league="@market">Excluir</button>
+                                </div>
+                                <div class="small fw-semibold mb-1">Solo incluir</div>
+                                <div class="league-rule-list mb-2" data-league-included-list="@market"></div>
+                                <div class="small fw-semibold mb-1">Excluidas</div>
+                                <div class="league-rule-list" data-league-excluded-list="@market"></div>
+                                <textarea class="d-none" id="BotLeagueIncluded-@market" data-league-included="@market"></textarea>
+                                <textarea class="d-none" id="BotLeagueExcluded-@market" data-league-excluded="@market"></textarea>
+                            </div>
+                        }
+                    </div>
+                    <datalist id="BotLeagueCatalogList">
+                        @foreach (var item in Model.LeagueCatalog)
+                        {
+                            <option value="@item.League">@item.Country</option>
+                        }
+                    </datalist>
+                </div>
                 <div class="col-12 small text-body-secondary">
-                    Los umbrales rápidos siguientes controlan A/B. En estrategias Modelos 2026, edge, EV,
+                    Los umbrales rápidos siguientes controlan las estrategias legacy activas. En estrategias Modelos 2026, edge, EV,
                     divergencia de contexto y cuota mínima reemplazan los campos equivalentes del JSON; el resto se administra en la configuración completa.
                 </div>
                 <div class="col-sm-6 col-lg-3 optional-field">
@@ -297,6 +394,7 @@
 (() => {
     let bots = @Html.Raw(JsonSerializer.Serialize(Model.Bots, jsonOptions));
     let jobs = @Html.Raw(JsonSerializer.Serialize(Model.Jobs, jsonOptions));
+    const leagueCatalog = @Html.Raw(JsonSerializer.Serialize(Model.LeagueCatalog, jsonOptions));
     const notice = document.getElementById('AutomationNotice');
     const botEditor = document.getElementById('BotEditor');
     const terminalStatuses = new Set(['Completed', 'Failed', 'Cancelled']);
@@ -323,6 +421,15 @@
         const set = new Set(values || []);
         document.querySelectorAll(selector).forEach(input => input.checked = set.has(input.value));
     };
+    const leagueMarkets = ['CORNERS', 'GOALS', 'SHOTS', 'SOG'];
+    const normalizeLeagueKey = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es');
+    const leagueCatalogByName = new Map(leagueCatalog.map(item => [normalizeLeagueKey(item.league), item]));
+    const countries = [...new Set(leagueCatalog.map(item => item.country).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, 'es'));
+    document.querySelectorAll('[data-league-country]').forEach(select => {
+        select.insertAdjacentHTML('beforeend', countries.map(country =>
+            `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`).join(''));
+    });
     const showNotice = (message, type = 'success') => {
         notice.className = `alert alert-${type}`;
         notice.textContent = message;
@@ -354,18 +461,50 @@
         });
     });
 
+    const updateJobSelectionSummary = () => {
+        const selectedBots = selectedValues('.job-bot');
+        const selectedMarkets = selectedValues('.job-market');
+        const summary = document.getElementById('JobSelectionSummary');
+        if (!summary) return;
+        const batchSize = Number(document.getElementById('BatchSize')?.value || 10);
+        const broadRun = selectedBots.length > 3 || selectedMarkets.length > 2;
+        summary.innerHTML = `<strong>Alcance:</strong> ${selectedBots.length} bot${selectedBots.length === 1 ? '' : 's'} · ${selectedMarkets.length} mercado${selectedMarkets.length === 1 ? '' : 's'}<br>
+            <span class="text-body-secondary">${escapeHtml(selectedBots.join(', ') || 'Ningún bot')} · ${escapeHtml(selectedMarkets.join(', ') || 'Ningún mercado')} · lotes de ${batchSize}</span>
+            ${broadRun ? '<br><span class="text-warning">Ejecución amplia: tardará más. La pantalla mostrará un heartbeat mientras el lote siga activo.</span>' : ''}`;
+    };
+
     const renderBotOptions = () => {
-        const enabledBots = bots.filter(bot => bot.isEnabled);
+        const enabledBots = bots.filter(bot => bot.isEnabled && bot.botKey.toUpperCase() !== 'B');
         document.getElementById('JobBotOptions').innerHTML = enabledBots.length
             ? enabledBots.map(bot => `
                 <label class="form-check">
-                    <input class="form-check-input job-bot" type="checkbox" value="${escapeHtml(bot.botKey)}" ${bot.botKey === 'C2026' ? 'checked' : ''} />
+                    <input class="form-check-input job-bot" type="checkbox" value="${escapeHtml(bot.botKey)}" checked />
                     <span class="form-check-label">${escapeHtml(bot.displayName)}</span>
                 </label>`).join('')
             : '<span class="text-danger small">No hay bots habilitados.</span>';
+        document.querySelectorAll('.job-bot').forEach(input => input.addEventListener('change', updateJobSelectionSummary));
+        updateJobSelectionSummary();
     };
 
     const inherited = value => value === null || value === undefined ? 'Heredado' : String(value);
+    const summarizeLeagueRules = values => {
+        const rules = values || [];
+        if (!rules.length) return '';
+        return rules.length <= 3 ? rules.join(', ') : `${rules.slice(0, 2).join(', ')} y ${rules.length - 2} más`;
+    };
+    const renderLeagueFilters = bot => {
+        const filters = bot.leagueFilters || [];
+        if (!filters.length) return '<div class="small text-body-secondary mb-3">Ligas: todas permitidas</div>';
+        return `<div class="small mb-3">${filters.map(filter => {
+            const included = (filter.includedLeagues || []).length
+                ? `solo ${summarizeLeagueRules(filter.includedLeagues)}`
+                : 'todas';
+            const excluded = (filter.excludedLeagues || []).length
+                ? `; excluye ${summarizeLeagueRules(filter.excludedLeagues)}`
+                : '';
+            return `<div><strong>${escapeHtml(filter.marketFamily)}:</strong> ${escapeHtml(included + excluded)}</div>`;
+        }).join('')}</div>`;
+    };
     const prettyName = value => String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
     const renderList = values => `<ul class="strategy-list">${(values || []).map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>`;
     const renderStrategyManifest = bot => {
@@ -395,23 +534,37 @@
             <div class="strategy-section"><h4>Persistencia y liquidación</h4>${renderList(manifest.persistenceAndSettlement)}</div>
         </details>`;
     };
+    const lifecycleLabel = bot => {
+        const key = String(bot.botKey || '').toUpperCase();
+        if (key === 'A') return 'Referencia legacy';
+        if (key === 'C2026') return 'Referencia ML 2026';
+        if (key === 'D2026') return 'Experimento · brecha de nivel';
+        if (key === 'E2026') return 'Experimento · calibración 2026';
+        if (key === 'F2026') return 'Experimento · calibración legacy';
+        if (key === 'G2026') return 'Experimento · goals market-anchored';
+        return bot.isBuiltIn ? 'Integrado' : 'Experimento personalizado';
+    };
     const renderBots = () => {
-        document.getElementById('BotCards').innerHTML = bots.length ? bots.map(bot => `
+        const visibleBots = bots.filter(bot => String(bot.botKey || '').toUpperCase() !== 'B');
+        document.getElementById('BotCards').innerHTML = visibleBots.length ? visibleBots.map(bot => `
             <article class="bot-definition-card">
                 <div class="d-flex justify-content-between gap-3 mb-2">
                     <div>
                         <span class="bot-key">${escapeHtml(bot.botKey)}</span>
                         <h3 class="h6 mt-2 mb-1">${escapeHtml(bot.displayName)}</h3>
+                        <span class="bot-lifecycle">${escapeHtml(lifecycleLabel(bot))}</span>
                     </div>
                     <span class="badge ${bot.isEnabled ? 'text-bg-success' : 'text-bg-secondary'} align-self-start">${bot.isEnabled ? 'Habilitado' : 'Deshabilitado'}</span>
                 </div>
                 <p class="small text-body-secondary">${escapeHtml(bot.description || 'Sin descripción')}</p>
                 <div class="mb-2">
                     <span class="strategy-pill">${escapeHtml(bot.baseStrategy)}</span>
-                    ${bot.usesMachineLearning ? '<span class="strategy-pill">ML 2026</span>' : '<span class="strategy-pill">Legacy</span>'}
+                    ${bot.baseStrategy === 'GOALS_MARKET_ANCHORED' ? '<span class="strategy-pill">Market anchored</span>' : (bot.usesMachineLearning ? '<span class="strategy-pill">ML</span>' : '<span class="strategy-pill">Legacy</span>')}
+                    ${bot.baseStrategy === 'GOALS_MARKET_ANCHORED' ? `<span class="strategy-pill">${bot.publishEnabled ? 'Publishing' : 'Shadow'}</span>` : ''}
                     ${bot.isBuiltIn ? '<span class="strategy-pill">Integrado</span>' : '<span class="strategy-pill">Personalizado</span>'}
                 </div>
                 <div class="mb-3">${(bot.marketFamilies || []).map(market => `<span class="market-pill">${escapeHtml(market)}</span>`).join('')}</div>
+                ${renderLeagueFilters(bot)}
                 <div class="row g-2 small mb-3">
                     <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Edge mín.</span><strong>${inherited(bot.minEdge)}</strong></div>
                     <div class="col-4 metric-mini"><span class="text-body-secondary d-block">EV mín.</span><strong>${inherited(bot.minExpectedValue)}</strong></div>
@@ -437,6 +590,16 @@
     const progressPercent = job => job.totalBatches && job.totalBatches > 0
         ? Math.min(100, Math.round(job.processedBatches * 100 / job.totalBatches)) : 0;
     const statusClass = status => `job-status job-status-${String(status || 'queued').toLowerCase()}`;
+    const activityText = job => {
+        const seconds = Math.max(0, Math.floor((Date.now() - new Date(job.updatedAtUtc).getTime()) / 1000));
+        if (job.status === 'Running') {
+            return seconds <= 45
+                ? `Activo · heartbeat hace ${seconds}s`
+                : `Sin heartbeat hace ${Math.floor(seconds / 60)} min`;
+        }
+        if (job.status === 'Queued') return 'En cola · iniciará al terminar el lote activo';
+        return '';
+    };
     const renderJobs = () => {
         const body = document.getElementById('JobsTableBody');
         body.innerHTML = jobs.length ? jobs.map(job => {
@@ -446,9 +609,9 @@
                 <td>
                     <div class="fw-semibold">${escapeHtml(job.name)}</div>
                     <div class="small text-body-secondary">${escapeHtml(job.mode)} · ${escapeHtml(job.dateFrom)} a ${escapeHtml(job.dateTo)}</div>
-                    <div class="small">${(job.botKeys || []).map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
+                    <div class="small">${(job.botKeys || []).filter(value => String(value).toUpperCase() !== 'B').map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
                 </td>
-                <td><span class="${statusClass(job.status)}">${escapeHtml(job.status)}</span>${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
+                <td><span class="${statusClass(job.status)}">${escapeHtml(job.status)}</span>${activityText(job) ? `<div class="small text-body-secondary mt-1">${escapeHtml(activityText(job))}</div>` : ''}${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
                 <td>
                     <div class="d-flex align-items-center gap-2"><div class="progress job-progress flex-grow-1"><div class="progress-bar" style="width:${progress}%"></div></div><span class="small">${progress}%</span></div>
                     <div class="small text-body-secondary">${job.processedBatches}/${job.totalBatches ?? '?'} lotes · siguiente ${job.nextBatchNumber}</div>
@@ -463,6 +626,85 @@
 
     const findBot = key => bots.find(bot => bot.botKey.toUpperCase() === String(key).toUpperCase());
     const setInput = (id, value) => document.getElementById(id).value = value ?? '';
+    const parseLeagueRules = id => [...new Set(document.getElementById(id).value
+        .split(/\r?\n|;/)
+        .map(value => value.trim().replace(/\s+/g, ' '))
+        .filter(Boolean))];
+    const setLeagueRuleValues = (market, kind, values) => {
+        const id = kind === 'included' ? `BotLeagueIncluded-${market}` : `BotLeagueExcluded-${market}`;
+        const unique = [...new Map((values || []).map(value => [normalizeLeagueKey(value), value.trim()])).values()]
+            .sort((left, right) => left.localeCompare(right, 'es'));
+        setInput(id, unique.join('\n'));
+        renderLeagueRuleEditor(market);
+    };
+    const renderLeagueRuleEditor = market => {
+        for (const kind of ['included', 'excluded']) {
+            const id = kind === 'included' ? `BotLeagueIncluded-${market}` : `BotLeagueExcluded-${market}`;
+            const target = document.querySelector(`[data-league-${kind}-list="${market}"]`);
+            const rules = parseLeagueRules(id);
+            target.innerHTML = rules.length
+                ? rules.map(rule => `<span class="league-rule-chip ${kind === 'excluded' ? 'is-excluded' : ''}">
+                    ${escapeHtml(rule)}
+                    <button type="button" aria-label="Quitar ${escapeHtml(rule)}" data-remove-league-rule="${market}" data-rule-kind="${kind}" data-rule-value="${escapeHtml(rule)}">×</button>
+                  </span>`).join('')
+                : '<span class="small text-body-secondary">Ninguna</span>';
+        }
+    };
+    const setLeagueFilters = bot => {
+        for (const market of leagueMarkets) {
+            const filter = (bot?.leagueFilters || []).find(item => item.marketFamily === market);
+            setInput(`BotLeagueIncluded-${market}`, (filter?.includedLeagues || []).join('\n'));
+            setInput(`BotLeagueExcluded-${market}`, (filter?.excludedLeagues || []).join('\n'));
+            setInput(`BotLeagueSearch-${market}`, '');
+            setInput(`BotLeagueCountry-${market}`, '');
+            renderLeagueRuleEditor(market);
+        }
+    };
+    const readLeagueFilters = enabledMarkets => leagueMarkets
+        .filter(marketFamily => enabledMarkets.includes(marketFamily))
+        .map(marketFamily => ({
+            marketFamily,
+            includedLeagues: parseLeagueRules(`BotLeagueIncluded-${marketFamily}`),
+            excludedLeagues: parseLeagueRules(`BotLeagueExcluded-${marketFamily}`)
+        }))
+        .filter(filter => filter.includedLeagues.length || filter.excludedLeagues.length);
+    const addLeagueRules = (market, kind, values, replace = false) => {
+        const id = kind === 'included' ? `BotLeagueIncluded-${market}` : `BotLeagueExcluded-${market}`;
+        const current = replace ? [] : parseLeagueRules(id);
+        setLeagueRuleValues(market, kind, [...current, ...values]);
+    };
+    const countryLeagueRules = country => {
+        const aliases = leagueCatalog
+            .filter(item => item.country === country)
+            .map(item => item.league);
+        if (country && !['Otros', 'Internacional', 'World'].includes(country)) {
+            aliases.unshift(`${country} - *`);
+        }
+        return aliases;
+    };
+    const addCatalogLeague = (market, kind) => {
+        const input = document.getElementById(`BotLeagueSearch-${market}`);
+        const item = leagueCatalogByName.get(normalizeLeagueKey(input.value));
+        if (!item) {
+            showNotice('Selecciona una liga de la lista para usar exactamente el nombre que consumen los bots.', 'warning');
+            return;
+        }
+        addLeagueRules(market, kind, [item.league]);
+        input.value = '';
+    };
+    const addCatalogCountry = (market, kind) => {
+        const country = document.getElementById(`BotLeagueCountry-${market}`).value;
+        if (!country) {
+            showNotice('Selecciona primero un país.', 'warning');
+            return;
+        }
+        const rules = countryLeagueRules(country);
+        if (!rules.length) {
+            showNotice(`No se encontraron ligas para ${country}.`, 'warning');
+            return;
+        }
+        addLeagueRules(market, kind, rules, kind === 'included');
+    };
     const openBotEditor = (bot = null, clone = false) => {
         const isNew = !bot || clone;
         document.getElementById('BotEditorTitle').textContent = clone ? `Clonar ${bot.displayName}` : (bot ? `Editar ${bot.displayName}` : 'Crear bot');
@@ -473,7 +715,9 @@
         setInput('BotDescription', bot?.description);
         setInput('BotBaseStrategy', bot?.baseStrategy || 'MODELS_2026');
         document.getElementById('BotIsEnabled').checked = bot?.isEnabled ?? true;
+        document.getElementById('BotPublishEnabled').checked = bot?.publishEnabled ?? false;
         setCheckedValues('.bot-market', bot?.marketFamilies || ['CORNERS', 'GOALS', 'SHOTS', 'SOG']);
+        setLeagueFilters(bot);
         setInput('BotMinEdge', bot?.minEdge);
         setInput('BotMinEv', bot?.minExpectedValue);
         setInput('BotMinDistance', bot?.minDistanceToLine);
@@ -517,7 +761,7 @@
         button.disabled = true;
         button.textContent = 'Guardando…';
         try {
-            await fetchJson(endpoints.enqueue, { method: 'POST', body: JSON.stringify({
+            const enqueuedJob = await fetchJson(endpoints.enqueue, { method: 'POST', body: JSON.stringify({
                 name: document.getElementById('JobName').value || null,
                 dateFrom: document.getElementById('DateFrom').value,
                 dateTo: document.getElementById('DateTo').value,
@@ -526,7 +770,12 @@
                 batchSize: Number(document.getElementById('BatchSize').value),
                 maxAttempts: Number(document.getElementById('MaxAttempts').value)
             })});
-            showNotice('Proceso guardado. El worker comenzará a ejecutarlo por lotes.', 'success');
+            const existingAgeSeconds = Math.max(0, (Date.now() - new Date(enqueuedJob.createdAtUtc).getTime()) / 1000);
+            showNotice(
+                existingAgeSeconds > 10
+                    ? `Ya existía un proceso equivalente (${enqueuedJob.status}). No se creó un duplicado.`
+                    : 'Proceso guardado. Si hay otro lote activo quedará en cola y tomará el siguiente turno.',
+                existingAgeSeconds > 10 ? 'info' : 'success');
             await refreshJobs();
         } catch (error) { showNotice(error.message, 'danger'); }
         finally { button.disabled = false; button.textContent = 'Guardar y ejecutar'; }
@@ -542,7 +791,7 @@
             const disagreement = document.getElementById('BotAllowDisagreement').value;
             const strategyField = document.getElementById('BotStrategyConfiguration');
             let strategyConfigurationJson = null;
-            if (['MODELS_2026', 'LEGACY_EMPIRICAL'].includes(document.getElementById('BotBaseStrategy').value) && strategyField.value.trim()) {
+            if (['MODELS_2026', 'LEGACY_EMPIRICAL', 'GOALS_MARKET_ANCHORED', 'LEGACY_A'].includes(document.getElementById('BotBaseStrategy').value) && strategyField.value.trim()) {
                 try { strategyConfigurationJson = JSON.stringify(JSON.parse(strategyField.value)); }
                 catch { return showNotice('La configuración del Pick Selector no es un JSON válido.', 'warning'); }
             }
@@ -553,7 +802,11 @@
                 description: document.getElementById('BotDescription').value.trim(),
                 baseStrategy: document.getElementById('BotBaseStrategy').value,
                 isEnabled: document.getElementById('BotIsEnabled').checked,
+                publishEnabled: document.getElementById('BotBaseStrategy').value === 'GOALS_MARKET_ANCHORED'
+                    ? document.getElementById('BotPublishEnabled').checked
+                    : true,
                 marketFamilies: markets,
+                leagueFilters: readLeagueFilters(markets),
                 minEdge: nullableNumber('BotMinEdge'), minExpectedValue: nullableNumber('BotMinEv'),
                 minDistanceToLine: nullableNumber('BotMinDistance'), maxContextDifference: nullableNumber('BotMaxContext'),
                 minOddsExclusive: nullableNumber('BotMinOdds'), minProbabilityLiftOverImplied: nullableNumber('BotProbabilityLift'),
@@ -566,6 +819,38 @@
             showNotice('Bot guardado. Sus reglas se usarán en las próximas ejecuciones.', 'success');
         } catch (error) { showNotice(error.message, 'danger'); }
         finally { button.disabled = false; }
+    });
+
+    botEditor.addEventListener('click', event => {
+        const removeButton = event.target.closest('[data-remove-league-rule]');
+        if (removeButton) {
+            const market = removeButton.dataset.removeLeagueRule;
+            const kind = removeButton.dataset.ruleKind;
+            const id = kind === 'included' ? `BotLeagueIncluded-${market}` : `BotLeagueExcluded-${market}`;
+            const value = normalizeLeagueKey(removeButton.dataset.ruleValue);
+            setLeagueRuleValues(
+                market,
+                kind,
+                parseLeagueRules(id).filter(rule => normalizeLeagueKey(rule) !== value));
+            return;
+        }
+
+        const clearButton = event.target.closest('[data-clear-league-rules]');
+        if (clearButton) {
+            const market = clearButton.dataset.clearLeagueRules;
+            setLeagueRuleValues(market, 'included', []);
+            setLeagueRuleValues(market, 'excluded', []);
+            return;
+        }
+
+        const includeCountry = event.target.closest('[data-include-country]');
+        if (includeCountry) return addCatalogCountry(includeCountry.dataset.includeCountry, 'included');
+        const excludeCountry = event.target.closest('[data-exclude-country]');
+        if (excludeCountry) return addCatalogCountry(excludeCountry.dataset.excludeCountry, 'excluded');
+        const includeLeague = event.target.closest('[data-include-league]');
+        if (includeLeague) return addCatalogLeague(includeLeague.dataset.includeLeague, 'included');
+        const excludeLeague = event.target.closest('[data-exclude-league]');
+        if (excludeLeague) return addCatalogLeague(excludeLeague.dataset.excludeLeague, 'excluded');
     });
 
     const cancelJob = async id => {
@@ -584,13 +869,38 @@
     };
 
     document.getElementById('NewBotButton').addEventListener('click', () => openBotEditor());
+    const updateLeagueFilterVisibility = () => {
+        const enabledMarkets = new Set(selectedValues('.bot-market'));
+        document.querySelectorAll('[data-league-filter-row]').forEach(row => {
+            row.hidden = !enabledMarkets.has(row.dataset.leagueFilterRow);
+        });
+    };
     const updateStrategyConfigurationVisibility = () => {
-        document.getElementById('BotStrategyConfigurationGroup').hidden = !['MODELS_2026', 'LEGACY_EMPIRICAL'].includes(document.getElementById('BotBaseStrategy').value);
+        const strategy = document.getElementById('BotBaseStrategy').value;
+        const isBotG = strategy === 'GOALS_MARKET_ANCHORED';
+        document.getElementById('BotStrategyConfigurationGroup').hidden = !['MODELS_2026', 'LEGACY_EMPIRICAL', 'GOALS_MARKET_ANCHORED', 'LEGACY_A'].includes(strategy);
+        document.getElementById('BotPublishGroup').hidden = !isBotG;
+        document.querySelectorAll('.bot-market').forEach(input => {
+            input.disabled = isBotG && input.value !== 'GOALS';
+            if (isBotG) input.checked = input.value === 'GOALS';
+        });
+        updateLeagueFilterVisibility();
     };
     document.getElementById('BotBaseStrategy').addEventListener('change', updateStrategyConfigurationVisibility);
+    document.querySelectorAll('.bot-market').forEach(input => input.addEventListener('change', updateLeagueFilterVisibility));
     document.getElementById('CloseBotEditorButton').addEventListener('click', closeBotEditor);
     document.getElementById('CancelBotButton').addEventListener('click', closeBotEditor);
     document.getElementById('RefreshJobsButton').addEventListener('click', () => refreshJobs());
+    document.getElementById('SelectAllJobBots').addEventListener('click', () => {
+        document.querySelectorAll('.job-bot').forEach(input => input.checked = true);
+        updateJobSelectionSummary();
+    });
+    document.getElementById('ClearAllJobBots').addEventListener('click', () => {
+        document.querySelectorAll('.job-bot').forEach(input => input.checked = false);
+        updateJobSelectionSummary();
+    });
+    document.querySelectorAll('.job-market').forEach(input => input.addEventListener('change', updateJobSelectionSummary));
+    document.getElementById('BatchSize').addEventListener('change', updateJobSelectionSummary);
     document.getElementById('HistoricalRangeButton').addEventListener('click', () => {
         document.getElementById('DateFrom').value = '2026-06-19';
         document.getElementById('DateTo').value = localDateIso(new Date());

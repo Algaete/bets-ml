@@ -1,0 +1,276 @@
+@model CornersPrediction.Web.Models.BotPicks.BotG2026IndexViewModel
+@{
+    ViewData["Title"] = "Bot G2026 · Shadow Lab";
+}
+
+<style>
+    .g-shell { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; max-width: 100%; gap: 1rem; }
+    .g-shell > *, .g-async-host { width: 100%; min-width: 0; max-width: 100%; }
+    .g-hero { border: 1px solid var(--bs-border-color); border-radius: 1rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(31, 111, 235, .14), rgba(126, 87, 194, .08)); }
+    .g-status { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid rgba(255, 193, 7, .45); border-radius: 999px; padding: .3rem .7rem; background: rgba(255, 193, 7, .1); font-size: .82rem; font-weight: 700; }
+    .g-status::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: #ffc107; box-shadow: 0 0 0 .2rem rgba(255, 193, 7, .14); }
+    .g-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .7rem; }
+    .g-metric { border: 1px solid var(--bs-border-color); border-radius: .8rem; padding: .8rem; background: var(--bs-body-bg); }
+    .g-metric span { display: block; color: var(--bs-secondary-color); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+    .g-metric strong { display: block; margin-top: .2rem; font-size: 1.15rem; }
+    .g-panel { width: 100%; min-width: 0; max-width: 100%; border: 1px solid var(--bs-border-color); border-radius: 1rem; padding: 1rem; background: var(--bs-body-bg); }
+    .g-filter-grid, .g-filter-grid > * { min-width: 0; }
+    .g-filter-grid .form-control, .g-filter-grid .form-select { width: 100%; min-width: 0; }
+    .g-filter-actions { display: flex; justify-content: flex-end; }
+    .g-table-scroll { width: 100%; min-width: 0; max-width: 100%; max-height: min(68vh, 760px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .g-table { min-width: max-content; font-size: .82rem; white-space: nowrap; }
+    .g-table-scroll .g-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bs-body-bg); box-shadow: inset 0 -1px var(--bs-border-color); }
+    .g-prob { min-width: 82px; text-align: right; font-variant-numeric: tabular-nums; }
+    .g-detail { min-width: 290px; white-space: normal; }
+    .g-code { display: block; max-height: 9rem; overflow: auto; font-size: .72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .g-howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .75rem; }
+    .g-howto article { border-left: .22rem solid var(--bs-primary); padding: .25rem .75rem; }
+    .g-howto strong { display: block; margin-bottom: .2rem; }
+    .g-health { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; }
+</style>
+
+<div class="g-shell">
+    <section class="g-hero">
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+            <div>
+                <div class="text-uppercase small fw-semibold text-secondary">Goals specialist · market anchored</div>
+                <h1 class="h3 mb-2">Bot G2026</h1>
+                <p class="mb-0 text-secondary">Auditoría de todos los candidatos de goles. Esta superficie es solo lectura y no ejecuta acciones sobre picks productivos.</p>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <span class="g-status">Shadow por defecto</span>
+                <span class="badge @(Model.RuntimeStatusAvailable ? "text-bg-success" : "text-bg-danger") g-health">Runtime @(Model.RuntimeStatusAvailable ? "conectado" : "con error")</span>
+                <span id="GCandidatesStatus" class="badge text-bg-secondary g-health">Candidatos cargando aparte</span>
+                <span id="GScorecardsStatus" class="badge text-bg-secondary g-health">Scorecards cargando aparte</span>
+                <a class="btn btn-sm btn-outline-secondary" asp-controller="BotPicks" asp-action="Index" asp-route-market="goals">Bot Picks · Goles</a>
+            </div>
+        </div>
+    </section>
+
+    @if (!Model.RuntimeStatusAvailable)
+    {
+        <div class="alert alert-warning mb-0" role="status">
+            <strong>Carga parcial.</strong> G2026 sigue mostrando los componentes que respondieron; cada bloque indica abajo cuál consulta falló.
+        </div>
+    }
+
+    <section class="g-panel" aria-labelledby="GHowToTitle">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <h2 id="GHowToTitle" class="h5 mb-1">Cómo usar este laboratorio</h2>
+                <div class="small text-secondary">G observa apuestas hipotéticas; nunca debes copiar una fila como apuesta real sólo por verla aquí.</div>
+            </div>
+            @if (Model.RuntimeStatusAvailable)
+            {
+                <span class="badge @(Model.RuntimeStatus.Available ? "text-bg-success" : "text-bg-warning")">Runtime @Model.RuntimeStatus.State</span>
+            }
+            else
+            {
+                <span class="badge text-bg-danger">Runtime sin datos</span>
+            }
+        </div>
+        @if (Model.RuntimeStatusAvailable)
+        {
+            <div class="alert @(Model.RuntimeStatus.Available ? "alert-success" : "alert-warning") py-2" role="status">
+                <strong>@(Model.RuntimeStatus.Available ? "Artefacto disponible." : "Modo colector / abstención.")</strong>
+                @Model.RuntimeStatus.Message
+                @if (Model.RuntimeStatus.TrainedThroughUtc.HasValue)
+                {
+                    <span> Entrenado hasta @Model.RuntimeStatus.TrainedThroughUtc.Value.ToString("yyyy-MM-dd HH:mm") UTC.</span>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-danger py-2" role="alert">
+                <strong>No se pudo comprobar el runtime.</strong> @Model.RuntimeStatusErrorMessage
+            </div>
+        }
+        <div class="g-howto">
+            <article><strong>1 · Recolectar</strong><span class="small text-secondary">El runner normal evalúa G cuando encuentra cuotas bilaterales de goles. Esta pantalla no ejecuta el bot.</span></article>
+            <article><strong>2 · Revisar decisiones</strong><span class="small text-secondary">Approved pasó las reglas; Rejected fue puntuado pero falló un umbral; Abstain significa evidencia insuficiente.</span></article>
+            <article><strong>3 · Esperar resultados</strong><span class="small text-secondary">Un worker independiente reconcilia MatchHistory cada 15 minutos sin bloquear API-Football.</span></article>
+            <article><strong>4 · Comparar con mercado</strong><span class="small text-secondary">Promoción sólo si Δ Brier es negativo, ECE bajo, muestra suficiente y rendimiento estable fuera de muestra.</span></article>
+        </div>
+    </section>
+
+    <section class="g-panel">
+        <form method="get" class="g-filter-grid row g-2 align-items-end">
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="DateFromUtc">Desde UTC</label>
+                <input class="form-control form-control-sm" type="date" id="DateFromUtc" name="DateFromUtc" value="@Model.Filters.DateFromUtc?.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="DateToUtc">Hasta UTC</label>
+                <input class="form-control form-control-sm" type="date" id="DateToUtc" name="DateToUtc" value="@Model.Filters.DateToUtc?.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="Decision">Decisión</label>
+                <select class="form-select form-select-sm" id="Decision" name="Decision">
+                    <option value="">Todas</option>
+                    <option value="Approved" selected="@(Model.Filters.Decision == "Approved")">Approved</option>
+                    <option value="Rejected" selected="@(Model.Filters.Decision == "Rejected")">Rejected</option>
+                    <option value="Abstain" selected="@(Model.Filters.Decision == "Abstain")">Abstain</option>
+                </select>
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="PublicationStatus">Modo</label>
+                <select class="form-select form-select-sm" id="PublicationStatus" name="PublicationStatus">
+                    <option value="">Todos</option>
+                    <option value="Shadow" selected="@(Model.Filters.PublicationStatus == "Shadow")">Shadow</option>
+                    <option value="Published" selected="@(Model.Filters.PublicationStatus == "Published")">Published</option>
+                    <option value="NotSelected" selected="@(Model.Filters.PublicationStatus == "NotSelected")">Not selected</option>
+                </select>
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="MarketType">Mercado</label>
+                <select class="form-select form-select-sm" id="MarketType" name="MarketType">
+                    <option value="">Todos</option>
+                    <option value="TotalGoals" selected="@(Model.Filters.MarketType == "TotalGoals")">Total Goals</option>
+                    <option value="HomeTeamGoals" selected="@(Model.Filters.MarketType == "HomeTeamGoals")">Home Goals</option>
+                    <option value="AwayTeamGoals" selected="@(Model.Filters.MarketType == "AwayTeamGoals")">Away Goals</option>
+                </select>
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="Selection">Selección</label>
+                <select class="form-select form-select-sm" id="Selection" name="Selection">
+                    <option value="">Todas</option>
+                    <option value="Over" selected="@(Model.Filters.Selection == "Over")">Over</option>
+                    <option value="Under" selected="@(Model.Filters.Selection == "Under")">Under</option>
+                </select>
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="Bookmaker">Bookmaker</label>
+                <input class="form-control form-control-sm" id="Bookmaker" name="Bookmaker" value="@Model.Filters.Bookmaker" placeholder="Betano / Pinnacle" />
+            </div>
+            <div class="col-6 col-lg-3">
+                <label class="form-label" for="ConfigurationVersion">Configuración</label>
+                <input class="form-control form-control-sm" id="ConfigurationVersion" name="ConfigurationVersion" value="@Model.Filters.ConfigurationVersion" placeholder="bot-g-goals-market-1.0.0" />
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label" for="Result">Resultado</label>
+                <select class="form-select form-select-sm" id="Result" name="Result">
+                    <option value="">Todos</option>
+                    @foreach (var result in new[] { "Pending", "Win", "HalfWin", "Push", "HalfLoss", "Loss", "Void" })
+                    {
+                        <option value="@result" selected="@(Model.Filters.Result == result)">@result</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-lg-1">
+                <label class="form-label" for="PageSize">Filas</label>
+                <select class="form-select form-select-sm" id="PageSize" name="PageSize">
+                    @foreach (var size in new[] { 25, 50, 100 })
+                    {
+                        <option value="@size" selected="@(Model.Filters.PageSize == size)">@size</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 g-filter-actions mt-1">
+                <input type="hidden" name="Page" value="1" />
+                <button type="submit" class="btn btn-sm btn-primary">Aplicar filtros</button>
+            </div>
+        </form>
+    </section>
+
+    <div id="GScorecardsHost" class="g-async-host"
+         data-url="@Url.Action("Scorecards", "BotG2026", new { DateFromUtc = Model.Filters.DateFromUtc?.ToString("O"), DateToUtc = Model.Filters.DateToUtc?.ToString("O"), Decision = Model.Filters.Decision, PublicationStatus = Model.Filters.PublicationStatus, MarketType = Model.Filters.MarketType, Selection = Model.Filters.Selection, Bookmaker = Model.Filters.Bookmaker, ConfigurationVersion = Model.Filters.ConfigurationVersion, Result = Model.Filters.Result })">
+        <section class="g-panel" aria-live="polite" aria-busy="true">
+            <div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Cargando scorecards sin bloquear la tabla…</strong></div>
+            <div class="small text-secondary mt-2">Ya puedes revisar los candidatos mientras termina esta consulta.</div>
+        </section>
+    </div>
+
+    <div id="GCandidatesHost" class="g-async-host"
+         data-url="@Url.Action("Candidates", "BotG2026", new { DateFromUtc = Model.Filters.DateFromUtc?.ToString("O"), DateToUtc = Model.Filters.DateToUtc?.ToString("O"), Decision = Model.Filters.Decision, PublicationStatus = Model.Filters.PublicationStatus, MarketType = Model.Filters.MarketType, Selection = Model.Filters.Selection, Bookmaker = Model.Filters.Bookmaker, ConfigurationVersion = Model.Filters.ConfigurationVersion, Result = Model.Filters.Result, Page = Model.Filters.Page, PageSize = Model.Filters.PageSize })">
+        <section class="g-panel" aria-live="polite" aria-busy="true">
+            <div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Cargando sólo @Model.Filters.PageSize candidatos de esta página…</strong></div>
+            <div class="small text-secondary mt-2">La pantalla ya está disponible; esta consulta corre en paralelo con los scorecards.</div>
+        </section>
+    </div>
+</div>
+
+<script>
+(() => {
+    const candidatesHost = document.getElementById('GCandidatesHost');
+    const candidatesBadge = document.getElementById('GCandidatesStatus');
+    const scorecardsHost = document.getElementById('GScorecardsHost');
+    const scorecardsBadge = document.getElementById('GScorecardsStatus');
+
+    async function loadScorecards() {
+        if (!scorecardsHost) return;
+        scorecardsHost.setAttribute('aria-busy', 'true');
+        try {
+            const response = await fetch(scorecardsHost.dataset.url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            scorecardsHost.innerHTML = await response.text();
+            const failed = scorecardsHost.querySelector('[data-scorecards-state="error"]');
+            scorecardsBadge.className = `badge ${failed ? 'text-bg-warning' : 'text-bg-success'} g-health`;
+            scorecardsBadge.textContent = failed ? 'Scorecards no disponibles' : 'Scorecards cargados';
+        } catch (error) {
+            scorecardsHost.innerHTML = `<section class="g-panel"><div data-scorecards-state="error" class="alert alert-warning mb-0">No se pudieron cargar los scorecards. <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-scorecards">Reintentar</button></div></section>`;
+            scorecardsBadge.className = 'badge text-bg-warning g-health';
+            scorecardsBadge.textContent = 'Scorecards no disponibles';
+        } finally {
+            scorecardsHost.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    async function loadCandidates() {
+        if (!candidatesHost) return;
+        candidatesHost.setAttribute('aria-busy', 'true');
+        try {
+            const response = await fetch(candidatesHost.dataset.url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            candidatesHost.innerHTML = await response.text();
+            const failed = candidatesHost.querySelector('[data-candidates-state="error"]');
+            candidatesBadge.className = `badge ${failed ? 'text-bg-warning' : 'text-bg-success'} g-health`;
+            candidatesBadge.textContent = failed ? 'Candidatos no disponibles' : 'Candidatos paginados';
+        } catch (error) {
+            candidatesHost.innerHTML = `<section class="g-panel"><div data-candidates-state="error" class="alert alert-warning mb-0">No se pudo cargar esta página de candidatos. <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-candidates">Reintentar</button></div></section>`;
+            candidatesBadge.className = 'badge text-bg-warning g-health';
+            candidatesBadge.textContent = 'Candidatos no disponibles';
+        } finally {
+            candidatesHost.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    async function loadAuditDetail(button) {
+        const container = button.closest('.js-g-audit-detail');
+        if (!container) return;
+        button.disabled = true;
+        button.textContent = 'Cargando…';
+        try {
+            const response = await fetch(button.dataset.url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const candidate = await response.json();
+            const rawReasons = candidate.decisionReasonsJson ?? candidate.DecisionReasonsJson ?? '[]';
+            let formattedReasons = rawReasons;
+            try { formattedReasons = JSON.stringify(JSON.parse(rawReasons), null, 2); } catch { }
+            const label = document.createElement('span');
+            label.className = 'small text-secondary';
+            label.textContent = 'Decision reasons';
+            const code = document.createElement('code');
+            code.className = 'g-code';
+            code.textContent = formattedReasons;
+            container.replaceChildren(label, code);
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = 'Reintentar detalle';
+        }
+    }
+
+    scorecardsHost?.addEventListener('click', event => {
+        if (event.target.closest('.js-retry-scorecards')) loadScorecards();
+    });
+    candidatesHost?.addEventListener('click', event => {
+        if (event.target.closest('.js-retry-candidates')) loadCandidates();
+        const detailButton = event.target.closest('.js-load-g-audit');
+        if (detailButton) loadAuditDetail(detailButton);
+    });
+
+    // Both expensive components start together after the shell is visible.
+    loadCandidates();
+    loadScorecards();
+})();
+</script>

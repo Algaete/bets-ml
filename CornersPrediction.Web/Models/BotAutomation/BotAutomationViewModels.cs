@@ -4,9 +4,20 @@ public sealed class BotAutomationIndexViewModel
 {
     public IReadOnlyList<RecommendationBotDefinitionViewModel> Bots { get; init; } = [];
     public IReadOnlyList<RecommendationJobViewModel> Jobs { get; init; } = [];
+    public IReadOnlyList<RecommendationBotLeagueCatalogItemViewModel> LeagueCatalog { get; init; } = [];
     public DateOnly DefaultDateFrom { get; init; }
     public DateOnly DefaultDateTo { get; init; }
     public string? LoadError { get; init; }
+    public string? BotsLoadError { get; init; }
+    public string? JobsLoadError { get; init; }
+    public string? LeagueCatalogLoadError { get; init; }
+}
+
+public sealed record RecommendationBotLeagueCatalogItemViewModel
+{
+    public string Country { get; init; } = "Otros";
+    public string League { get; init; } = string.Empty;
+    public IReadOnlyList<string> Sources { get; init; } = [];
 }
 
 public sealed record RecommendationBotDefinitionViewModel
@@ -16,8 +27,10 @@ public sealed record RecommendationBotDefinitionViewModel
     public string Description { get; init; } = string.Empty;
     public string BaseStrategy { get; init; } = string.Empty;
     public bool IsEnabled { get; init; }
+    public bool PublishEnabled { get; init; } = true;
     public bool IsBuiltIn { get; init; }
     public IReadOnlyList<string> MarketFamilies { get; init; } = [];
+    public IReadOnlyList<RecommendationBotLeagueFilterViewModel> LeagueFilters { get; init; } = [];
     public double? MinEdge { get; init; }
     public double? MinExpectedValue { get; init; }
     public double? MinDistanceToLine { get; init; }
@@ -41,7 +54,9 @@ public sealed record SaveRecommendationBotDefinitionViewModel
     public string? Description { get; init; }
     public string BaseStrategy { get; init; } = "MODELS_2026";
     public bool IsEnabled { get; init; } = true;
+    public bool? PublishEnabled { get; init; }
     public IReadOnlyCollection<string>? MarketFamilies { get; init; }
+    public IReadOnlyCollection<RecommendationBotLeagueFilterViewModel>? LeagueFilters { get; init; }
     public double? MinEdge { get; init; }
     public double? MinExpectedValue { get; init; }
     public double? MinDistanceToLine { get; init; }
@@ -51,6 +66,13 @@ public sealed record SaveRecommendationBotDefinitionViewModel
     public double? MinProbabilityLiftOverImplied { get; init; }
     public decimal? StakeMultiplier { get; init; }
     public string? StrategyConfigurationJson { get; init; }
+}
+
+public sealed record RecommendationBotLeagueFilterViewModel
+{
+    public string MarketFamily { get; init; } = "*";
+    public IReadOnlyList<string> IncludedLeagues { get; init; } = [];
+    public IReadOnlyList<string> ExcludedLeagues { get; init; } = [];
 }
 
 public sealed record BotCStrategyManifestViewModel

@@ -138,7 +138,7 @@ builder.Services.AddHttpClient<NewGenerationPredictionApiClient>((services, clie
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromMinutes(2);
+    client.Timeout = TimeSpan.FromSeconds(30);
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 
@@ -169,6 +169,24 @@ builder.Services.AddHttpClient<AutomatedCornersApiClient>((services, client) =>
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
     client.Timeout = TimeSpan.FromMinutes(10);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
+builder.Services.AddHttpClient<BotG2026ApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    // The initial dashboard does not wait for scorecards. The lazy scorecard
+    // component owns its timeout and may legitimately need more than 30s.
+    client.Timeout = TimeSpan.FromSeconds(90);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
+builder.Services.AddHttpClient<BotH2026ApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(3);
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 

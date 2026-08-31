@@ -42,34 +42,161 @@ public sealed class SqlAutomationRepository
                 return;
             }
 
-            var scriptPath = Path.Combine(_environment.ContentRootPath, "sql", "automated_corners_bot.sql");
-            if (!File.Exists(scriptPath))
+            var scriptPaths = new[]
             {
-                throw new FileNotFoundException("The SQL bootstrap script was not found.", scriptPath);
+                Path.Combine(_environment.ContentRootPath, "sql", "automated_corners_bot.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260819_bot_g2026.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260827_bot_h_shadow_lab.sql")
+            };
+
+            foreach (var scriptPath in scriptPaths)
+            {
+                if (!File.Exists(scriptPath))
+                {
+                    throw new FileNotFoundException("A required SQL schema script was not found.", scriptPath);
+                }
             }
 
-            var sql = await File.ReadAllTextAsync(scriptPath, cancellationToken);
             await using var connection = await OpenConnectionAsync(cancellationToken);
-            foreach (var batch in SplitSqlBatches(sql))
+            await EnsureMigrationLedgerAsync(connection, cancellationToken);
+            foreach (var scriptPath in scriptPaths)
             {
-                if (string.IsNullOrWhiteSpace(batch))
+                var sql = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+                var migrationKey = $"automation:{Path.GetFileName(scriptPath)}";
+                var contentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sql)))
+                    .ToLowerInvariant();
+                var appliedHash = await GetAppliedMigrationHashAsync(
+                    connection,
+                    migrationKey,
+                    cancellationToken);
+                if (string.Equals(appliedHash, contentHash, StringComparison.OrdinalIgnoreCase))
                 {
+                    _logger.LogDebug("SQL migration {MigrationKey} is unchanged; skipping.", migrationKey);
                     continue;
                 }
 
-                await using var command = connection.CreateCommand();
-                command.CommandText = batch;
-                command.CommandType = CommandType.Text;
-                command.CommandTimeout = 180;
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                if (appliedHash is null && await CanBootstrapAppliedMigrationAsync(
+                    connection,
+                    Path.GetFileName(scriptPath),
+                    cancellationToken))
+                {
+                    await RecordAppliedMigrationAsync(connection, migrationKey, contentHash, cancellationToken);
+                    _logger.LogInformation(
+                        "Registered existing SQL migration {MigrationKey} without replaying an already-current schema.",
+                        migrationKey);
+                    continue;
+                }
+
+                _logger.LogInformation("Applying SQL migration {MigrationKey}.", migrationKey);
+                foreach (var batch in SplitSqlBatches(sql))
+                {
+                    if (string.IsNullOrWhiteSpace(batch))
+                    {
+                        continue;
+                    }
+
+                    await using var command = connection.CreateCommand();
+                    command.CommandText = batch;
+                    command.CommandType = CommandType.Text;
+                    command.CommandTimeout = 180;
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                }
+                await RecordAppliedMigrationAsync(connection, migrationKey, contentHash, cancellationToken);
             }
 
+            // Set only after the base schema and every bot migration have completed.
+            // A failure in any script leaves initialization retryable.
             _schemaReady = true;
         }
         finally
         {
             _schemaLock.Release();
         }
+    }
+
+    private static async Task EnsureMigrationLedgerAsync(
+        SqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            IF OBJECT_ID(N'dbo.ApplicationSchemaMigrations', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.ApplicationSchemaMigrations
+                (
+                    MigrationKey NVARCHAR(200) NOT NULL CONSTRAINT PK_ApplicationSchemaMigrations PRIMARY KEY,
+                    ContentHash CHAR(64) NOT NULL,
+                    AppliedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_ApplicationSchemaMigrations_AppliedAtUtc DEFAULT SYSUTCDATETIME()
+                );
+            END;
+            """;
+        command.CommandTimeout = 60;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<string?> GetAppliedMigrationHashAsync(
+        SqlConnection connection,
+        string migrationKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ContentHash FROM dbo.ApplicationSchemaMigrations WHERE MigrationKey = @MigrationKey;";
+        command.Parameters.Add(new SqlParameter("@MigrationKey", SqlDbType.NVarChar, 200) { Value = migrationKey });
+        command.CommandTimeout = 30;
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    private static async Task RecordAppliedMigrationAsync(
+        SqlConnection connection,
+        string migrationKey,
+        string contentHash,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.ApplicationSchemaMigrations
+            SET ContentHash = @ContentHash, AppliedAtUtc = SYSUTCDATETIME()
+            WHERE MigrationKey = @MigrationKey;
+            IF @@ROWCOUNT = 0
+                INSERT dbo.ApplicationSchemaMigrations(MigrationKey, ContentHash)
+                VALUES (@MigrationKey, @ContentHash);
+            """;
+        command.Parameters.Add(new SqlParameter("@MigrationKey", SqlDbType.NVarChar, 200) { Value = migrationKey });
+        command.Parameters.Add(new SqlParameter("@ContentHash", SqlDbType.Char, 64) { Value = contentHash });
+        command.CommandTimeout = 30;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<bool> CanBootstrapAppliedMigrationAsync(
+        SqlConnection connection,
+        string fileName,
+        CancellationToken cancellationToken)
+    {
+        var predicate = fileName switch
+        {
+            "automated_corners_bot.sql" => """
+                OBJECT_ID(N'dbo.AutomatedBotPickEvaluations', N'U') IS NOT NULL
+                AND OBJECT_ID(N'dbo.sp_UpsertAutomatedBotPickEvaluation', N'P') IS NOT NULL
+                AND OBJECT_ID(N'dbo.AutomatedRecommendationJobs', N'U') IS NOT NULL
+                """,
+            "20260819_bot_g2026.sql" => """
+                OBJECT_ID(N'dbo.sp_GetBotG2026Scorecard', N'P') IS NOT NULL
+                AND COL_LENGTH(N'dbo.AutomatedBotPickEvaluations', N'FixtureIdentity') IS NOT NULL
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.AutomatedBotPickEvaluations') AND name = N'IX_AutomatedBotPickEvaluations_G2026ScorecardV2')
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.AutomatedBotPickEvaluations') AND name = N'IX_AutomatedBotPickEvaluations_G2026CandidatePageV3')
+                """,
+            "20260827_bot_h_shadow_lab.sql" => """
+                OBJECT_ID(N'dbo.sp_GetBotH2026ShadowEvaluations', N'P') IS NOT NULL
+                AND OBJECT_ID(N'dbo.sp_GetBotH2026ShadowScorecards', N'P') IS NOT NULL
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.BotH2026ShadowEvaluations') AND name = N'IX_BotH2026ShadowEvaluations_SourceEvaluation')
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.BotH2026ShadowEvaluations') AND name = N'IX_BotH2026ShadowEvaluations_ScorecardWindow')
+                """,
+            _ => "1 = 0"
+        };
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT CONVERT(BIT, CASE WHEN {predicate} THEN 1 ELSE 0 END);";
+        command.CommandTimeout = 30;
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     public async Task<IReadOnlyList<UpcomingOddsRecord>> GetUpcomingOddsAsync(
@@ -102,9 +229,19 @@ public sealed class SqlAutomationRepository
                 q.AwayTeamGender,
                 q.MarketType,
                 q.LineValue,
-                q.OverOdds,
-                q.UnderOdds,
+                OverOdds = CASE
+                    WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotOverOdds
+                    ELSE q.OverOdds
+                END,
+                UnderOdds = CASE
+                    WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotUnderOdds
+                    ELSE q.UnderOdds
+                END,
                 q.UpdatedAtUtc,
+                latestSnapshot.OddsSnapshotId,
+                latestSnapshot.OddsCapturedAtUtc,
+                latestSnapshot.SnapshotOverOdds,
+                latestSnapshot.SnapshotUnderOdds,
                 MatchIdentity =
                     CASE
                         WHEN NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NOT NULL
@@ -172,6 +309,30 @@ public sealed class SqlAutomationRepository
                   AND pp.EquipoVisita COLLATE Latin1_General_100_CI_AI =
                       COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
             ) fixture
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    OddsSnapshotId = snapshot.CornerOddsSnapshotId,
+                    OddsCapturedAtUtc = snapshot.CapturedAtUtc,
+                    SnapshotOverOdds = snapshot.OverOdds,
+                    SnapshotUnderOdds = snapshot.UnderOdds
+                FROM dbo.CornerOddsSnapshots AS snapshot
+                WHERE snapshot.Source = q.Source
+                  AND snapshot.MatchDate = q.MatchDate
+                  AND snapshot.MarketType = q.MarketType
+                  AND snapshot.LineValue = q.LineValue
+                  AND COALESCE(snapshot.StandardizedHomeTeam, snapshot.HomeTeam) COLLATE Latin1_General_100_CI_AI =
+                      COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
+                  AND COALESCE(snapshot.StandardizedAwayTeam, snapshot.AwayTeam) COLLATE Latin1_General_100_CI_AI =
+                      COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
+                  AND
+                  (
+                      NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NULL
+                      OR snapshot.SourceMatchId = q.SourceMatchId
+                  )
+                  AND snapshot.CapturedAtUtc <= SYSUTCDATETIME()
+                ORDER BY snapshot.CapturedAtUtc DESC, snapshot.CornerOddsSnapshotId DESC
+            ) latestSnapshot
             WHERE q.MarketType IN (
                     N'CornersTotal', N'CornersHomeTeam', N'CornersAwayTeam',
                     N'GoalsTotal', N'GoalsHomeTeam', N'GoalsAwayTeam',
@@ -256,7 +417,11 @@ public sealed class SqlAutomationRepository
             LineValue,
             OverOdds,
             UnderOdds,
-            UpdatedAtUtc
+            UpdatedAtUtc,
+            OddsSnapshotId,
+            OddsCapturedAtUtc,
+            SnapshotOverOdds,
+            SnapshotUnderOdds
         FROM RankedOdds
         WHERE rn = 1
         ORDER BY MatchDate, COALESCE(StandardizedLeague, League), COALESCE(StandardizedHomeTeam, HomeTeam), COALESCE(StandardizedAwayTeam, AwayTeam), LineValue
@@ -299,7 +464,11 @@ public sealed class SqlAutomationRepository
                 LineValue = reader.GetDecimal(reader.GetOrdinal("LineValue")),
                 OverOdds = reader.IsDBNull(reader.GetOrdinal("OverOdds")) ? null : reader.GetDecimal(reader.GetOrdinal("OverOdds")),
                 UnderOdds = reader.IsDBNull(reader.GetOrdinal("UnderOdds")) ? null : reader.GetDecimal(reader.GetOrdinal("UnderOdds")),
-                UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("UpdatedAtUtc"))
+                UpdatedAtUtc = reader.GetDateTime(reader.GetOrdinal("UpdatedAtUtc")),
+                OddsSnapshotId = reader.IsDBNull(reader.GetOrdinal("OddsSnapshotId")) ? null : reader.GetInt64(reader.GetOrdinal("OddsSnapshotId")),
+                OddsCapturedAtUtc = reader.IsDBNull(reader.GetOrdinal("OddsCapturedAtUtc")) ? null : reader.GetDateTime(reader.GetOrdinal("OddsCapturedAtUtc")),
+                SnapshotOverOdds = reader.IsDBNull(reader.GetOrdinal("SnapshotOverOdds")) ? null : reader.GetDecimal(reader.GetOrdinal("SnapshotOverOdds")),
+                SnapshotUnderOdds = reader.IsDBNull(reader.GetOrdinal("SnapshotUnderOdds")) ? null : reader.GetDecimal(reader.GetOrdinal("SnapshotUnderOdds"))
             });
         }
 
@@ -333,9 +502,10 @@ public sealed class SqlAutomationRepository
                 e.SelectedSide,
                 e.LineValue,
                 e.SelectedOdds,
-                SourceProbability = e.FinalProbability,
+                e.BaseCalibratedProbability,
                 e.MarketNoVigProbability,
                 e.DataQualityScore,
+                e.FeatureSnapshotJson,
                 e.BaseModelTrainedThroughUtc,
                 BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
             FROM dbo.AutomatedBotPickEvaluations e
@@ -344,7 +514,6 @@ public sealed class SqlAutomationRepository
               AND e.Decision IN (N'Approved', N'Rejected')
               AND e.SelectedSide IN (N'Over', N'Under')
               AND e.SelectedOdds > 1
-              AND e.FinalProbability > 0 AND e.FinalProbability < 1
               AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
               AND e.DataQualityScore BETWEEN 0 AND 1
               AND e.BaseModelTrainedThroughUtc IS NOT NULL
@@ -456,9 +625,10 @@ public sealed class SqlAutomationRepository
                 WHEN N'HomeTeamShotsOnGoal' THEN mh.HomeShotsOnGoal
                 WHEN N'AwayTeamShotsOnGoal' THEN mh.AwayShotsOnGoal
             END),
-            e.SourceProbability,
+            e.BaseCalibratedProbability,
             e.MarketNoVigProbability,
             e.DataQualityScore,
+            e.FeatureSnapshotJson,
             e.BaseModelVersion
         FROM EligibleEvaluations e
         INNER JOIN MatchedEvaluations matched
@@ -513,8 +683,22 @@ public sealed class SqlAutomationRepository
 
         var observations = new List<BotECalibrationObservation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var baseCalibratedProbabilityOrdinal = reader.GetOrdinal("BaseCalibratedProbability");
+        var featureSnapshotJsonOrdinal = reader.GetOrdinal("FeatureSnapshotJson");
         while (await reader.ReadAsync(cancellationToken))
         {
+            var sourceProbability = BotECalibrationSourceProbabilityResolver.Resolve(
+                reader.IsDBNull(featureSnapshotJsonOrdinal)
+                    ? null
+                    : reader.GetString(featureSnapshotJsonOrdinal),
+                reader.IsDBNull(baseCalibratedProbabilityOrdinal)
+                    ? null
+                    : Convert.ToDouble(reader.GetDecimal(baseCalibratedProbabilityOrdinal)));
+            if (!sourceProbability.HasValue)
+            {
+                continue;
+            }
+
             observations.Add(new BotECalibrationObservation(
                 reader.GetInt64(reader.GetOrdinal("EvaluationId")),
                 reader.GetInt64(reader.GetOrdinal("FixtureId")),
@@ -524,7 +708,7 @@ public sealed class SqlAutomationRepository
                 reader.GetDecimal(reader.GetOrdinal("LineValue")),
                 reader.GetDecimal(reader.GetOrdinal("Odds")),
                 reader.GetInt32(reader.GetOrdinal("ActualValue")),
-                Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("SourceProbability"))),
+                sourceProbability.Value,
                 Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("MarketNoVigProbability"))),
                 Convert.ToDouble(reader.GetDecimal(reader.GetOrdinal("DataQualityScore"))),
                 reader.GetString(reader.GetOrdinal("BaseModelVersion"))));
@@ -542,7 +726,12 @@ public sealed class SqlAutomationRepository
         command.CommandText = "dbo.sp_UpsertAutomatedCornerBetSelection";
         command.CommandType = CommandType.StoredProcedure;
 
+        command.Parameters.Add(new SqlParameter("@BotGCandidateId", SqlDbType.BigInt)
+        {
+            Value = (object?)commandModel.BotGCandidateId ?? DBNull.Value
+        });
         command.Parameters.Add(new SqlParameter("@RunId", SqlDbType.UniqueIdentifier) { Value = commandModel.RunId });
+        command.Parameters.Add(new SqlParameter("@BotKey", SqlDbType.NVarChar, 50) { Value = commandModel.BotKey });
         command.Parameters.Add(new SqlParameter("@AutomationVersion", SqlDbType.NVarChar, 50) { Value = commandModel.AutomationVersion });
         command.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 50) { Value = commandModel.Odds.Source });
         command.Parameters.Add(new SqlParameter("@SourceMatchId", SqlDbType.NVarChar, 100) { Value = (object?)commandModel.Odds.SourceMatchId ?? DBNull.Value });

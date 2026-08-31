@@ -1,3 +1,5 @@
+using CornersPrediction.Application.Automation;
+
 namespace CornersPredictionApi.Requests;
 
 public sealed record SaveRecommendationBotDefinitionRequest(
@@ -15,4 +17,6 @@ public sealed record SaveRecommendationBotDefinitionRequest(
     double? MinOddsExclusive = null,
     double? MinProbabilityLiftOverImplied = null,
     decimal? StakeMultiplier = null,
-    string? StrategyConfigurationJson = null);
+    string? StrategyConfigurationJson = null,
+    bool? PublishEnabled = null,
+    IReadOnlyCollection<RecommendationBotLeagueFilter>? LeagueFilters = null);

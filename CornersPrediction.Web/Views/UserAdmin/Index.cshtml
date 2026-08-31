@@ -4,6 +4,10 @@
     var language = UiText.GetLanguage(Context);
     string T(string key) => UiText.T(language, key);
     ViewData["Title"] = T("UserAdmin.Title");
+    var activeUsers = Model.Users.Count(user => user.IsActive);
+    var inactiveUsers = Model.Users.Count - activeUsers;
+    var adminUsers = Model.Users.Count(user => user.Roles.Any(role => role.Equals("Admin", StringComparison.OrdinalIgnoreCase)));
+    var usersWithoutExternalId = Model.Users.Count(user => string.IsNullOrWhiteSpace(user.ExternalUserId));
 }
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
@@ -26,6 +30,13 @@
 }
 
 <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+
+<section class="user-admin-metrics mb-4" aria-label="Resumen de usuarios">
+    <article><span>Usuarios visibles</span><strong>@Model.Users.Count</strong><small>Respetan los filtros actuales</small></article>
+    <article><span>Activos</span><strong class="text-success">@activeUsers</strong><small>Con acceso habilitado</small></article>
+    <article><span>Inactivos</span><strong>@inactiveUsers</strong><small>Sin acceso a la plataforma</small></article>
+    <article><span>Administradores</span><strong>@adminUsers</strong><small>@usersWithoutExternalId sin identificador externo</small></article>
+</section>
 
 <section class="surface-panel mb-4">
     <form method="get" class="row g-3 align-items-end">
@@ -110,14 +121,15 @@
                                 </span>
                             </td>
                             <td class="text-muted small">
-                                @((user.UpdatedAt ?? user.CreatedAt).ToString("yyyy-MM-dd HH:mm"))
+                                <div>@((user.UpdatedAt ?? user.CreatedAt).ToString("yyyy-MM-dd HH:mm"))</div>
+                                <div>Creado @user.CreatedAt.ToString("yyyy-MM-dd")</div>
                             </td>
                             <td class="text-end">
                                 <div class="btn-group btn-group-sm">
                                     <a class="btn btn-outline-primary" asp-controller="UserAdmin" asp-action="Edit" asp-route-id="@user.Id">@T("Common.Edit")</a>
                                     <form method="post" asp-controller="UserAdmin" asp-action="Delete" asp-route-id="@user.Id" onsubmit="return confirm('@T("Common.DeleteUserConfirm")');">
                                         @Html.AntiForgeryToken()
-                                        <button class="btn btn-outline-danger" type="submit">@T("Common.Delete")</button>
+                                        <button class="btn btn-outline-danger" type="submit" title="Elimina definitivamente el usuario">@T("Common.Delete")</button>
                                     </form>
                                 </div>
                             </td>

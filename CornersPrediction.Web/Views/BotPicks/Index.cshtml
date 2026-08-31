@@ -12,6 +12,12 @@
     var canUpdateResults = User.IsInRole("Admin");
     var marketFamily = Model.Market.Key;
     var isCornersMarket = marketFamily == "corners";
+    var historicalPlanLabel = marketFamily switch
+    {
+        "corners" => "CORNERS V1",
+        "goals" => "GOALS V1",
+        _ => null
+    };
 }
 
 <div class="betting-hero bot-picks-hero mb-3">
@@ -91,7 +97,9 @@
 @if (marketFamily == "goals")
 {
     <div class="alert alert-info bot-picks-settlement-help" role="note">
-        <strong>Liquidación asiática:</strong> escribe los goles totales reales y pulsa <strong>Liquidar</strong>.
+        <strong>Liquidación asiática:</strong> escribe el dato que indica cada fila: goles del local,
+        goles de la visita o goles totales. Ingresa un solo entero —por ejemplo, en Arsenal 3–0,
+        un pick “Goles visita” se liquida con <strong>0</strong>— y pulsa <strong>Liquidar</strong>.
         El sistema calcula automáticamente ganancia completa, media ganancia, devolución, media pérdida o pérdida completa.
         Ejemplo: Under 2,25 con 2 goles = media ganancia; Over 2,25 con 2 goles = media pérdida.
     </div>
@@ -99,22 +107,18 @@
 
 <div class="bot-picks-tabs-heading">
     <div>
-        <h2 class="h6 mb-1">Bot del resumen</h2>
-        <p class="text-muted small mb-0">Cambia las estadísticas de arriba; la tabla tiene su propio filtro y muestra todos por defecto.</p>
+        <h2 class="h6 mb-1">Alcance del resumen · @Model.Market.Title</h2>
+        <p class="text-muted small mb-0">Plan global muestra la cartera canónica entre todos los bots. Elige un bot para aislar su aporte sin mezclar mercados.</p>
     </div>
 </div>
 <section class="bot-picks-tabs mb-3" role="tablist" aria-label="Bot activo para el resumen">
     <button class="bot-picks-tab" type="button" role="tab" data-bot-tab="" aria-selected="false">
-        <span class="bot-picks-tab-label">Comparar todos</span>
+        <span class="bot-picks-tab-label">Plan global · todos</span>
         <span id="BotPicksTabAllCount" class="bot-picks-tab-count">...</span>
     </button>
     <button class="bot-picks-tab bot-picks-tab-a" type="button" role="tab" data-bot-tab="A" aria-selected="false">
         <span class="bot-picks-tab-label">Bot A Actual</span>
         <span id="BotPicksTabACount" class="bot-picks-tab-count">...</span>
-    </button>
-    <button class="bot-picks-tab bot-picks-tab-b" type="button" role="tab" data-bot-tab="B" aria-selected="false">
-        <span class="bot-picks-tab-label">Bot B Conservador</span>
-        <span id="BotPicksTabBCount" class="bot-picks-tab-count">...</span>
     </button>
     <button class="bot-picks-tab bot-picks-tab-c" type="button" role="tab" data-bot-tab="C" aria-selected="false">
         <span class="bot-picks-tab-label">Bot C · Modelos 2026</span>
@@ -132,14 +136,14 @@
         <span class="bot-picks-tab-label">Bot F · Legacy calibrado</span>
         <span id="BotPicksTabFCount" class="bot-picks-tab-count">...</span>
     </button>
-    <button class="bot-picks-tab bot-picks-tab-legacy" type="button" role="tab" data-bot-tab="Legacy" aria-selected="false">
-        <span class="bot-picks-tab-label">Otros / Legacy</span>
+    <button id="BotPicksLegacyTab" class="bot-picks-tab bot-picks-tab-legacy d-none" type="button" role="tab" data-bot-tab="Legacy" aria-selected="false">
+        <span class="bot-picks-tab-label">Bots personalizados</span>
         <span id="BotPicksTabLegacyCount" class="bot-picks-tab-count">...</span>
     </button>
 </section>
 
 <div id="BotPicksSelectBotSummary" class="alert alert-info d-none mb-4" role="note">
-    Selecciona un bot para abrir su resumen financiero. La comparación, la tabla y el laboratorio siguen disponibles para todos.
+    El plan global consolida todos los bots activos y conserva una sola apuesta productiva por partido.
 </div>
 
 <aside id="BotPicksBotContext" class="bot-picks-context-card mb-4" aria-live="polite">
@@ -153,15 +157,19 @@
 
 <section id="BotPicksProductionPlan" class="bot-production-plan mb-4" aria-label="Plan productivo del bot activo">
     <div class="bot-production-plan-copy">
-        <div class="text-uppercase fw-semibold">Plan productivo piloto</div>
-        <h2>Una apuesta principal por partido y mercado</h2>
+        <div class="text-uppercase fw-semibold">Plan productivo controlado</div>
+        <h2>Máximo una apuesta principal por partido</h2>
         @if (isCornersMarket)
         {
-            <p>Pinnacle o Betano, cuota mínima 1.60. Prioridad córners local 1u; si no existe, córners visita 0.5u. El resto queda en monitoreo.</p>
+            <p>Para partidos futuros rige el gate actual. El gráfico reconstruye por separado CORNERS V1 con la regla que estaba vigente antes del cambio: una señal por partido, córners local a 1u o visita a 0.5u. Es una simulación histórica, no una apuesta confirmada.</p>
+        }
+        else if (Model.Market.Key == "goals")
+        {
+            <p>Para partidos futuros, sólo goles de equipo con gate vigente: Green usa 1u y una prueba controlada exacta puede usar 0.5u. El resultado anterior se conserva aparte como simulación histórica GOALS V1 a 1u; el cambio de hoy no reescala el pasado.</p>
         }
         else
         {
-            <p>Pinnacle o Betano, cuota mínima 1.60. Se prioriza la señal de @Model.Market.UnitLabel con mayor score y se registra 1u por partido.</p>
+            <p>Mercado en monitoreo: todavía no existe una muestra resuelta suficiente para recomendar apuestas productivas. El gráfico seguirá mostrando todos los picks a 1u, pero no inventará una cartera recomendada.</p>
         }
     </div>
     <div class="bot-production-plan-stats">
@@ -195,7 +203,7 @@
 
 <section class="metric-grid bot-picks-metric-grid mb-4" aria-label="Resumen estadístico de Bot Picks">
     <div class="metric-tile bot-metric-total">
-        <div class="metric-label">Picks simulados del bot</div>
+        <div id="BotPicksTotalLabel" class="metric-label">Señales de todos los bots</div>
         <div id="BotPicksTotal" class="metric-value">...</div>
     </div>
     <div class="metric-tile bot-metric-pending">
@@ -225,7 +233,12 @@
         <div id="BotPicksYieldHelp" class="metric-footnote">Resultado ÷ unidades apostadas</div>
     </div>
     <div class="metric-tile">
-        <div class="metric-label">Saldo siguiendo el plan recomendado</div>
+        <div class="metric-label">@(historicalPlanLabel is null ? "ROI del plan productivo" : $"ROI histórico · simulación {historicalPlanLabel}")</div>
+        <div id="BotPicksRecommendedYieldPct" class="metric-value">...</div>
+        <div id="BotPicksRecommendedYieldHelp" class="metric-footnote">@(historicalPlanLabel is null ? "Sólo apuestas canónicas del backend" : "Regla histórica congelada; no es el gate actual")</div>
+    </div>
+    <div class="metric-tile">
+        <div class="metric-label">@(historicalPlanLabel is null ? "Saldo siguiendo el plan recomendado" : $"Saldo de la simulación histórica {historicalPlanLabel}")</div>
         <div id="BotPicksRecommendedBankroll" class="metric-value">...</div>
         <div id="BotPicksRecommendedUnits" class="metric-footnote">Saldo inicial + resultado del plan</div>
     </div>
@@ -243,10 +256,11 @@
             <div class="text-muted small">Cada punto agrega un pick resuelto del período, ordenado por fecha. Los pendientes no cambian el saldo.</div>
         </div>
         <div class="bot-bankroll-chart-values" aria-label="Saldos finales del gráfico">
-            <span><i class="bot-chart-dot bot-chart-dot-recommended"></i>Plan recomendado <strong id="BotPicksChartRecommendedValue">...</strong></span>
+            <span><i class="bot-chart-dot bot-chart-dot-recommended"></i>@(historicalPlanLabel is null ? "Plan recomendado" : $"Histórico {historicalPlanLabel}") <strong id="BotPicksChartRecommendedValue">...</strong></span>
             <span><i class="bot-chart-dot bot-chart-dot-all"></i>Todos a 1u <strong id="BotPicksChartAllValue">...</strong></span>
         </div>
     </div>
+    <div id="BotPicksBankrollPlanEmpty" class="alert alert-warning d-none mb-3" role="note"></div>
     <div id="BotPicksBankrollChartEmpty" class="alert alert-light border d-none mb-0">Aún no hay picks resueltos para graficar en este período.</div>
     <div id="BotPicksBankrollChartWrap" class="bot-bankroll-chart-wrap">
         <svg id="BotPicksBankrollChart" viewBox="0 0 1000 320" role="img" aria-label="Gráfico de evolución del saldo"></svg>
@@ -268,22 +282,8 @@
             <span id="BotPicksBotAProfit">P/L ...</span>
             <span id="BotPicksBotAYield">Yield ...</span>
         </div>
+        <div id="BotPicksBotAPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotASample" class="bot-comparison-sample">Sin muestra</span>
-    </div>
-    <div class="bot-comparison-card bot-comparison-card-b" data-summary-bot="B" role="button" tabindex="0" aria-label="Ver estadísticas del Bot B">
-        <div class="d-flex justify-content-between align-items-start gap-2">
-            <div>
-                <div class="metric-label">Bot B Conservador</div>
-                <div id="BotPicksBotBTotal" class="bot-comparison-total">...</div>
-            </div>
-            <span class="bot-badge bot-badge-b">Bot B</span>
-        </div>
-        <div id="BotPicksBotBRecord" class="bot-comparison-record">...</div>
-        <div class="bot-comparison-footer">
-            <span id="BotPicksBotBProfit">P/L ...</span>
-            <span id="BotPicksBotBYield">Yield ...</span>
-        </div>
-        <span id="BotPicksBotBSample" class="bot-comparison-sample">Sin muestra</span>
     </div>
     <div class="bot-comparison-card bot-comparison-card-c" data-summary-bot="C" role="button" tabindex="0" aria-label="Ver estadísticas del Bot C">
         <div class="d-flex justify-content-between align-items-start gap-2">
@@ -298,6 +298,7 @@
             <span id="BotPicksBotCProfit">P/L ...</span>
             <span id="BotPicksBotCYield">Yield ...</span>
         </div>
+        <div id="BotPicksBotCPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotCSample" class="bot-comparison-sample">Sin muestra</span>
     </div>
     <div class="bot-comparison-card bot-comparison-card-d" data-summary-bot="D" role="button" tabindex="0" aria-label="Ver estadísticas del Bot D">
@@ -313,6 +314,7 @@
             <span id="BotPicksBotDProfit">P/L ...</span>
             <span id="BotPicksBotDYield">Yield ...</span>
         </div>
+        <div id="BotPicksBotDPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotDSample" class="bot-comparison-sample">Sin muestra</span>
     </div>
     <div class="bot-comparison-card bot-comparison-card-e" data-summary-bot="E" role="button" tabindex="0" aria-label="Ver estadísticas del Bot E">
@@ -328,6 +330,7 @@
             <span id="BotPicksBotEProfit">P/L ...</span>
             <span id="BotPicksBotEYield">Yield ...</span>
         </div>
+        <div id="BotPicksBotEPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotESample" class="bot-comparison-sample">Sin muestra</span>
     </div>
     <div class="bot-comparison-card bot-comparison-card-f" data-summary-bot="F" role="button" tabindex="0" aria-label="Ver estadísticas del Bot F">
@@ -337,24 +340,54 @@
         </div>
         <div id="BotPicksBotFRecord" class="bot-comparison-record">...</div>
         <div class="bot-comparison-footer"><span id="BotPicksBotFProfit">P/L ...</span><span id="BotPicksBotFYield">Yield ...</span></div>
+        <div id="BotPicksBotFPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotFSample" class="bot-comparison-sample">Sin muestra</span>
     </div>
-    <div class="bot-comparison-card bot-comparison-card-legacy" data-summary-bot="Legacy" role="button" tabindex="0" aria-label="Ver estadísticas de bots legacy">
+    <div id="BotPicksLegacyCard" class="bot-comparison-card bot-comparison-card-legacy d-none" data-summary-bot="Legacy" role="button" tabindex="0" aria-label="Ver estadísticas de bots personalizados">
         <div class="d-flex justify-content-between align-items-start gap-2">
             <div>
-                <div class="metric-label">Otros / Legacy</div>
+                <div class="metric-label">Bots personalizados</div>
                 <div id="BotPicksBotLegacyTotal" class="bot-comparison-total">...</div>
             </div>
-            <span class="bot-badge bot-badge-legacy">Legacy</span>
+            <span class="bot-badge bot-badge-legacy">Custom</span>
         </div>
         <div id="BotPicksBotLegacyRecord" class="bot-comparison-record">...</div>
         <div class="bot-comparison-footer">
             <span id="BotPicksBotLegacyProfit">P/L ...</span>
             <span id="BotPicksBotLegacyYield">Yield ...</span>
         </div>
+        <div id="BotPicksBotLegacyPlan" class="bot-comparison-plan">Plan ...</div>
         <span id="BotPicksBotLegacySample" class="bot-comparison-sample">Sin muestra</span>
     </div>
 </section>
+
+<details id="BotPicksServerMonitoring" class="surface-panel bot-picks-collapsible mb-4" open>
+    <summary>
+        <span>
+            <strong>Semáforo automático del servidor</strong>
+            <small>Guardia 7/30/90 días por versión, mercado, lado y casa; Green habilita 1u y una cohorte GOALS controlada puede habilitar 0.5u</small>
+        </span>
+        <span aria-hidden="true">Abrir</span>
+    </summary>
+    <div class="bot-picks-collapsible-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <p class="text-muted small mb-0">El yield y la calibración se calculan una vez por partido para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Un número económico verde sólo significa ROI positivo: Green exige 100 partidos independientes. En goles de equipo, una cohorte exacta con 30–99 partidos, ROI positivo, brecha <= 5 pp y Δ Brier <= 0 puede entrar sólo como prueba controlada de 0.5u.</p>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Ventana del semáforo">
+                <button type="button" class="btn btn-outline-secondary" data-scorecard-window="7">7 días</button>
+                <button type="button" class="btn btn-primary" data-scorecard-window="30">30 días</button>
+                <button type="button" class="btn btn-outline-secondary" data-scorecard-window="90">90 días</button>
+            </div>
+        </div>
+        <div id="BotPicksScorecardLoading" class="text-muted small">Calculando scorecards...</div>
+        <div id="BotPicksScorecardError" class="alert alert-warning d-none mb-0"></div>
+        <div id="BotPicksScorecardWrap" class="table-responsive d-none">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>Bot</th><th>Mercado</th><th class="text-end">Picks / partidos</th><th class="text-end">Yield</th><th class="text-end">Modelo / real</th><th class="text-end">Brecha</th><th class="text-end">Δ Brier</th><th>Semáforo</th><th>Acción</th></tr></thead>
+                <tbody id="BotPicksScorecardBody"></tbody>
+            </table>
+        </div>
+    </div>
+</details>
 
 <details class="surface-panel bot-picks-collapsible mb-4">
     <summary>
@@ -502,6 +535,16 @@
                 <option value="monitor">Monitoreo</option>
             </select>
         </div>
+        <div class="col-sm-6 col-xl-2">
+            <label class="form-label" for="IntelligenceFilter">Inteligencia</label>
+            <select id="IntelligenceFilter" class="form-select">
+                <option value="">Todos</option>
+                <option id="BotPicksIntelligenceAppliedOption" value="applied">Aplicada al pick</option>
+                <option value="neutral">Neutral / sin evidencia</option>
+                <option value="reference">Solo referencia histórica</option>
+                <option value="not-compatible">Sin enlace al partido</option>
+            </select>
+        </div>
     </div>
 </form>
 
@@ -520,12 +563,11 @@
             <select id="BotPicksTableBot" class="form-select form-select-sm">
                 <option value="">Todos los bots</option>
                 <option value="A">Bot A</option>
-                <option value="B">Bot B</option>
                 <option value="C">Bot C</option>
                 <option value="D">Bot D</option>
                 <option value="E">Bot E</option>
                 <option value="F">Bot F</option>
-                <option value="Legacy">Otros / Legacy</option>
+                <option id="BotPicksLegacyOption" value="Legacy" hidden>Bots personalizados</option>
             </select>
         </label>
         <div class="bot-picks-quick-views" role="group" aria-label="Filtrar recomendaciones por estado">
@@ -541,6 +583,21 @@
         </div>
         <span class="bot-picks-table-scope-note">El resumen superior no cambia con este filtro.</span>
     </div>
+
+    <section id="BotPicksPendingBreakdown" class="bot-picks-pending-breakdown mb-3 d-none" aria-labelledby="BotPicksPendingBreakdownTitle">
+        <div>
+            <strong id="BotPicksPendingBreakdownTitle">¿Por qué siguen pendientes?</strong>
+            <span>Selecciona una causa para revisar únicamente esos picks. Las liquidaciones globales siguen actuando sobre todos los bots y mercados.</span>
+        </div>
+        <div class="bot-picks-pending-reasons" role="group" aria-label="Filtrar pendientes por causa">
+            <button type="button" data-pending-reason="missing-match"><span>Sin partido enlazable</span><strong id="BotPicksPendingMissingMatch">0</strong></button>
+            <button type="button" data-pending-reason="not-final"><span>No finalizado</span><strong id="BotPicksPendingNotFinal">0</strong></button>
+            <button type="button" data-pending-reason="missing-stat"><span>Falta estadística</span><strong id="BotPicksPendingMissingStat">0</strong></button>
+            <button type="button" data-pending-reason="ambiguous"><span>Coincidencia ambigua</span><strong id="BotPicksPendingAmbiguous">0</strong></button>
+            <button type="button" data-pending-reason="other"><span>Otra causa</span><strong id="BotPicksPendingOther">0</strong></button>
+            <button type="button" class="is-reset" data-pending-reason="all"><span>Todos los pendientes</span><strong id="BotPicksPendingAll">0</strong></button>
+        </div>
+    </section>
 
     <div id="BotPicksLoading" class="py-5 text-center" role="status" aria-live="polite">
         <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
@@ -770,7 +827,7 @@
 </details>
 
 <div class="modal fade" id="BotPickDetailModal" tabindex="-1" aria-labelledby="BotPickDetailModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <div>
@@ -788,19 +845,44 @@
     </div>
 </div>
 
+<div class="modal fade" id="BotPickIntelligenceModal" tabindex="-1" aria-labelledby="BotPickIntelligenceModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title h5" id="BotPickIntelligenceModalLabel">Verificación de inteligencia prepartido</h2>
+                    <div id="BotPickIntelligenceSubtitle" class="text-muted small"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div id="BotPickIntelligenceBody" class="modal-body"></div>
+            <div class="modal-footer">
+                <span class="me-auto small text-muted">Los impactos se expresan en puntos porcentuales de probabilidad, no en cantidad directa de goles o córners.</span>
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @section Scripts {
     <script>
 		        (() => {
 		            const endpointUrl = '@Url.Action("Selections", "BotPicks")';
+                    const intelligenceEndpointUrl = '@Url.Action("Intelligence", "BotPicks")';
+                    const robustEvaluationEndpointUrl = '@Url.Action("RobustEvaluation", "BotPicks")';
                     const monthlyHistoryUrl = '@Url.Action("MonthlyHistory", "BotPicks", new { marketFamily })';
+                    const performanceScorecardsUrl = '@Url.Action("PerformanceScorecards", "BotPicks", new { marketFamily })';
 		            const statusEndpointUrl = '@Url.Action("Status", "BotPicks")';
 		            const resolveEndpointUrl = '@Url.Action("Resolve", "BotPicks")';
 		            const settlePendingEndpointUrl = '@Url.Action("SettlePending", "BotPicks")';
 		            const reconcileAvailableEndpointUrl = '@Url.Action("ReconcileAvailable", "BotPicks")';
 		            const deleteEndpointUrl = '@Url.Action("Delete", "BotPicks")';
 		            const canUpdateResults = @(canUpdateResults ? "true" : "false");
-		            const locale = '@language' === 'es' ? 'es-CL' : 'en-US';
+                    const locale = '@language' === 'es' ? 'es-CL' : 'en-US';
                     const marketFamily = '@marketFamily';
+                    const historicalReconstructionLabel = marketFamily === 'corners'
+                        ? 'CORNERS V1'
+                        : marketFamily === 'goals' ? 'GOALS V1' : '';
                     const marketUnitLabel = '@Model.Market.UnitLabel';
             const storagePrefix = `bot-picks-${marketFamily}`;
 	            const filtersForm = document.getElementById('BotPicksFilters');
@@ -825,8 +907,12 @@
             const leagueInput = document.getElementById('League');
             const searchInput = document.getElementById('SearchText');
             const strategyPlanSelect = document.getElementById('StrategyPlan');
+            const intelligenceFilterSelect = document.getElementById('IntelligenceFilter');
+            const intelligenceAppliedOption = document.getElementById('BotPicksIntelligenceAppliedOption');
             const tableBotSelect = document.getElementById('BotPicksTableBot');
             const tableViewButtons = Array.from(document.querySelectorAll('[data-table-view]'));
+            const pendingBreakdown = document.getElementById('BotPicksPendingBreakdown');
+            const pendingReasonButtons = Array.from(document.querySelectorAll('[data-pending-reason]'));
             const refreshButton = document.getElementById('RefreshBotPicksButton');
             const settleLocalButton = document.getElementById('SettleLocalBotPicksButton');
             const settlePendingButton = document.getElementById('SettlePendingBotPicksButton');
@@ -844,19 +930,32 @@
             const paginationButtons = document.getElementById('BotPicksPaginationButtons');
             const botTabButtons = Array.from(document.querySelectorAll('[data-bot-tab]'));
             const comparisonCards = Array.from(document.querySelectorAll('[data-summary-bot]'));
+            const legacyTab = document.getElementById('BotPicksLegacyTab');
+            const legacyCard = document.getElementById('BotPicksLegacyCard');
+            const legacyOption = document.getElementById('BotPicksLegacyOption');
             const detailModalElement = document.getElementById('BotPickDetailModal');
             const detailModal = bootstrap.Modal.getOrCreateInstance(detailModalElement);
             const detailSubtitle = document.getElementById('BotPickDetailSubtitle');
             const detailBody = document.getElementById('BotPickDetailBody');
             const sourceLink = document.getElementById('BotPickSourceLink');
+            const intelligenceModalElement = document.getElementById('BotPickIntelligenceModal');
+            const intelligenceModal = bootstrap.Modal.getOrCreateInstance(intelligenceModalElement);
+            const intelligenceSubtitle = document.getElementById('BotPickIntelligenceSubtitle');
+            const intelligenceBody = document.getElementById('BotPickIntelligenceBody');
             const monthlyHistoryLoading = document.getElementById('BotPicksMonthlyHistoryLoading');
             const monthlyHistoryEmpty = document.getElementById('BotPicksMonthlyHistoryEmpty');
             const monthlyHistoryWrap = document.getElementById('BotPicksMonthlyHistoryWrap');
             const monthlyHistoryBody = document.getElementById('BotPicksMonthlyHistoryBody');
+            const scorecardLoading = document.getElementById('BotPicksScorecardLoading');
+            const scorecardError = document.getElementById('BotPicksScorecardError');
+            const scorecardWrap = document.getElementById('BotPicksScorecardWrap');
+            const scorecardBody = document.getElementById('BotPicksScorecardBody');
+            const scorecardWindowButtons = Array.from(document.querySelectorAll('[data-scorecard-window]'));
             const summaryPeriod = document.getElementById('BotPicksSummaryPeriod');
             const bankrollChart = document.getElementById('BotPicksBankrollChart');
             const bankrollChartWrap = document.getElementById('BotPicksBankrollChartWrap');
             const bankrollChartEmpty = document.getElementById('BotPicksBankrollChartEmpty');
+            const bankrollPlanEmpty = document.getElementById('BotPicksBankrollPlanEmpty');
             const chartRecommendedValue = document.getElementById('BotPicksChartRecommendedValue');
             const chartAllValue = document.getElementById('BotPicksChartAllValue');
             const leaguePerformanceSearch = document.getElementById('BotPicksDsLeagueSearch');
@@ -874,26 +973,38 @@
             const selectionsById = new Map();
             const productionPlansById = new Map();
             const summaryProductionPlansById = new Map();
+            const robustEvaluationsById = new Map();
 
             let selections = [];
             let filteredSelections = [];
             let tableSelections = [];
             let monthlyHistoryItems = [];
+            let performanceScorecards = [];
+            let activeDetailRequest = 0;
+            let performanceWindow = 30;
             const pageSize = 20;
             let currentPage = 1;
 	            let sortField = 'matchDate';
 	            let sortDirection = 'asc';
-            let activeBotTab = localStorage.getItem(`${storagePrefix}-active-tab`) ?? 'C';
+            let activeBotTab = localStorage.getItem(`${storagePrefix}-active-tab`) ?? '';
+            const summaryScopeVersionKey = `${storagePrefix}-summary-scope-version`;
+            if (localStorage.getItem(summaryScopeVersionKey) !== 'global-v2') {
+                activeBotTab = '';
+                localStorage.setItem(`${storagePrefix}-active-tab`, activeBotTab);
+                localStorage.setItem(summaryScopeVersionKey, 'global-v2');
+            }
             let tableBotKey = localStorage.getItem(`${storagePrefix}-table-bot`) ?? '';
             let tableView = localStorage.getItem(`${storagePrefix}-table-view`) ?? 'all';
+            let pendingReasonFilter = 'all';
             let leaguePerformanceItems = [];
+	        let lastSettledSelectionId = null;
 		            let requestController;
 
-            if (!['', 'A', 'B', 'C', 'D', 'E', 'F', 'Legacy'].includes(activeBotTab)) {
-                activeBotTab = 'C';
+            if (!['', 'A', 'C', 'D', 'E', 'F', 'Legacy'].includes(activeBotTab)) {
+                activeBotTab = '';
             }
 
-            if (!['', 'A', 'B', 'C', 'D', 'E', 'F', 'Legacy'].includes(tableBotKey)) {
+            if (!['', 'A', 'C', 'D', 'E', 'F', 'Legacy'].includes(tableBotKey)) {
                 tableBotKey = '';
             }
 
@@ -918,7 +1029,13 @@
                 flatBetStakeInput.value = String(savedFlatBetStake);
             }
 
-            const getValue = (item, name) => item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+            const getValue = (item, name) => {
+                if (item === null || item === undefined) {
+                    return null;
+                }
+
+                return item[name.charAt(0).toLowerCase() + name.slice(1)] ?? item[name];
+            };
             const number = value => {
                 const parsed = Number(value);
                 return Number.isFinite(parsed) ? parsed : null;
@@ -944,6 +1061,51 @@
             };
 
             const getDecisionReason = item => parseDecisionReason(getValue(item, 'DecisionReason'));
+
+            const getFootballIntelligenceState = item => {
+                const fixtureId = getValue(item, 'ApiFootballFixtureId');
+                if (!fixtureId) {
+                    return {
+                        key: 'not-compatible',
+                        applied: false,
+                        adjustment: 0,
+                        label: 'Inteligencia · sin enlace',
+                        title: 'Este pick no tiene FixtureId de API-Football para enlazar evidencia del partido.'
+                    };
+                }
+
+                const intelligence = getDecisionReason(item)?.featureSnapshot?.footballIntelligence;
+                if (!intelligence?.enabled) {
+                    return {
+                        key: 'reference',
+                        applied: false,
+                        adjustment: 0,
+                        label: 'Inteligencia · referencia',
+                        title: 'Este pick no incorporó inteligencia prepartido en su decisión.'
+                    };
+                }
+
+                const result = intelligence.result ?? {};
+                const adjustment = number(result.probabilityAdjustment) ?? 0;
+                if (result.isApplied === true) {
+                    const adjustmentPp = adjustment * 100;
+                    return {
+                        key: 'applied',
+                        applied: true,
+                        adjustment,
+                        label: `Inteligencia ${adjustmentPp >= 0 ? '+' : ''}${adjustmentPp.toFixed(2)} pp`,
+                        title: 'Esta evidencia sí modificó la probabilidad, el edge y el EV antes de aprobar o rechazar el pick.'
+                    };
+                }
+
+                return {
+                    key: 'neutral',
+                    applied: false,
+                    adjustment: 0,
+                    label: 'Inteligencia · neutral',
+                    title: 'La capa estaba habilitada, pero no encontró evidencia utilizable o el impacto calculado fue cero.'
+                };
+            };
 
             const getBotInfo = item => {
                 const version = String(getValue(item, 'AutomationVersion') ?? '').trim();
@@ -983,7 +1145,7 @@
                     };
                 }
 
-                return { key: 'Legacy', statsKey: 'Legacy', label: 'Legacy', description: version || 'Sin version', badgeClass: 'bot-badge-legacy' };
+                return { key: 'A', statsKey: 'A', label: 'Bot A', description: 'Histórico original', badgeClass: 'bot-badge-a' };
             };
 
             const hasNeutralAdjustment = item => getDecisionReason(item)?.isNeutralAdjusted === true;
@@ -1197,135 +1359,21 @@
                 };
                 return aliases[normalizePlanKey(league)] || league;
             };
-            const productionMatchKey = item => [
-                String(getValue(item, 'MatchDate') ?? '').slice(0, 16),
-                normalizePlanKey(getHomeTeam(item)),
-                normalizePlanKey(getAwayTeam(item))
-            ].join('|');
-            const productionSignalKey = item => [
-                productionMatchKey(item),
-                getValue(item, 'MarketType'),
-                getValue(item, 'SelectedSide'),
-                formatQueryNumber(getValue(item, 'LineValue'), 2)
-            ].join('|');
-
-            const monitoringReason = item => {
-                const source = String(getValue(item, 'Source') ?? '');
-                const normalizedSource = source.trim().toLowerCase();
-                const marketType = String(getValue(item, 'MarketType') ?? '');
-                const odds = number(getValue(item, 'Odds'));
-
-                if (canonicalLeagueLabel(item) === 'Brazil - Serie B') {
-                    return 'Brasil Serie B bloqueada por inestabilidad';
-                }
-
-                if (!['pinnacle', 'betano'].includes(normalizedSource)) {
-                    return `${source || 'Casa desconocida'} queda en monitoreo`;
-                }
-
-                if (marketFamily !== 'corners') {
-                    if (odds === null || odds < 1.6) {
-                        return 'Cuota menor a 1.60';
-                    }
-
-                    return null;
-                }
-
-                if (marketType === 'TotalCorners') {
-                    return 'Corners totales queda en monitoreo';
-                }
-
-                if (!['HomeTeamCorners', 'AwayTeamCorners'].includes(marketType)) {
-                    return 'Mercado fuera del plan productivo';
-                }
-
-                if (odds === null || odds < 1.6) {
-                    return 'Cuota menor a 1.60';
-                }
-
-                return null;
-            };
-
             const buildProductionPlans = (items, planMap = productionPlansById) => {
                 planMap.clear();
-                const eligibleByMatch = new Map();
-
                 items.forEach(item => {
                     const id = String(getValue(item, 'AutomatedCornerBetSelectionId'));
-                    const reason = monitoringReason(item);
+                    const serverPlan = getValue(item, 'ProductionPlan');
+                    const stakeUnits = number(getValue(serverPlan, 'StakeUnits')) ?? 0;
                     planMap.set(id, {
-                        key: 'monitor',
-                        stakeUnits: 0,
-                        label: 'Monitoreo',
-                        reason: reason ?? 'Otra señal fue priorizada para este partido',
-                        rowClass: 'bot-production-monitor'
-                    });
-
-                    if (reason !== null) {
-                        return;
-                    }
-
-                    const key = productionMatchKey(item);
-                    if (!eligibleByMatch.has(key)) {
-                        eligibleByMatch.set(key, []);
-                    }
-                    eligibleByMatch.get(key).push(item);
-                });
-
-                const botPriority = item => {
-                    const botKey = getBotInfo(item).key;
-                    return botKey === 'A' ? 4 : botKey === 'C' ? 3 : botKey === 'B' ? 2 : 1;
-                };
-                const marketPriority = item =>
-                    getValue(item, 'MarketType') === 'HomeTeamCorners' ? 2 : 1;
-
-                eligibleByMatch.forEach(candidates => {
-                    candidates.sort((left, right) =>
-                        marketPriority(right) - marketPriority(left) ||
-                        (number(getValue(right, 'SelectionScore')) ?? 0) -
-                            (number(getValue(left, 'SelectionScore')) ?? 0) ||
-                        (number(getValue(right, 'Odds')) ?? 0) -
-                            (number(getValue(left, 'Odds')) ?? 0) ||
-                        botPriority(right) - botPriority(left));
-
-                    const selected = candidates[0];
-                    const selectedId = String(getValue(selected, 'AutomatedCornerBetSelectionId'));
-                    const isHomeMarket = getValue(selected, 'MarketType') === 'HomeTeamCorners';
-                    const primaryStakeUnits = marketFamily === 'corners' ? (isHomeMarket ? 1 : 0.5) : 1;
-                    const selectedSource = String(getValue(selected, 'Source') ?? '').trim() || 'Casa';
-                    const selectedSignalKey = productionSignalKey(selected);
-                    const consensusBots = [...new Set(
-                        candidates
-                            .filter(item => productionSignalKey(item) === selectedSignalKey)
-                            .map(item => getBotInfo(item).key)
-                            .filter(key => key !== 'Legacy'))]
-                        .sort();
-                    const consensusText = consensusBots.length > 1
-                        ? ` Consenso ${consensusBots.join('+')}.`
-                        : '';
-
-                    planMap.set(selectedId, {
-                        key: primaryStakeUnits === 1 ? 'stake-1' : 'stake-half',
-                        stakeUnits: primaryStakeUnits,
-                        label: primaryStakeUnits === 1 ? 'Apostar 1u' : 'Apostar 0.5u',
-                        reason: `${selectedSource} ${marketLabel(getValue(selected, 'MarketType')).toLowerCase()}.${consensusText}`,
-                        rowClass: primaryStakeUnits === 1
-                            ? 'bot-production-primary'
-                            : 'bot-production-secondary'
-                    });
-
-                    candidates.slice(1).forEach(item => {
-                        const id = String(getValue(item, 'AutomatedCornerBetSelectionId'));
-                        const isDuplicate = productionSignalKey(item) === selectedSignalKey;
-                        planMap.set(id, {
-                            key: 'monitor',
-                            stakeUnits: 0,
-                            label: 'Monitoreo',
-                            reason: isDuplicate
-                                ? `Duplicado de la señal seleccionada (${getBotInfo(selected).label})`
-                                : `Otra señal fue priorizada: ${marketLabel(getValue(selected, 'MarketType'))}`,
-                            rowClass: 'bot-production-monitor'
-                        });
+                        key: getValue(serverPlan, 'Key') || 'monitor',
+                        stakeUnits,
+                        label: getValue(serverPlan, 'Label') || 'Monitoreo',
+                        reason: getValue(serverPlan, 'Reason') || 'El backend no habilitó esta señal para producción',
+                        rowClass: getValue(serverPlan, 'RowClass') || 'bot-production-monitor',
+                        isProductive: getValue(serverPlan, 'IsProductive') === true && stakeUnits > 0,
+                        policyVersion: getValue(serverPlan, 'PolicyVersion') || '',
+                        isHistoricalReconstruction: getValue(serverPlan, 'IsHistoricalReconstruction') === true
                     });
                 });
             };
@@ -1336,7 +1384,9 @@
                     stakeUnits: 0,
                     label: 'Monitoreo',
                     reason: 'Sin clasificación productiva',
-                    rowClass: 'bot-production-monitor'
+                    rowClass: 'bot-production-monitor',
+                    policyVersion: '',
+                    isHistoricalReconstruction: false
                 };
 
             const getSummaryProductionPlan = item =>
@@ -1345,7 +1395,9 @@
                     stakeUnits: 0,
                     label: 'Monitoreo',
                     reason: 'Sin clasificación productiva para el bot activo',
-                    rowClass: 'bot-production-monitor'
+                    rowClass: 'bot-production-monitor',
+                    policyVersion: '',
+                    isHistoricalReconstruction: false
                 };
 
             const updateProductionPlanSummary = items => {
@@ -1906,12 +1958,11 @@
 
             const botTabLabel = botKey => {
                 if (botKey === 'A') return 'Bot A Actual';
-                if (botKey === 'B') return 'Bot B Conservador';
                 if (botKey === 'C') return 'Bot C · Modelos 2026';
                 if (botKey === 'D') return 'Bot D · Brecha de nivel';
                 if (botKey === 'E') return 'Bot E · Calibración empírica';
                 if (botKey === 'F') return 'Bot F · Legacy ML calibrado';
-                if (botKey === 'Legacy') return 'Otros / Legacy';
+                if (botKey === 'Legacy') return 'Bots personalizados';
                 return 'Todos los bots';
             };
 
@@ -1955,15 +2006,14 @@
                     return { title: 'Bot A · estrategia actual', text: 'Sirve como línea base histórica. Sus estadísticas se mantienen separadas para no mezclar resultados con los modelos experimentales.' };
                 }
 
-                if (botKey === 'B') {
-                    return { title: 'Bot B · variante conservadora', text: 'Aplica criterios más restrictivos. Compáralo con A usando muestra resuelta, retorno y yield, no solo porcentaje de acierto.' };
-                }
-
                 if (botKey === 'Legacy') {
-                    return { title: 'Bots personalizados o históricos', text: 'Agrupa versiones que no corresponden a A–E. Úsalo para auditoría; no mezcles su rendimiento con un experimento activo.' };
+                    return { title: 'Bots personalizados', text: 'Agrupa únicamente perfiles creados desde el mantenedor que no corresponden a A, C, D, E o F.' };
                 }
 
-                return { title: 'Comparación general', text: 'Las tarjetas comparan bots, pero el resumen financiero necesita un bot activo para evitar mezclar estrategias experimentales.' };
+                return {
+                    title: `Plan global · ${marketFamily === 'corners' ? 'córners' : marketFamily === 'goals' ? 'goles' : marketFamily.toUpperCase()}`,
+                    text: 'Consolida las señales de todos los bots activos, pero sólo contabiliza la apuesta canónica elegida por el backend para cada partido. Los duplicados y alternativas permanecen en monitoreo.'
+                };
             };
 
             const matchesSearch = item => {
@@ -1998,19 +2048,42 @@
                 return plan.key === selectedPlan;
             };
 
+            const matchesIntelligence = item => {
+                const selectedState = intelligenceFilterSelect.value;
+                return !selectedState || getFootballIntelligenceState(item).key === selectedState;
+            };
+
             const getSearchFilteredSelections = () =>
-                selections.filter(item => matchesSearch(item) && matchesStrategyPlan(item));
+                selections.filter(item =>
+                    matchesSearch(item)
+                    && matchesStrategyPlan(item)
+                    && matchesIntelligence(item));
 
             const updateBotTabs = baseItems => {
                 const countByBot = botKey => baseItems.filter(item => getBotInfo(item).key === botKey).length;
+                const legacyCount = countByBot('Legacy');
+                legacyTab?.classList.toggle('d-none', legacyCount === 0);
+                legacyCard?.classList.toggle('d-none', legacyCount === 0);
+                if (legacyOption) {
+                    legacyOption.hidden = legacyCount === 0;
+                    legacyOption.disabled = legacyCount === 0;
+                }
+                if (legacyCount === 0 && activeBotTab === 'Legacy') {
+                    activeBotTab = 'A';
+                    localStorage.setItem(`${storagePrefix}-active-tab`, activeBotTab);
+                }
+                if (legacyCount === 0 && tableBotKey === 'Legacy') {
+                    tableBotKey = '';
+                    tableBotSelect.value = '';
+                    localStorage.setItem(`${storagePrefix}-table-bot`, tableBotKey);
+                }
                 document.getElementById('BotPicksTabAllCount').textContent = `${baseItems.length}`;
                 document.getElementById('BotPicksTabACount').textContent = `${countByBot('A')}`;
-                document.getElementById('BotPicksTabBCount').textContent = `${countByBot('B')}`;
                 document.getElementById('BotPicksTabCCount').textContent = `${countByBot('C')}`;
                 document.getElementById('BotPicksTabDCount').textContent = `${countByBot('D')}`;
                 document.getElementById('BotPicksTabECount').textContent = `${countByBot('E')}`;
                 document.getElementById('BotPicksTabFCount').textContent = `${countByBot('F')}`;
-                document.getElementById('BotPicksTabLegacyCount').textContent = `${countByBot('Legacy')}`;
+                document.getElementById('BotPicksTabLegacyCount').textContent = `${legacyCount}`;
 
                 botTabButtons.forEach(button => {
                     const isActive = button.dataset.botTab === activeBotTab;
@@ -2024,12 +2097,11 @@
 
                 tableTitle.textContent = 'Recomendaciones de todos los bots';
 
-                const hasActiveSummaryBot = activeBotTab !== '';
-                productionPlanSection.classList.toggle('d-none', !hasActiveSummaryBot);
-                perBotSummarySection.classList.toggle('d-none', !hasActiveSummaryBot);
-                selectBotSummaryNotice.classList.toggle('d-none', hasActiveSummaryBot);
+                productionPlanSection.classList.remove('d-none');
+                perBotSummarySection.classList.remove('d-none');
+                selectBotSummaryNotice.classList.add('d-none');
 
-                if (hasActiveSummaryBot) {
+                if (activeBotTab !== '') {
                     const activeLabel = botTabLabel(activeBotTab);
                     const activeItems = baseItems.filter(item => getBotInfo(item).key === activeBotTab);
                     const activePerformance = performanceOf(activeItems);
@@ -2037,18 +2109,26 @@
                     const context = botContextCopy(activeBotTab);
                     summaryTitle.textContent = `Resumen del período · ${activeLabel}`;
                     summaryScope.textContent =
-                        `Solo incluye ${activeLabel}; respeta las fechas y los demás filtros aplicados.`;
+                        `Aísla ${activeLabel} dentro del plan canónico de ${marketFamily}; no vuelve a elegir otro pick para reemplazar al ganador global.`;
                     bankrollChartTitle.textContent = `Evolución del saldo · ${activeLabel}`;
+                    document.getElementById('BotPicksTotalLabel').textContent = 'Picks simulados del bot';
                     botContextTitle.textContent = context.title;
                     botContextText.textContent = context.text;
                     botContextSample.textContent = `${sample.label} · ${activePerformance.count} resueltas`;
                     botContextSample.className = `bot-ds-sample-badge ${sample.className}`;
                 } else {
                     const context = botContextCopy('');
+                    const globalPerformance = performanceOf(baseItems);
+                    const sample = sampleLabel(globalPerformance.count);
+                    summaryTitle.textContent = `Plan global del período · ${botTabLabel('')}`;
+                    summaryScope.textContent =
+                        `Consolida A, C, D, E y F para ${marketFamily}; el saldo recomendado usa como máximo una apuesta productiva por partido.`;
+                    bankrollChartTitle.textContent = `Evolución del saldo · plan global de ${marketFamily}`;
+                    document.getElementById('BotPicksTotalLabel').textContent = 'Señales de todos los bots';
                     botContextTitle.textContent = context.title;
                     botContextText.textContent = context.text;
-                    botContextSample.textContent = 'Selecciona un bot';
-                    botContextSample.className = 'bot-ds-sample-badge';
+                    botContextSample.textContent = `${sample.label} · ${globalPerformance.count} resueltas`;
+                    botContextSample.className = `bot-ds-sample-badge ${sample.className}`;
                 }
 
                 if (settlePendingButton && !settlePendingButton.disabled) {
@@ -2093,6 +2173,20 @@
                     return Number.isNaN(parsed.getTime()) ? value : dateOnlyFormatter.format(parsed);
                 };
                 summaryPeriod.textContent = `${inputDateLabel(dateFromInput.value)} – ${inputDateLabel(dateToInput.value)}`;
+                const recommendedSettledCount = settledItems.filter(item =>
+                    getSummaryProductionPlan(item).stakeUnits > 0).length;
+                const independentFixtureCount = new Set(settledItems.map(item => {
+                    const fixtureId = getValue(item, 'ApiFootballFixtureId');
+                    if (fixtureId) {
+                        return `fixture:${fixtureId}`;
+                    }
+
+                    return [
+                        String(getValue(item, 'MatchDate') ?? '').slice(0, 16),
+                        normalizePlanKey(getHomeTeam(item)),
+                        normalizePlanKey(getAwayTeam(item))
+                    ].join('|');
+                })).size;
 
                 let allBalance = initialBankroll;
                 let recommendedBalance = initialBankroll;
@@ -2111,6 +2205,12 @@
                 chartAllValue.textContent = `${formatDecimal(allBalance)}u`;
                 bankrollChartEmpty.classList.toggle('d-none', settledItems.length > 0);
                 bankrollChartWrap.classList.toggle('d-none', settledItems.length === 0);
+                bankrollPlanEmpty.classList.toggle(
+                    'd-none',
+                    settledItems.length === 0 || recommendedSettledCount > 0);
+                bankrollPlanEmpty.textContent = marketFamily === 'shots' || marketFamily === 'sog'
+                    ? `La línea recomendada permanece en el saldo inicial: hay ${settledItems.length} picks resueltos, pero sólo ${independentFixtureCount} partidos independientes. Todavía no existe muestra suficiente para habilitar una cartera productiva.`
+                    : `No existen señales de ${historicalReconstructionLabel || 'la política productiva'} dentro de este alcance. Revisa el período o los filtros aplicados.`;
 
                 if (settledItems.length === 0) {
                     bankrollChart.innerHTML = '';
@@ -2185,6 +2285,16 @@
 		                    const profitLoss = settledBotItems
                                 .reduce((sum, item) => sum + simulatedProfitLoss(item, 1), 0);
 		                    const settledStake = settledBotItems.length;
+                            const productiveBotItems = botItems.filter(item =>
+                                getProductionPlan(item).stakeUnits > 0);
+                            const productiveSettledItems = productiveBotItems.filter(item =>
+                                ['won', 'lost', 'push'].includes(String(getValue(item, 'Status')).toLowerCase()));
+                            const productiveStake = productiveSettledItems.reduce(
+                                (sum, item) => sum + getProductionPlan(item).stakeUnits,
+                                0);
+                            const productiveProfitLoss = productiveSettledItems.reduce(
+                                (sum, item) => sum + simulatedProfitLoss(item, getProductionPlan(item).stakeUnits),
+                                0);
 
 		                    return {
 		                        total: botItems.length,
@@ -2192,7 +2302,14 @@
 		                        lost,
 		                        pending,
 		                        profitLoss,
-		                        yieldPct: settledStake > 0 ? (profitLoss / settledStake) * 100 : null
+		                        yieldPct: settledStake > 0 ? (profitLoss / settledStake) * 100 : null,
+                                productiveTotal: productiveBotItems.length,
+                                productiveSettled: productiveSettledItems.length,
+                                productiveStake,
+                                productiveProfitLoss,
+                                productiveYieldPct: productiveStake > 0
+                                    ? (productiveProfitLoss / productiveStake) * 100
+                                    : null
 		                    };
 		                };
 
@@ -2218,10 +2335,15 @@
                             0);
                     const recommendedStake = recommendedSettledItems
                         .reduce((sum, item) => sum + getSummaryProductionPlan(item).stakeUnits, 0);
+                    const recommendedYieldPct = recommendedStake > 0
+                        ? (recommendedProfitLoss / recommendedStake) * 100
+                        : null;
                     const recommendedOneUnitCount = recommendedSettledItems
                         .filter(item => getSummaryProductionPlan(item).stakeUnits === 1).length;
                     const recommendedHalfUnitCount = recommendedSettledItems
                         .filter(item => getSummaryProductionPlan(item).stakeUnits === 0.5).length;
+                    const includesHistoricalReconstruction = recommendedSettledItems
+                        .some(item => getSummaryProductionPlan(item).isHistoricalReconstruction);
 
 	                document.getElementById('BotPicksTotal').textContent = total.toString();
 	                document.getElementById('BotPicksPending').textContent = pending.toString();
@@ -2246,6 +2368,17 @@
 	                    ? 'Sin picks resueltos para calcularlo'
 	                    : `${formatDecimal(profitLoss)}u ÷ ${formatCompact(settledStake)}u apostadas`;
 
+                    const recommendedYieldElement = document.getElementById('BotPicksRecommendedYieldPct');
+                    recommendedYieldElement.textContent = recommendedYieldPct === null
+                        ? '-'
+                        : `${compactDecimalFormatter.format(recommendedYieldPct)}%`;
+                    recommendedYieldElement.className = `metric-value ${signedClass(recommendedYieldPct)}`;
+                    document.getElementById('BotPicksRecommendedYieldHelp').textContent = recommendedStake === 0
+                        ? 'Sin apuestas productivas resueltas en este alcance'
+                        : includesHistoricalReconstruction
+                            ? `${formatDecimal(recommendedProfitLoss)}u ÷ ${formatCompact(recommendedStake)}u · ${recommendedSettledItems.length} señales de la simulación histórica ${historicalReconstructionLabel}; no usa el gate actual`
+                            : `${formatDecimal(recommendedProfitLoss)}u ÷ ${formatCompact(recommendedStake)}u del plan · ${recommendedSettledItems.length} apuestas`;
+
                     const signedEquation = value => value >= 0
                         ? `+ ${formatDecimal(value)}u`
                         : `− ${formatDecimal(Math.abs(value))}u`;
@@ -2267,7 +2400,6 @@
                     renderBankrollChart(items);
 
 			                const botA = summarizeBot('A');
-			                const botB = summarizeBot('B');
 			                const botC = summarizeBot('C');
 			                const botD = summarizeBot('D');
 			                const botE = summarizeBot('E');
@@ -2285,6 +2417,12 @@
 		                    yieldElement.textContent = `Yield ${summary.yieldPct === null ? '-' : `${compactDecimalFormatter.format(summary.yieldPct)}%`}`;
 		                    yieldElement.className = signedClass(summary.yieldPct);
 
+                            const planElement = document.getElementById(`${prefix}Plan`);
+                            planElement.textContent = summary.productiveSettled === 0
+                                ? `Plan global: ${summary.productiveTotal} seleccionadas · sin resultados`
+                                : `Plan global: ${summary.productiveTotal} seleccionadas · ${formatCompact(summary.productiveStake)}u resueltas · P/L ${formatDecimal(summary.productiveProfitLoss)}u · ROI ${compactDecimalFormatter.format(summary.productiveYieldPct)}%`;
+                            planElement.className = `bot-comparison-plan ${signedClass(summary.productiveProfitLoss)}`;
+
                             const resolvedCount = summary.won + summary.lost;
                             const sample = sampleLabel(resolvedCount);
                             const sampleElement = document.getElementById(`${prefix}Sample`);
@@ -2293,7 +2431,6 @@
 		                };
 
 			                renderBotSummary('BotPicksBotA', botA);
-			                renderBotSummary('BotPicksBotB', botB);
 			                renderBotSummary('BotPicksBotC', botC);
 			                renderBotSummary('BotPicksBotD', botD);
 			                renderBotSummary('BotPicksBotE', botE);
@@ -2310,7 +2447,45 @@
                 return number(getValue(item, sortField.charAt(0).toUpperCase() + sortField.slice(1))) ?? Number.NEGATIVE_INFINITY;
             };
 
+            const pendingReason = item => {
+                const text = normalizePlanKey(
+                    getValue(item, 'LastSettlementCheckReason') ??
+                    getValue(item, 'SettlementReason') ??
+                    '');
+                if (text.includes('ambigu')) return 'ambiguous';
+                if (text.includes('no esta finalizado') || text.includes('no finalizado') ||
+                    text.includes('fixturestatus') || text.includes('not final')) return 'not-final';
+                if (text.includes('falta la estadistica') || text.includes('sin la estadistica') ||
+                    text.includes('missing statistic') || text.includes('null no equivale')) return 'missing-stat';
+                if (text.includes('no existe') || text.includes('enlazable') ||
+                    text.includes('sin partido seguro') || text.includes('unmatched') ||
+                    text.includes('no local result')) return 'missing-match';
+                return 'other';
+            };
+
+            const renderPendingBreakdown = tableBotItems => {
+                const pending = tableBotItems.filter(item =>
+                    String(getValue(item, 'Status') ?? '').toLowerCase() === 'pending');
+                const counts = { 'missing-match': 0, 'not-final': 0, 'missing-stat': 0, ambiguous: 0, other: 0 };
+                pending.forEach(item => counts[pendingReason(item)] += 1);
+                document.getElementById('BotPicksPendingMissingMatch').textContent = counts['missing-match'];
+                document.getElementById('BotPicksPendingNotFinal').textContent = counts['not-final'];
+                document.getElementById('BotPicksPendingMissingStat').textContent = counts['missing-stat'];
+                document.getElementById('BotPicksPendingAmbiguous').textContent = counts.ambiguous;
+                document.getElementById('BotPicksPendingOther').textContent = counts.other;
+                document.getElementById('BotPicksPendingAll').textContent = pending.length;
+                pendingBreakdown.classList.toggle('d-none', pending.length === 0);
+                pendingReasonButtons.forEach(button => {
+                    const active = button.dataset.pendingReason === pendingReasonFilter;
+                    button.classList.toggle('is-active', active);
+                    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                });
+            };
+
             const applyLocalFilters = () => {
+                const intelligenceAppliedCount = selections.filter(item =>
+                    getFootballIntelligenceState(item).applied).length;
+                intelligenceAppliedOption.textContent = `Aplicada al pick (${intelligenceAppliedCount})`;
                 const baseItems = getSearchFilteredSelections();
                 updateBotTabs(baseItems);
                 filteredSelections = activeBotTab
@@ -2334,6 +2509,7 @@
                 document.getElementById('BotPicksQuickAllCount').textContent = tableBotItems.length.toString();
                 document.getElementById('BotPicksQuickPendingCount').textContent = pendingCount.toString();
                 document.getElementById('BotPicksQuickResolvedCount').textContent = resolvedCount.toString();
+                renderPendingBreakdown(tableBotItems);
 
                 tableViewButtons.forEach(button => {
                     const isActive = button.dataset.tableView === tableView;
@@ -2343,13 +2519,20 @@
 
                 tableSelections = tableBotItems.filter(item => {
                     const status = String(getValue(item, 'Status') ?? '').toLowerCase();
-                    if (tableView === 'pending') return status === 'pending';
+                    if (tableView === 'pending') {
+                        return status === 'pending' &&
+                            (pendingReasonFilter === 'all' || pendingReason(item) === pendingReasonFilter);
+                    }
                     if (tableView === 'resolved') return settledStatus(item);
                     return true;
                 });
                 tableTitle.textContent = tableBotKey
                     ? `Recomendaciones · ${botTabLabel(tableBotKey)}`
                     : 'Recomendaciones de todos los bots';
+                if (tableView === 'pending' && pendingReasonFilter !== 'all') {
+                    const activeReason = pendingReasonButtons.find(button => button.dataset.pendingReason === pendingReasonFilter);
+                    tableTitle.textContent += ` · ${activeReason?.querySelector('span')?.textContent ?? 'Pendientes'}`;
+                }
                 tableSelections.sort((left, right) => {
                     const leftValue = sortValue(left);
                     const rightValue = sortValue(right);
@@ -2377,6 +2560,14 @@
 	                    const settlementNote = getValue(item, 'LastSettlementCheckReason') ?? getValue(item, 'SettlementReason');
 	                    const profitLoss = getValue(item, 'ProfitLoss');
 	                    const botInfo = getBotInfo(item);
+	                    const decisionReason = getDecisionReason(item);
+	                    const intelligenceState = getFootballIntelligenceState(item);
+	                    const intelligenceButtonClass = intelligenceState.applied
+	                        ? 'btn-success'
+	                        : intelligenceState.key === 'not-compatible'
+	                            ? 'btn-outline-secondary'
+	                            : 'btn-outline-info';
+	                    const intelligenceAction = `<button class="btn btn-sm ${intelligenceButtonClass}" type="button" data-intelligence-id="${escapeHtml(id)}" title="${escapeHtml(intelligenceState.title)}">${escapeHtml(intelligenceState.label)}</button>`;
 	                    const neutralBadge = hasNeutralAdjustment(item)
 	                        ? '<span class="badge text-bg-info bot-neutral-badge">Neutral</span>'
 	                        : '';
@@ -2391,15 +2582,21 @@
 		                    const isPending = String(status).toLowerCase() === 'pending';
 		                    const isVoid = String(status).toLowerCase() === 'void';
                             const actualResult = actualResultValue(item);
+                            const actualResultLabel = marketLabel(marketType);
                             const isUpcoming = new Date(getValue(item, 'MatchDate')).getTime() > Date.now();
-                            const productionPlanLabel = productionPlan.stakeUnits > 0 && (!isPending || !isUpcoming)
-                                ? `Plan historico ${formatCompact(productionPlan.stakeUnits)}u`
+                            const productionPlanLabel = productionPlan.isHistoricalReconstruction
+                                ? productionPlan.label
+                                : productionPlan.stakeUnits > 0 && (!isPending || !isUpcoming)
+                                ? `Plan histórico ${formatCompact(productionPlan.stakeUnits)}u`
                                 : productionPlan.label;
 
 	                    const resultActions = canUpdateResults
 	                        ? `
 	                                <div class="bot-picks-settlement-control">
-	                                    <input class="form-control form-control-sm" type="number" min="0" step="1" inputmode="numeric" data-actual-result="${escapeHtml(id)}" value="${actualResult === null ? '' : escapeHtml(actualResult)}" aria-label="Resultado real en ${escapeHtml(marketUnitLabel)}" placeholder="Real" />
+	                                    <label class="bot-picks-settlement-field">
+                                            <span>${escapeHtml(actualResultLabel)}</span>
+	                                        <input class="form-control form-control-sm" type="number" min="0" step="1" inputmode="numeric" data-actual-result="${escapeHtml(id)}" value="${actualResult === null ? '' : escapeHtml(actualResult)}" aria-label="Resultado real: ${escapeHtml(actualResultLabel)}" placeholder="Ej. 0" />
+                                        </label>
 	                                    <button class="btn btn-sm btn-primary" type="button" data-resolve-selection="${escapeHtml(id)}">Liquidar</button>
 	                                </div>
 	                            `
@@ -2419,7 +2616,7 @@
 
                         const bettingAction = productionPlan.stakeUnits > 0 && isPending && isUpcoming
                             ? `<a class="btn btn-sm bot-production-bet-button" href="${escapeHtml(buildBettingCreateUrl(item, 'Flat', productionPlan.stakeUnits))}">${escapeHtml(productionPlan.label)}</a>`
-                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.stakeUnits > 0 ? 'Plan historico' : 'Solo monitoreo'}</span>`;
+                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.isHistoricalReconstruction ? 'Simulación histórica' : productionPlan.stakeUnits > 0 ? 'Plan histórico' : 'Sólo monitoreo'}</span>`;
 
                         const shortNote = settlementNote && String(settlementNote).length > 105
                             ? `${String(settlementNote).slice(0, 102)}...`
@@ -2429,7 +2626,7 @@
                             : productionPlan.reason;
 
 		                    return `
-		                        <tr class="${statusRowClass(status)}" data-selection-row="${escapeHtml(id)}">
+		                        <tr class="${statusRowClass(status)} ${String(id) === lastSettledSelectionId ? 'bot-pick-just-settled' : ''}" data-selection-row="${escapeHtml(id)}">
 	                            <td class="bot-pick-context-cell">
                                     <div class="text-nowrap fw-semibold">${escapeHtml(formatDate(getValue(item, 'MatchDate')))}</div>
                                     <div class="small mt-1">${escapeHtml(getLeague(item))}</div>
@@ -2478,6 +2675,7 @@
 		                        <td class="text-end">
 	                                <div class="d-inline-flex flex-wrap justify-content-end gap-1">
                                         ${bettingAction}
+		                                ${intelligenceAction}
 		                                <button class="btn btn-sm btn-outline-primary" type="button" data-detail-id="${escapeHtml(id)}">Detalle</button>
                                         ${secondaryActions}
                                     </div>
@@ -2553,12 +2751,14 @@
 			        renderRows();
 	            };
 
-                const showSettlementResult = (message, tone = 'success') => {
+                const showSettlementResult = (message, tone = 'success', shouldScroll = true) => {
                     settlementResultState.textContent = message;
                     settlementResultState.classList.remove(
                         'd-none', 'alert-success', 'alert-warning', 'alert-info', 'alert-danger');
                     settlementResultState.classList.add(`alert-${tone}`);
-                    settlementResultState.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    if (shouldScroll) {
+                        settlementResultState.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
                 };
 
                 const settleLocalSelections = async () => {
@@ -2614,10 +2814,19 @@
 
 	            const replaceSelection = updatedSelection => {
 	                const updatedId = String(getValue(updatedSelection, 'AutomatedCornerBetSelectionId'));
-	                selections = selections.map(item =>
-	                    String(getValue(item, 'AutomatedCornerBetSelectionId')) === updatedId
-	                        ? updatedSelection
-	                        : item);
+	                selections = selections.map(item => {
+	                    if (String(getValue(item, 'AutomatedCornerBetSelectionId')) !== updatedId) {
+	                        return item;
+	                    }
+
+	                    // Resolve/Status responses come directly from the automation API and
+	                    // do not run the Web production planner. Preserve that UI enrichment
+	                    // until the next full refresh instead of replacing it with null.
+	                    const previousPlan = getValue(item, 'ProductionPlan');
+	                    return getValue(updatedSelection, 'ProductionPlan') === null && previousPlan !== null
+	                        ? { ...updatedSelection, productionPlan: previousPlan }
+	                        : updatedSelection;
+	                });
 	            };
 
 	            const setRowControlsDisabled = (id, isDisabled) => {
@@ -2750,15 +2959,29 @@
 
 	                const row = tableBody.querySelector(`[data-selection-row="${String(id)}"]`);
 	                const input = row?.querySelector(`input[data-actual-result="${String(id)}"]`);
+	                const selection = selectionsById.get(String(id));
+	                const resultLabel = marketLabel(getValue(selection ?? {}, 'MarketType'));
 	                const actualValue = Number(input?.value);
 	                if (!input || input.value.trim() === '' || !Number.isInteger(actualValue) || actualValue < 0) {
-	                    setError(`Ingresa una cantidad real válida de ${marketUnitLabel}: un entero igual o mayor que cero.`);
-	                    input?.focus();
+	                    const validationMessage = `Ingresa ${resultLabel.toLowerCase()} como un solo entero igual o mayor que cero (por ejemplo, 0 o 3).`;
+	                    setError(validationMessage);
+	                    showSettlementResult(validationMessage, 'warning');
+	                    if (input) {
+	                        input.setCustomValidity(validationMessage);
+	                        input.reportValidity();
+	                        input.focus();
+	                    }
 	                    return;
 	                }
 
+	                input.setCustomValidity('');
+
 	                setError('');
 	                setRowControlsDisabled(id, true);
+	                const resolveButton = row?.querySelector(`button[data-resolve-selection="${String(id)}"]`);
+	                if (resolveButton) {
+	                    resolveButton.textContent = 'Liquidando…';
+	                }
 
 	                try {
 	                    const response = await fetch(`${resolveEndpointUrl}?id=${encodeURIComponent(id)}`, {
@@ -2773,12 +2996,44 @@
 	                    }
 
 	                    const updatedSelection = await response.json();
+	                    const previousScrollTop = window.scrollY;
+	                    lastSettledSelectionId = String(id);
+	                    if (tableView === 'pending') {
+	                        tableView = 'all';
+	                        pendingReasonFilter = 'all';
+	                        localStorage.setItem(`${storagePrefix}-table-view`, tableView);
+	                    }
 	                    replaceSelection(updatedSelection);
 	                    render();
-                        loadMonthlyHistory();
+	                    window.scrollTo(0, previousScrollTop);
+
+                        const updatedStatus = getValue(updatedSelection, 'Status') ?? 'resuelto';
+                        const updatedProfitLoss = number(getValue(updatedSelection, 'ProfitLoss'));
+                        const profitText = updatedProfitLoss === null
+                            ? ''
+                            : ` · P/L ${formatDecimal(updatedProfitLoss)}u`;
+                        showSettlementResult(
+                            `Pick #${id} liquidado manualmente: ${resultLabel} = ${actualValue}. ` +
+                            `Estado: ${updatedStatus}${profitText}.`,
+                            updatedStatus === 'Lost' ? 'warning' : 'success',
+                            false);
+
+	                    window.setTimeout(() => {
+	                        tableBody.querySelector(`[data-selection-row="${String(id)}"]`)
+	                            ?.classList.remove('bot-pick-just-settled');
+	                        if (lastSettledSelectionId === String(id)) {
+	                            lastSettledSelectionId = null;
+	                        }
+	                    }, 4500);
+
+                        // El resultado ya esta aplicado en pantalla. El historial se refresca aparte
+                        // para no ocultar la confirmacion mientras carga el resumen mensual.
+                        void loadMonthlyHistory();
 	                } catch (error) {
 	                    render();
 	                    setError(error.message);
+	                } finally {
+	                    setRowControlsDisabled(id, false);
 	                }
 	            };
 
@@ -2843,7 +3098,9 @@
                         throw new Error(error.error ?? 'Bot picks could not be loaded.');
                     }
 
-                    selections = await response.json();
+                    robustEvaluationsById.clear();
+                    selections = (await response.json())
+                        .filter(item => getBotInfo(item).key !== 'B');
                     const browserQuery = new URLSearchParams(buildQuery().replace(/^\?/, ''));
                     browserQuery.delete('marketFamily');
                     browserQuery.set('market', marketFamily);
@@ -2936,7 +3193,8 @@
                         throw new Error('No se pudo cargar el historial mensual.');
                     }
 
-                    monthlyHistoryItems = await response.json();
+                    monthlyHistoryItems = (await response.json())
+                        .filter(month => String(getValue(month, 'BotKey') ?? '').toUpperCase() !== 'B');
                     renderMonthlyHistory();
                 } catch (error) {
                     monthlyHistoryItems = [];
@@ -2947,6 +3205,78 @@
                     monthlyHistoryEmpty.classList.remove('d-none');
                 } finally {
                     monthlyHistoryLoading.classList.add('d-none');
+                }
+            };
+
+            const renderPerformanceScorecards = () => {
+                const rows = performanceScorecards
+                    .filter(row => Number(getValue(row, 'WindowDays')) === performanceWindow
+                        && getValue(row, 'Dimension') === 'BotMarketSideBookmakerVersion')
+                    .sort((left, right) => {
+                        const order = { Red: 0, Amber: 1, Gray: 2, Green: 3 };
+                        return (order[getValue(left, 'TrafficLight')] ?? 4) - (order[getValue(right, 'TrafficLight')] ?? 4)
+                            || Number(getValue(right, 'PredictiveFixtures') ?? 0) - Number(getValue(left, 'PredictiveFixtures') ?? 0);
+                    });
+                scorecardWindowButtons.forEach(button => {
+                    const active = Number(button.dataset.scorecardWindow) === performanceWindow;
+                    button.classList.toggle('btn-primary', active);
+                    button.classList.toggle('btn-outline-secondary', !active);
+                });
+                scorecardBody.innerHTML = rows.length === 0
+                    ? '<tr><td colspan="9" class="text-center text-muted py-3">Sin muestra para esta ventana.</td></tr>'
+                    : rows.map(row => {
+                        const light = String(getValue(row, 'TrafficLight') ?? 'Gray');
+                        const lightClass = light === 'Red' ? 'text-bg-danger'
+                            : light === 'Amber' ? 'text-bg-warning'
+                                : light === 'Green' ? 'text-bg-success' : 'text-bg-secondary';
+                        const model = number(getValue(row, 'AverageModelProbability'));
+                        const observed = number(getValue(row, 'ObservedWinRate'));
+                        const gap = number(getValue(row, 'CalibrationGap'));
+                        const deltaBrier = number(getValue(row, 'DeltaBrier'));
+                        const yieldValue = number(getValue(row, 'Yield'));
+                        const fixtures = Number(getValue(row, 'PredictiveFixtures') ?? 0);
+                        const marketType = String(getValue(row, 'MarketType') ?? '');
+                        const controlledTrial = Number(getValue(row, 'WindowDays')) === 30
+                            && (marketType === 'HomeTeamGoals' || marketType === 'AwayTeamGoals')
+                            && fixtures >= 30
+                            && fixtures < 100
+                            && yieldValue !== null && yieldValue > 0
+                            && gap !== null && Math.abs(gap) <= 0.05
+                            && deltaBrier !== null && deltaBrier <= 0
+                            && getValue(row, 'ProductionBlocked') !== true;
+                        const action = controlledTrial
+                            ? 'Prueba controlada · 0.5u'
+                            : getValue(row, 'Recommendation') ?? '';
+                        return `<tr>
+                            <td class="fw-semibold">${escapeHtml(getValue(row, 'BotKey') ?? '-')}</td>
+                            <td title="${escapeHtml(getValue(row, 'AutomationVersion') ?? '')}">${escapeHtml(marketLabel(getValue(row, 'MarketType') ?? ''))} · ${escapeHtml(getValue(row, 'SelectedSide') ?? '-')} · ${escapeHtml(getValue(row, 'Bookmaker') ?? '-')}</td>
+                            <td class="text-end">${escapeHtml(getValue(row, 'PredictiveResolved') ?? 0)} / ${escapeHtml(getValue(row, 'PredictiveFixtures') ?? 0)}</td>
+                            <td class="text-end ${signedClass(yieldValue)}">${yieldValue === null ? '-' : escapeHtml(formatPercent(yieldValue))}</td>
+                            <td class="text-end">${model === null || observed === null ? '-' : `${escapeHtml(formatPercent(model))} / ${escapeHtml(formatPercent(observed))}`}</td>
+                            <td class="text-end ${signedClass(gap === null ? null : -gap)}">${gap === null ? '-' : escapeHtml(formatPercent(gap))}</td>
+                            <td class="text-end ${signedClass(deltaBrier === null ? null : -deltaBrier)}">${deltaBrier === null ? '-' : escapeHtml(formatCompact(deltaBrier))}</td>
+                            <td><span class="badge ${lightClass}">${escapeHtml(light)}</span></td>
+                            <td class="small">${escapeHtml(action)}</td>
+                        </tr>`;
+                    }).join('');
+                scorecardWrap.classList.remove('d-none');
+            };
+
+            const loadPerformanceScorecards = async () => {
+                scorecardLoading.classList.remove('d-none');
+                scorecardError.classList.add('d-none');
+                try {
+                    const response = await fetch(performanceScorecardsUrl);
+                    if (!response.ok) throw new Error('No se pudo cargar el semáforo del servidor.');
+                    performanceScorecards = await response.json();
+                    renderPerformanceScorecards();
+                } catch (error) {
+                    performanceScorecards = [];
+                    scorecardWrap.classList.add('d-none');
+                    scorecardError.textContent = error instanceof Error ? error.message : 'No se pudo cargar el semáforo.';
+                    scorecardError.classList.remove('d-none');
+                } finally {
+                    scorecardLoading.classList.add('d-none');
                 }
             };
 
@@ -3008,15 +3338,861 @@
                 return escapeHtml(String(value));
             };
 
+            const intelligenceValue = (value, camelName, pascalName) =>
+                value?.[camelName] ?? value?.[pascalName];
+
+            const availabilityLabels = {
+                0: 'Sin confirmar', 1: 'Disponible', 2: 'Probable disponible', 3: 'Duda',
+                4: 'Probable baja', 5: 'Baja confirmada', 6: 'Suspendido', 7: 'Descanso',
+                8: 'No convocado', 9: 'Titular', 10: 'Suplente'
+            };
+            const eventLabels = {
+                0: 'Lesión', 1: 'Enfermedad', 2: 'Suspensión', 3: 'Duda', 4: 'Regreso',
+                5: 'Volvió a entrenar', 6: 'Descanso', 7: 'Rotación', 8: 'Exclusión táctica',
+                9: 'No convocado', 10: 'Convocado', 11: 'Problema de viaje', 12: 'Fatiga',
+                13: 'Cambio de entrenador', 14: 'Cambio táctico', 15: 'Cambio de formación',
+                16: 'Probable titular', 17: 'Probable suplente', 18: 'Titular oficial',
+                19: 'Suplente oficial', 20: 'Cambio a balón parado', 21: 'Problema interno',
+                22: 'Moral positiva', 23: 'Moral negativa', 24: 'Sin clasificar'
+            };
+
+            const intelligenceEnumLabel = (value, labels, fallback = 'Sin dato') => {
+                if (value === null || value === undefined || value === '') {
+                    return fallback;
+                }
+                return labels[value] ?? String(value);
+            };
+
+            const safeExternalUrl = value => {
+                try {
+                    const url = new URL(String(value ?? ''));
+                    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+                } catch {
+                    return null;
+                }
+            };
+
+            const renderIntelligenceDecision = (decisionReason, fixtureId, evidenceContainerId = null) => {
+                const intelligence = decisionReason?.featureSnapshot?.footballIntelligence;
+                if (!intelligence?.enabled) {
+                    return '';
+                }
+
+                const result = intelligence.result ?? {};
+                const applied = result.isApplied === true;
+                const adjustment = number(result.probabilityAdjustment) ?? 0;
+                const adjustmentPp = adjustment * 100;
+                const statusClass = applied ? 'is-applied' : 'is-neutral';
+                const statusLabel = applied ? 'Aplicada al pick' : 'Neutral: no influyó';
+                const containerId = evidenceContainerId ?? `BotPickIntelligenceEvidence-${fixtureId}`;
+
+                return `
+                    <section class="bot-intelligence-panel ${statusClass}">
+                        <div class="bot-intelligence-heading">
+                            <div>
+                                <div class="small text-muted text-uppercase fw-bold">Inteligencia prepartido</div>
+                                <h3 class="h6 mb-0">${escapeHtml(statusLabel)}</h3>
+                            </div>
+                            <span class="bot-intelligence-impact ${adjustment >= 0 ? 'is-positive' : 'is-negative'}">
+                                ${escapeHtml(`${adjustmentPp >= 0 ? '+' : ''}${adjustmentPp.toFixed(2)} pp`)}
+                            </span>
+                        </div>
+                        <div class="bot-intelligence-metrics">
+                            <div><span>Probabilidad antes</span><strong>${escapeHtml(`${((number(result.probabilityBefore) ?? 0) * 100).toFixed(1)}%`)}</strong></div>
+                            <div><span>Probabilidad final</span><strong>${escapeHtml(`${((number(result.probabilityAfter) ?? 0) * 100).toFixed(1)}%`)}</strong></div>
+                            <div><span>Snapshot local</span><strong>${escapeHtml(result.homeSnapshotId ?? '-')}</strong></div>
+                            <div><span>Snapshot visita</span><strong>${escapeHtml(result.awaySnapshotId ?? '-')}</strong></div>
+                        </div>
+                        <div id="${escapeHtml(containerId)}" class="bot-intelligence-evidence" data-fixture-id="${escapeHtml(fixtureId)}">
+                            <div class="text-muted small">Cargando bajas, noticias y fuentes guardadas…</div>
+                        </div>
+                    </section>`;
+            };
+
+            const renderIntelligenceEvidence = payload => {
+                const facts = (payload?.facts ?? payload?.Facts ?? [])
+                    .filter(fact => intelligenceValue(fact, 'isCurrent', 'IsCurrent') !== false)
+                    .sort((left, right) =>
+                        (number(intelligenceValue(right, 'effectiveConfidence', 'EffectiveConfidence')) ?? 0) -
+                        (number(intelligenceValue(left, 'effectiveConfidence', 'EffectiveConfidence')) ?? 0));
+                const documents = payload?.documents ?? payload?.Documents ?? [];
+                const documentsById = new Map(documents.map(document => [
+                    String(intelligenceValue(document, 'id', 'Id')),
+                    document
+                ]));
+
+                if (!facts.length) {
+                    return '<div class="bot-intelligence-empty">No hay una baja/noticia accionable guardada. El ajuste debe permanecer en 0.</div>';
+                }
+
+                const groups = new Map();
+                facts.forEach(fact => {
+                    const team = intelligenceValue(fact, 'teamNameExtracted', 'TeamNameExtracted') || 'Equipo sin identificar';
+                    if (!groups.has(team)) {
+                        groups.set(team, []);
+                    }
+                    groups.get(team).push(fact);
+                });
+
+                const teamsHtml = [...groups.entries()].map(([team, teamFacts]) => `
+                    <div class="bot-intelligence-team">
+                        <div class="bot-intelligence-team-title">${escapeHtml(team)} <span>${teamFacts.length}</span></div>
+                        ${teamFacts.map(fact => {
+                            const document = documentsById.get(String(intelligenceValue(fact, 'newsDocumentId', 'NewsDocumentId')));
+                            const url = safeExternalUrl(intelligenceValue(document, 'url', 'Url'));
+                            const confidence = number(intelligenceValue(fact, 'effectiveConfidence', 'EffectiveConfidence'));
+                            const player = intelligenceValue(fact, 'playerNameExtracted', 'PlayerNameExtracted') || 'Equipo';
+                            const reason = intelligenceValue(fact, 'reason', 'Reason');
+                            const evidence = intelligenceValue(fact, 'evidenceSnippet', 'EvidenceSnippet');
+                            const structuredReason = `${reason ?? ''} ${evidence ?? ''}`;
+                            const isCardSuspension = /(yellow card|red card|tarjeta amarilla|tarjeta roja|cart[aã]o amarelo|cart[aã]o vermelho)/i.test(structuredReason);
+                            const availability = isCardSuspension
+                                ? 'Suspendido'
+                                : intelligenceEnumLabel(
+                                    intelligenceValue(fact, 'availabilityStatus', 'AvailabilityStatus'),
+                                    availabilityLabels);
+                            const event = isCardSuspension
+                                ? 'Suspensión por tarjetas'
+                                : intelligenceEnumLabel(
+                                    intelligenceValue(fact, 'eventType', 'EventType'),
+                                    eventLabels);
+                            return `
+                                <article class="bot-intelligence-fact">
+                                    <div class="bot-intelligence-fact-head">
+                                        <strong>${escapeHtml(player)}</strong>
+                                        <span>${escapeHtml(availability)}</span>
+                                    </div>
+                                    <div class="small">${escapeHtml(event)}${reason ? ` · ${escapeHtml(reason)}` : ''}</div>
+                                    ${evidence ? `<div class="bot-intelligence-quote">${escapeHtml(evidence)}</div>` : ''}
+                                    <div class="bot-intelligence-source">
+                                        Confianza ${escapeHtml(confidence === null ? '-' : `${(confidence * 100).toFixed(0)}%`)}
+                                        ${document ? ` · ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(intelligenceValue(document, 'sourceDomain', 'SourceDomain') || 'Fuente')}</a>` : escapeHtml(intelligenceValue(document, 'sourceDomain', 'SourceDomain') || 'Fuente')}` : ''}
+                                    </div>
+                                </article>`;
+                        }).join('')}
+                    </div>`).join('');
+
+                return `<div class="bot-intelligence-teams">${teamsHtml}</div><div class="small text-muted mt-2">${facts.length} hechos vigentes · ${documents.length} fuentes/documentos guardados</div>`;
+            };
+
+            const snapshotValue = (snapshot, name) =>
+                number(intelligenceValue(snapshot, name.charAt(0).toLowerCase() + name.slice(1), name)) ?? 0;
+
+            const evidenceIsAvailable = value =>
+                Number(value) === 5 || String(value ?? '').toLowerCase() === 'available';
+
+            const marketFamilyFromType = marketType => {
+                const normalized = String(marketType ?? '').toUpperCase();
+                if (normalized.includes('CORNER')) return 'CORNERS';
+                if (normalized.includes('SHOTSONGOAL')) return 'SOG';
+                if (normalized.includes('SHOT')) return 'SHOTS';
+                return 'GOALS';
+            };
+
+            const marketScopeFromType = marketType => {
+                const normalized = String(marketType ?? '').toUpperCase();
+                if (normalized.includes('HOME')) return 'HOME';
+                if (normalized.includes('AWAY')) return 'AWAY';
+                return 'TOTAL';
+            };
+
+            const teamMarketSignal = (snapshot, family, config) => {
+                if (!snapshot) return { offensive: 0, defensiveVulnerability: 0 };
+                const confidence = Math.min(1, Math.max(0, snapshotValue(snapshot, 'OverallNewsConfidence')));
+                const attack = snapshotValue(snapshot, 'AttackAvailabilityImpact');
+                const defence = snapshotValue(snapshot, 'DefenceAvailabilityImpact') + snapshotValue(snapshot, 'GoalkeeperAvailabilityImpact');
+                const width = snapshotValue(snapshot, 'WidthAvailabilityImpact') + snapshotValue(snapshot, 'CornerCreationImpact');
+                const setPiece = snapshotValue(snapshot, 'SetPieceAvailabilityImpact');
+                const attackWeight = number(config?.attackWeight) ?? 0.35;
+                const defenceWeight = number(config?.defenceWeight) ?? 0.25;
+                const widthWeight = number(config?.widthWeight) ?? 0.20;
+                const setPieceWeight = number(config?.setPieceWeight) ?? 0.20;
+                let ownAttackPenalty;
+                if (family === 'CORNERS') {
+                    ownAttackPenalty = attackWeight * attack + widthWeight * width + setPieceWeight * setPiece;
+                } else if (family === 'SOG') {
+                    ownAttackPenalty = attackWeight * (attack + snapshotValue(snapshot, 'FinishingAvailabilityImpact'))
+                        + setPieceWeight * snapshotValue(snapshot, 'MissingSotShare');
+                } else if (family === 'SHOTS') {
+                    ownAttackPenalty = attackWeight * (attack + snapshotValue(snapshot, 'ShotGenerationImpact'))
+                        + setPieceWeight * snapshotValue(snapshot, 'MissingShotShare');
+                } else {
+                    ownAttackPenalty = attackWeight * (attack + snapshotValue(snapshot, 'GoalScoringAvailabilityImpact'))
+                        + setPieceWeight * snapshotValue(snapshot, 'MissingGoalShare');
+                }
+                return {
+                    offensive: confidence * Math.min(0, Math.max(-1, -ownAttackPenalty)),
+                    defensiveVulnerability: confidence * Math.min(1, Math.max(0, defenceWeight * defence))
+                };
+            };
+
+            const calculateMarketProbabilityImpact = (family, scope, homeSnapshot, awaySnapshot, intelligenceResult, config) => {
+                const home = evidenceIsAvailable(intelligenceResult?.homeEvidenceStatus)
+                    ? teamMarketSignal(homeSnapshot, family, config)
+                    : { offensive: 0, defensiveVulnerability: 0 };
+                const away = evidenceIsAvailable(intelligenceResult?.awayEvidenceStatus)
+                    ? teamMarketSignal(awaySnapshot, family, config)
+                    : { offensive: 0, defensiveVulnerability: 0 };
+                const overSignal = scope === 'HOME'
+                    ? home.offensive + away.defensiveVulnerability
+                    : scope === 'AWAY'
+                        ? away.offensive + home.defensiveVulnerability
+                        : (home.offensive + away.offensive + home.defensiveVulnerability + away.defensiveVulnerability) / 2;
+                const weight = number(config?.weight) ?? 0.35;
+                const maximum = number(config?.maximumProbabilityAdjustment) ?? 0.04;
+                return Math.min(maximum, Math.max(-maximum, overSignal * weight));
+            };
+
+            const renderIntelligenceMarketImpacts = (payload, decisionReason, item) => {
+                const intelligence = decisionReason?.featureSnapshot?.footballIntelligence ?? {};
+                const result = intelligence.result ?? {};
+                const config = decisionReason?.featureSnapshot?.configuration?.footballIntelligence ?? {};
+                const snapshots = payload?.snapshots ?? payload?.Snapshots ?? [];
+                const homeSnapshot = snapshots.find(snapshot =>
+                    String(intelligenceValue(snapshot, 'id', 'Id')) === String(result.homeSnapshotId));
+                const awaySnapshot = snapshots.find(snapshot =>
+                    String(intelligenceValue(snapshot, 'id', 'Id')) === String(result.awaySnapshotId));
+                const marketType = getValue(item, 'MarketType');
+                const activeFamily = marketFamilyFromType(marketType);
+                const scope = marketScopeFromType(marketType);
+                const scopeLabel = scope === 'HOME' ? 'equipo local' : scope === 'AWAY' ? 'equipo visitante' : 'total del partido';
+                const marketDefinitions = [
+                    ['GOALS', 'Goles'],
+                    ['CORNERS', 'Córners'],
+                    ['SHOTS', 'Tiros'],
+                    ['SOG', 'Tiros al arco']
+                ];
+                const cards = marketDefinitions.map(([family, label]) => {
+                    const impact = calculateMarketProbabilityImpact(
+                        family, scope, homeSnapshot, awaySnapshot, result, config);
+                    const impactPp = impact * 100;
+                    const direction = impact > 0.00005
+                        ? 'Más · favorece Over'
+                        : impact < -0.00005
+                            ? 'Menos · favorece Under'
+                            : 'Neutral';
+                    const tone = impact > 0.00005 ? 'is-more' : impact < -0.00005 ? 'is-less' : 'is-neutral';
+                    return `
+                        <div class="bot-intelligence-market ${tone} ${family === activeFamily ? 'is-current' : ''}">
+                            <div class="bot-intelligence-market-head">
+                                <strong>${escapeHtml(label)}</strong>
+                                ${family === activeFamily ? '<span>Mercado del pick</span>' : ''}
+                            </div>
+                            <div class="bot-intelligence-market-value">${escapeHtml(`${impactPp >= 0 ? '+' : ''}${impactPp.toFixed(2)} pp`)}</div>
+                            <div class="small">${escapeHtml(direction)}</div>
+                        </div>`;
+                }).join('');
+
+                const snapshotSummary = (snapshot, label) => {
+                    if (!snapshot) {
+                        return `<div class="bot-intelligence-empty">${escapeHtml(label)}: el snapshot usado ya no está disponible.</div>`;
+                    }
+
+                    let detail = {};
+                    try {
+                        detail = JSON.parse(intelligenceValue(snapshot, 'detailJson', 'DetailJson') || '{}');
+                    } catch {
+                        detail = {};
+                    }
+                    const missingPlayers = Array.isArray(detail?.missingPlayers) ? detail.missingPlayers : [];
+                    const missingPlayersHtml = missingPlayers.length
+                        ? `<div class="bot-intelligence-snapshot-players">
+                            <strong>Bajas exactas usadas por el cálculo</strong>
+                            ${missingPlayers.map(player => `
+                                <span>${escapeHtml(player.playerName || 'Jugador')} · ${escapeHtml(player.position || 'posición sin dato')} · impacto ${escapeHtml(`${((number(player.impact) ?? 0) * 100).toFixed(2)}%`)}</span>`).join('')}
+                          </div>`
+                        : '<div class="small text-muted mt-2">El snapshot no registró una baja con impacto cuantificable.</div>';
+
+                    return `
+                        <div class="bot-intelligence-snapshot-card">
+                            <div class="bot-intelligence-market-head"><strong>${escapeHtml(label)}</strong><span>Snapshot ${escapeHtml(intelligenceValue(snapshot, 'id', 'Id'))}</span></div>
+                            <div class="bot-intelligence-snapshot-grid">
+                                <span>Bajas accionables <strong>${escapeHtml(snapshotValue(snapshot, 'ActionableFactCount'))}</strong></span>
+                                <span>Confianza <strong>${escapeHtml(`${(snapshotValue(snapshot, 'OverallNewsConfidence') * 100).toFixed(0)}%`)}</strong></span>
+                                <span>Impacto ataque <strong>${escapeHtml(`${(snapshotValue(snapshot, 'AttackAvailabilityImpact') * 100).toFixed(2)}%`)}</strong></span>
+                                <span>Impacto defensa <strong>${escapeHtml(`${((snapshotValue(snapshot, 'DefenceAvailabilityImpact') + snapshotValue(snapshot, 'GoalkeeperAvailabilityImpact')) * 100).toFixed(2)}%`)}</strong></span>
+                            </div>
+                            ${missingPlayersHtml}
+                        </div>`;
+                };
+
+                return `
+                    <div class="bot-intelligence-explanation">
+                        <strong>Cómo leerlo:</strong> se recalculó la probabilidad de Over para ${escapeHtml(scopeLabel)}.
+                        Un valor negativo significa menos eventos esperados; uno positivo significa más. No modifica directamente la predicción en unidades.
+                    </div>
+                    <div class="bot-intelligence-market-grid">${cards}</div>
+                    <div class="bot-intelligence-snapshot-grid-wrap">
+                        ${snapshotSummary(homeSnapshot, getHomeTeam(item))}
+                        ${snapshotSummary(awaySnapshot, getAwayTeam(item))}
+                    </div>`;
+            };
+
+            const fetchIntelligenceEvidence = async (fixtureId, cutoffUtc = null) => {
+                const query = new URLSearchParams({ fixtureId: String(fixtureId) });
+                if (cutoffUtc) query.set('cutoffUtc', cutoffUtc);
+                const response = await fetch(`${intelligenceEndpointUrl}?${query.toString()}`);
+                if (!response.ok) throw new Error('No se pudo consultar la evidencia guardada.');
+                return await response.json();
+            };
+
+            const loadIntelligenceEvidence = async (fixtureId, cutoffUtc = null, containerId = null) => {
+                const container = document.getElementById(containerId ?? `BotPickIntelligenceEvidence-${fixtureId}`);
+                if (!container) {
+                    return;
+                }
+                try {
+                    const payload = await fetchIntelligenceEvidence(fixtureId, cutoffUtc);
+                    if (document.getElementById(container.id) === container) {
+                        container.innerHTML = renderIntelligenceEvidence(payload);
+                    }
+                } catch (error) {
+                    if (document.getElementById(container.id) === container) {
+                        container.innerHTML = `<div class="bot-intelligence-empty">${escapeHtml(error instanceof Error ? error.message : 'No se pudo cargar la evidencia.')}</div>`;
+                    }
+                }
+            };
+
+            const openIntelligence = async id => {
+                const item = selectionsById.get(String(id));
+                if (!item) return;
+                const decisionReason = getDecisionReason(item);
+                const intelligence = decisionReason?.featureSnapshot?.footballIntelligence;
+                const fixtureId = getValue(item, 'ApiFootballFixtureId');
+                const botInfo = getBotInfo(item);
+
+                intelligenceSubtitle.textContent = `${getHomeTeam(item)} vs ${getAwayTeam(item)} · ${botInfo.label} · ${marketLabel(getValue(item, 'MarketType'))}`;
+                if (!intelligence?.enabled) {
+                    intelligenceBody.innerHTML = `
+                        <div class="bot-intelligence-audit-summary is-neutral">
+                            <div><span>Resultado</span><strong>No registrada</strong></div>
+                            <div><span>Ajuste aplicado</span><strong>0,00 pp</strong></div>
+                            <div><span>Versión del pick</span><strong>${escapeHtml(getValue(item, 'AutomationVersion') ?? '-')}</strong></div>
+                            <div><span>Fixture API-Football</span><strong>${escapeHtml(fixtureId ?? 'Sin enlace')}</strong></div>
+                        </div>
+                        <div class="alert alert-info mt-3 mb-0">
+                            Este pick fue generado antes de que la inteligencia prepartido quedara incorporada a Bot ${escapeHtml(botInfo.key)}.
+                            Por lo tanto, ninguna baja o noticia modificó su probabilidad, edge, EV o decisión.
+                        </div>
+                        ${fixtureId ? '<div class="bot-intelligence-loading">Buscando información disponible para el partido como referencia; no fue usada por este pick…</div>' : '<div class="bot-intelligence-empty mt-3">No existe FixtureId para consultar información adicional.</div>'}`;
+                    intelligenceModal.show();
+
+                    if (fixtureId) {
+                        try {
+                            const payload = await fetchIntelligenceEvidence(fixtureId, null);
+                            intelligenceBody.insertAdjacentHTML(
+                                'beforeend',
+                                `<div class="bot-intelligence-reference">
+                                    <h3 class="h6">Información disponible ahora · solo referencia</h3>
+                                    <p class="small text-muted">Estos datos no participaron en la decisión histórica del pick.</p>
+                                    ${renderIntelligenceEvidence(payload)}
+                                </div>`);
+                            intelligenceBody.querySelector('.bot-intelligence-loading')?.remove();
+                        } catch (error) {
+                            intelligenceBody.querySelector('.bot-intelligence-loading')?.remove();
+                            intelligenceBody.insertAdjacentHTML(
+                                'beforeend',
+                                `<div class="bot-intelligence-empty mt-3">${escapeHtml(error instanceof Error ? error.message : 'No se pudo cargar la referencia.')}</div>`);
+                        }
+                    }
+                    return;
+                }
+
+                if (!fixtureId) {
+                    intelligenceBody.innerHTML = `
+                        <div class="bot-intelligence-audit-summary is-neutral">
+                            <div><span>Resultado</span><strong>Sin enlace al partido</strong></div>
+                            <div><span>Ajuste aplicado</span><strong>0,00 pp</strong></div>
+                        </div>
+                        <div class="alert alert-warning mt-3 mb-0">El pick habilitaba inteligencia, pero no tiene ApiFootballFixtureId. No existe evidencia enlazable y el ajuste debe permanecer neutral.</div>`;
+                    intelligenceModal.show();
+                    return;
+                }
+
+                const result = intelligence.result ?? {};
+                const adjustment = (number(result.probabilityAdjustment) ?? 0) * 100;
+                const applied = result.isApplied === true;
+                intelligenceBody.innerHTML = `
+                    <div class="bot-intelligence-audit-summary ${applied ? 'is-applied' : 'is-neutral'}">
+                        <div><span>Resultado</span><strong>${applied ? 'Aplicado al pick' : 'Neutral: no influyó'}</strong></div>
+                        <div><span>Ajuste al lado elegido</span><strong>${escapeHtml(`${adjustment >= 0 ? '+' : ''}${adjustment.toFixed(2)} pp`)}</strong></div>
+                        <div><span>Probabilidad antes</span><strong>${escapeHtml(`${((number(result.probabilityBefore) ?? 0) * 100).toFixed(1)}%`)}</strong></div>
+                        <div><span>Probabilidad final</span><strong>${escapeHtml(`${((number(result.probabilityAfter) ?? 0) * 100).toFixed(1)}%`)}</strong></div>
+                    </div>
+                    <div class="bot-intelligence-loading">Cargando snapshots, bajas y fuentes exactas usadas por el bot…</div>`;
+                intelligenceModal.show();
+
+                try {
+                    const cutoffUtc = decisionReason?.featureSnapshot?.predictionTimestampUtc
+                        ?? getValue(item, 'CreatedAtUtc')
+                        ?? decisionReason?.featureSnapshot?.oddsCapturedAtUtc
+                        ?? decisionReason?.featureSnapshot?.asOfDateUtc
+                        ?? null;
+                    const payload = await fetchIntelligenceEvidence(fixtureId, cutoffUtc);
+                    const probabilityBefore = number(result.probabilityBefore) ?? 0;
+                    const probabilityAfter = number(result.probabilityAfter) ?? probabilityBefore;
+                    const expectedValueBefore = number(intelligence.expectedValueBeforeFootballIntelligence);
+                    const finalEdge = number(getValue(item, 'ProbabilityEdge'));
+                    const finalExpectedValue = number(getValue(item, 'ExpectedValue'));
+                    const decision = decisionReason?.decision ?? '-';
+                    const decisionLabel = String(decision).toLowerCase() === 'approved' ? 'Aprobado' : 'Rechazado';
+                    intelligenceBody.innerHTML = `
+                        <div class="bot-intelligence-audit-summary ${applied ? 'is-applied' : 'is-neutral'}">
+                            <div><span>Resultado</span><strong>${applied ? 'Aplicado al pick' : 'Neutral: no influyó'}</strong></div>
+                            <div><span>Ajuste al lado elegido</span><strong>${escapeHtml(`${adjustment >= 0 ? '+' : ''}${adjustment.toFixed(2)} pp`)}</strong></div>
+                            <div><span>Probabilidad antes</span><strong>${escapeHtml(`${(probabilityBefore * 100).toFixed(1)}%`)}</strong></div>
+                            <div><span>Probabilidad final</span><strong>${escapeHtml(`${(probabilityAfter * 100).toFixed(1)}%`)}</strong></div>
+                        </div>
+                        <div class="bot-intelligence-decision-flow mt-3">
+                            <strong>Cómo entró en la decisión</strong>
+                            <div class="bot-intelligence-decision-steps">
+                                <span>Probabilidad calibrada <b>${escapeHtml(`${(probabilityBefore * 100).toFixed(1)}%`)}</b></span>
+                                <span aria-hidden="true">→</span>
+                                <span>Inteligencia <b>${escapeHtml(`${adjustment >= 0 ? '+' : ''}${adjustment.toFixed(2)} pp`)}</b></span>
+                                <span aria-hidden="true">→</span>
+                                <span>Probabilidad final <b>${escapeHtml(`${(probabilityAfter * 100).toFixed(1)}%`)}</b></span>
+                                <span aria-hidden="true">→</span>
+                                <span>Decisión <b>${escapeHtml(decisionLabel)}</b></span>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                Después del ajuste, el motor volvió a comprobar edge ${escapeHtml(finalEdge === null ? '-' : `${(finalEdge * 100).toFixed(1)}%`)}
+                                y EV ${escapeHtml(finalExpectedValue === null ? '-' : `${(finalExpectedValue * 100).toFixed(1)}%`)}
+                                ${expectedValueBefore === null ? '' : `(EV antes ${(expectedValueBefore * 100).toFixed(1)}%)`}.
+                                La inteligencia no crea un pick por sí sola: sólo ajusta una señal ya calibrada y todos los umbrales productivos deben seguir cumpliéndose.
+                            </div>
+                            <div class="small text-muted mt-1">Evidencia disponible hasta ${escapeHtml(formatDate(cutoffUtc))}; no se muestran datos conocidos después de la decisión.</div>
+                        </div>
+                        <h3 class="h6 mt-4">Impacto calculado por mercado</h3>
+                        ${renderIntelligenceMarketImpacts(payload, decisionReason, item)}
+                        <h3 class="h6 mt-4">Bajas, noticias y fuentes consideradas</h3>
+                        ${renderIntelligenceEvidence(payload)}`;
+                } catch (error) {
+                    intelligenceBody.insertAdjacentHTML(
+                        'beforeend',
+                        `<div class="alert alert-warning mt-3">${escapeHtml(error instanceof Error ? error.message : 'No se pudo cargar la auditoría.')}</div>`);
+                }
+            };
+
+            const parseRobustCodes = value => {
+                if (Array.isArray(value)) {
+                    return value.filter(item => item !== null && item !== undefined && String(item).trim());
+                }
+
+                if (typeof value !== 'string' || !value.trim()) {
+                    return [];
+                }
+
+                try {
+                    const parsed = JSON.parse(value);
+                    return Array.isArray(parsed)
+                        ? parsed.filter(item => item !== null && item !== undefined && String(item).trim())
+                        : [value];
+                } catch {
+                    return value.split(',').map(item => item.trim()).filter(Boolean);
+                }
+            };
+
+            const robustSection = (payload, name) => getValue(payload, name) ?? {};
+            const robustField = (section, groupedName, evaluation, flatName = groupedName) =>
+                getValue(section, groupedName) ?? getValue(evaluation, flatName);
+
+            const robustMetric = (label, value, detail = null) => `
+                <div class="robust-evaluation-metric">
+                    <span>${escapeHtml(label)}</span>
+                    <strong>${escapeHtml(value ?? 'Sin dato')}</strong>
+                    ${detail ? `<small>${escapeHtml(detail)}</small>` : ''}
+                </div>`;
+
+            const formatRobustInterval = (lower, upper) => {
+                const parsedLower = number(lower);
+                const parsedUpper = number(upper);
+                return parsedLower === null || parsedUpper === null
+                    ? 'Sin dato'
+                    : `${formatPercent(parsedLower)} – ${formatPercent(parsedUpper)}`;
+            };
+
+            const formatAge = seconds => {
+                const value = number(seconds);
+                if (value === null || value < 0) {
+                    return 'Sin dato';
+                }
+
+                if (value < 60) return `${Math.round(value)} s`;
+                if (value < 3600) return `${Math.round(value / 60)} min`;
+                return `${formatCompact(value / 3600)} h`;
+            };
+
+            const evidenceStatusPresentation = status => {
+                const raw = String(status ?? '').trim();
+                const normalized = raw.replace(/[\s_-]/g, '').toLowerCase();
+                const states = {
+                    appliedpositive: ['Aplicada · impacto positivo', 'is-positive'],
+                    appliednegative: ['Aplicada · impacto negativo', 'is-negative'],
+                    reviewedneutral: ['Revisada · neutral', 'is-neutral'],
+                    insufficientevidence: ['Evidencia insuficiente', 'is-warning'],
+                    sourceunavailable: ['Fuente no disponible', 'is-muted'],
+                    snapshotexpired: ['Snapshot vencido', 'is-warning'],
+                    notapplicable: ['No aplica', 'is-muted']
+                };
+                const resolved = states[normalized];
+                return resolved
+                    ? { raw, label: resolved[0], cssClass: resolved[1] }
+                    : raw
+                        ? { raw, label: raw, cssClass: 'is-muted' }
+                        : { raw: '', label: 'Sin dato (no inferido)', cssClass: 'is-muted' };
+            };
+
+            const renderEvidenceStatus = status => {
+                const state = evidenceStatusPresentation(status);
+                const code = state.raw && state.raw !== state.label
+                    ? `<small>${escapeHtml(state.raw)}</small>`
+                    : '';
+                return `<span class="robust-evidence-status ${state.cssClass}">${escapeHtml(state.label)}${code}</span>`;
+            };
+
+            const renderRobustCodes = (codes, emptyText, warning = false) => {
+                if (!codes.length) {
+                    return `<div class="text-muted small">${escapeHtml(emptyText)}</div>`;
+                }
+
+                return `<ul class="robust-evaluation-codes ${warning ? 'is-warning' : ''}">
+                    ${codes.map(code => `<li><code>${escapeHtml(code)}</code></li>`).join('')}
+                </ul>`;
+            };
+
+            const renderRobustComponents = components => {
+                if (!Array.isArray(components) || components.length === 0) {
+                    return '';
+                }
+
+                return `
+                    <details class="robust-evaluation-components mt-3">
+                        <summary>Componentes usados por la evaluación (${components.length})</summary>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead><tr><th>Tipo</th><th class="text-end">Predicción</th><th class="text-end">Prob.</th><th class="text-end">Peso</th><th>Calidad</th><th>Estado</th></tr></thead>
+                                <tbody>${components.map(component => {
+                                    const usable = robustField(component, 'IsUsable', component, 'IsUsable');
+                                    return `<tr>
+                                        <td><strong>${escapeHtml(getValue(component, 'Type') ?? getValue(component, 'ComponentType') ?? '-')}</strong><div class="small text-muted">${escapeHtml(getValue(component, 'SourceVersion') ?? '')}</div></td>
+                                        <td class="text-end">${escapeHtml(formatCompact(getValue(component, 'PredictedValue')))}</td>
+                                        <td class="text-end">${escapeHtml(formatPercent(getValue(component, 'ProbabilityForSelection')))}</td>
+                                        <td class="text-end">${escapeHtml(formatCompact(getValue(component, 'Weight')))}</td>
+                                        <td>${escapeHtml(formatPercent(getValue(component, 'DataQualityScore')))}</td>
+                                        <td>${usable === false
+                                            ? `<span class="text-danger">Excluido</span><div class="small text-muted">${escapeHtml(getValue(component, 'ExclusionReason') ?? '')}</div>`
+                                            : '<span class="text-success">Usable</span>'}</td>
+                                    </tr>`;
+                                }).join('')}</tbody>
+                            </table>
+                        </div>
+                    </details>`;
+            };
+
+            const renderRobustEvaluation = (payload, item) => {
+                const evaluation = robustSection(payload, 'Evaluation');
+                const identity = robustSection(payload, 'Identity');
+                const versions = robustSection(payload, 'Versions');
+                const predictions = robustSection(payload, 'Predictions');
+                const consensus = robustSection(payload, 'Consensus');
+                const distribution = robustSection(payload, 'Distribution');
+                const probability = robustSection(payload, 'Probability');
+                const value = robustSection(payload, 'Value');
+                const calibration = robustSection(payload, 'Calibration');
+                const preMatch = robustSection(payload, 'PreMatchData');
+                const components = getValue(payload, 'Components') ?? getValue(evaluation, 'Components') ?? [];
+
+                const currentDecision = robustField(evaluation, 'CurrentDecision', evaluation, 'CurrentSystemDecision')
+                    ?? 'BET (pick publicado)';
+                const robustDecision = robustField(evaluation, 'RobustDecision', evaluation) ?? 'Sin dato';
+                const mode = robustField(evaluation, 'Mode', evaluation, 'EvaluationMode') ?? 'Shadow';
+                const originalStake = robustField(evaluation, 'OriginalStake', evaluation);
+                const recommendedStake = robustField(evaluation, 'RecommendedStake', evaluation);
+                const stakeDifference = number(recommendedStake) !== null && number(originalStake) !== null
+                    ? number(recommendedStake) - number(originalStake)
+                    : null;
+                const robustnessScore = robustField(evaluation, 'RobustnessScore', evaluation);
+                const humanReason = robustField(evaluation, 'HumanReadableReason', evaluation);
+                const robustDecisionClass = String(robustDecision).toLowerCase().includes('reject')
+                    || String(robustDecision).toLowerCase().includes('no bet')
+                    ? 'is-rejected'
+                    : String(robustDecision).toLowerCase().includes('approve')
+                        || String(robustDecision).toLowerCase() === 'bet'
+                        ? 'is-approved'
+                        : 'is-review';
+
+                const reasons = parseRobustCodes(
+                    getValue(payload, 'Reasons') ?? getValue(evaluation, 'RejectionReasonCodesJson'));
+                const warnings = parseRobustCodes(
+                    getValue(payload, 'Warnings') ?? getValue(evaluation, 'WarningCodesJson'));
+                const evidenceStatus = robustField(
+                    preMatch,
+                    'IntelligenceEvidenceStatus',
+                    evaluation,
+                    'IntelligenceEvidenceStatus');
+                const evidenceTarget = document.getElementById('BotPickRobustEvidenceStatus');
+                if (evidenceTarget) {
+                    evidenceTarget.innerHTML = renderEvidenceStatus(evidenceStatus);
+                }
+
+                const direct = robustField(predictions, 'Direct', evaluation, 'DirectPrediction');
+                const home = robustField(predictions, 'Home', evaluation, 'HomePrediction');
+                const away = robustField(predictions, 'Away', evaluation, 'AwayPrediction');
+                const componentTotal = robustField(predictions, 'Components', evaluation, 'ComponentsPrediction');
+                const context = robustField(predictions, 'Context', evaluation, 'ContextPrediction');
+                const reconciled = robustField(predictions, 'Reconciled', evaluation, 'ReconciledPrediction');
+
+                const lowerProbability = robustField(probability, 'Lower', evaluation, 'ProbabilityLowerBound')
+                    ?? robustField(calibration, 'ProbabilityLower', evaluation, 'ProbabilityLowerBound');
+                const upperProbability = robustField(probability, 'Upper', evaluation, 'ProbabilityUpperBound')
+                    ?? robustField(calibration, 'ProbabilityUpper', evaluation, 'ProbabilityUpperBound');
+                const centralProbability = robustField(probability, 'Central', evaluation, 'CalibratedProbability');
+                const beforeCalibration = robustField(probability, 'BeforeCalibration', evaluation, 'RawProbability')
+                    ?? robustField(calibration, 'ProbabilityBefore', evaluation, 'RawProbability');
+                const afterCalibration = robustField(probability, 'AfterCalibration', evaluation, 'CalibratedProbability')
+                    ?? robustField(calibration, 'ProbabilityAfter', evaluation, 'CalibratedProbability');
+
+                const recommendedSide = robustField(consensus, 'RecommendedSide', identity, 'Side')
+                    ?? getValue(item, 'SelectedSide');
+                const sideAgreement = robustField(consensus, 'SideAgreement', evaluation);
+                const sideAgreementLabel = sideAgreement === true ? 'Sí' : sideAgreement === false ? 'No' : 'Sin dato';
+                const evaluationVersion = robustField(evaluation, 'EvaluationVersion', evaluation)
+                    ?? robustField(versions, 'RobustnessVersion', evaluation, 'RobustnessVersion');
+
+                return `
+                    <section class="robust-evaluation-panel" aria-label="Evaluación robusta del pick">
+                        <div class="robust-evaluation-heading">
+                            <div>
+                                <div class="small text-uppercase fw-bold text-muted">Robust Pick Evaluation</div>
+                                <h3 class="h5 mb-1">Decisión conservadora · ${escapeHtml(mode)}</h3>
+                                <div class="small text-muted">Snapshot #${escapeHtml(robustField(evaluation, 'Sequence', evaluation, 'EvaluationSequence') ?? '-')} · ${escapeHtml(formatDate(robustField(evaluation, 'AsOfUtc', evaluation)))}</div>
+                            </div>
+                            <span class="robust-decision-badge ${robustDecisionClass}">${escapeHtml(robustDecision)}</span>
+                        </div>
+
+                        <div class="robust-decision-comparison">
+                            <div><span>Decisión actual</span><strong>${escapeHtml(currentDecision)}</strong></div>
+                            <div aria-hidden="true" class="robust-decision-arrow">→</div>
+                            <div><span>Decisión robusta en ${escapeHtml(mode)}</span><strong>${escapeHtml(robustDecision)}</strong></div>
+                            <div><span>Stake original / recomendado</span><strong>${escapeHtml(formatCompact(originalStake))}u / ${escapeHtml(formatCompact(recommendedStake))}u</strong><small>${stakeDifference === null ? 'Sin comparación' : `${stakeDifference >= 0 ? '+' : ''}${formatCompact(stakeDifference)}u`}</small></div>
+                            <div><span>Robustness score</span><strong>${escapeHtml(formatPercent(robustnessScore))}</strong></div>
+                        </div>
+                        ${humanReason ? `<p class="robust-human-reason">${escapeHtml(humanReason)}</p>` : ''}
+
+                        <div class="row g-3 mt-1">
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Predicciones</h4>
+                                    <div class="robust-evaluation-grid">
+                                        ${robustMetric('Direct', formatCompact(direct))}
+                                        ${robustMetric('Home', formatCompact(home))}
+                                        ${robustMetric('Away', formatCompact(away))}
+                                        ${robustMetric('Home + Away', formatCompact(componentTotal))}
+                                        ${robustMetric('Context', formatCompact(context))}
+                                        ${robustMetric('Reconciled', formatCompact(reconciled))}
+                                        ${robustMetric('P10', formatCompact(robustField(distribution, 'P10', evaluation)))}
+                                        ${robustMetric('P50', formatCompact(robustField(distribution, 'P50', evaluation)))}
+                                        ${robustMetric('P90', formatCompact(robustField(distribution, 'P90', evaluation)))}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Consenso</h4>
+                                    <div class="robust-evaluation-grid">
+                                        ${robustMetric('Lado recomendado', recommendedSide ?? 'Sin dato')}
+                                        ${robustMetric('Consenso de lado', sideAgreementLabel)}
+                                        ${robustMetric('Rango de predicciones', formatCompact(robustField(consensus, 'Range', evaluation, 'ConsensusRange')))}
+                                        ${robustMetric('Gap Direct vs Home + Away', formatCompact(robustField(consensus, 'CoherenceGap', evaluation)))}
+                                        ${robustMetric('Worst-case prediction', formatCompact(robustField(consensus, 'WorstCasePrediction', evaluation)))}
+                                        ${robustMetric('Distancia directa', formatCompact(robustField(consensus, 'DirectDistance', evaluation)))}
+                                        ${robustMetric('Distancia conservadora', formatCompact(robustField(consensus, 'WorstCaseDistance', evaluation)))}
+                                        ${robustMetric('Distancia conservadora normalizada', formatCompact(robustField(consensus, 'NormalizedWorstCaseDistance', evaluation)))}
+                                        ${robustMetric('Magnitude agreement', formatPercent(robustField(consensus, 'MagnitudeAgreement', evaluation, 'MagnitudeAgreementScore')))}
+                                        ${robustMetric('Probability agreement', formatPercent(robustField(consensus, 'ProbabilityAgreement', evaluation, 'ProbabilityAgreementScore')))}
+                                        ${robustMetric('Coherence score', formatPercent(robustField(consensus, 'CoherenceScore', evaluation)))}
+                                        ${robustMetric('Scenario stability', formatPercent(robustField(consensus, 'ScenarioStability', evaluation, 'ScenarioSideStability')))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="robust-evaluation-section mt-3">
+                            <h4>Probabilidades y valor</h4>
+                            <div class="robust-evaluation-grid is-wide">
+                                ${robustMetric('Probabilidad central', formatPercent(centralProbability))}
+                                ${robustMetric('Intervalo', formatRobustInterval(lowerProbability, upperProbability))}
+                                ${robustMetric('Fair probability', formatPercent(robustField(probability, 'Fair', evaluation, 'ModelFairProbability')))}
+                                ${robustMetric('Mercado implícita', formatPercent(robustField(probability, 'MarketImplied', evaluation, 'MarketImpliedProbability')))}
+                                ${robustMetric('Mercado no-vig', formatPercent(robustField(probability, 'MarketNoVig', evaluation, 'MarketNoVigProbability')))}
+                                ${robustMetric('Point edge', formatPercent(robustField(value, 'PointEdge', evaluation)))}
+                                ${robustMetric('Robust edge', formatPercent(robustField(value, 'RobustEdge', evaluation)))}
+                                ${robustMetric('Point EV', formatPercent(robustField(value, 'PointEv', evaluation, 'PointExpectedValue')))}
+                                ${robustMetric('Robust EV', formatPercent(robustField(value, 'RobustEv', evaluation, 'RobustExpectedValue')))}
+                                ${robustMetric('Positive EV stability', formatPercent(robustField(value, 'PositiveEvStability', evaluation)))}
+                            </div>
+                            <h5 class="h6 mt-3">Settlement distribution</h5>
+                            <div class="robust-settlement-strip">
+                                ${robustMetric('Win', formatPercent(robustField(distribution, 'PWin', evaluation)))}
+                                ${robustMetric('Half win', formatPercent(robustField(distribution, 'PHalfWin', evaluation)))}
+                                ${robustMetric('Push', formatPercent(robustField(distribution, 'PPush', evaluation)))}
+                                ${robustMetric('Half loss', formatPercent(robustField(distribution, 'PHalfLoss', evaluation)))}
+                                ${robustMetric('Loss', formatPercent(robustField(distribution, 'PLoss', evaluation)))}
+                            </div>
+                            <div class="robust-distribution-meta mt-2">
+                                <span>Método: <strong>${escapeHtml(robustField(distribution, 'Method', distribution, 'DistributionMethod') ?? 'Sin dato')}</strong></span>
+                                <span>Simulaciones: <strong>${escapeHtml(formatCompact(robustField(distribution, 'SimulationCount', evaluation)))}</strong></span>
+                                <span>Effective N: <strong>${escapeHtml(formatCompact(robustField(distribution, 'EffectiveN', evaluation, 'DistributionEffectiveN')))}</strong></span>
+                                <span>Error scale: <strong>${escapeHtml(formatCompact(robustField(distribution, 'ErrorScale', evaluation)))}</strong></span>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-0">
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Calibración</h4>
+                                    <div class="robust-evaluation-grid">
+                                        ${robustMetric('Effective N', formatCompact(robustField(calibration, 'EffectiveN', evaluation, 'CalibrationEffectiveN')))}
+                                        ${robustMetric('Reliability', formatPercent(robustField(calibration, 'Reliability', evaluation, 'CalibrationReliability')))}
+                                        ${robustMetric('Fallback level', robustField(calibration, 'FallbackLevel', evaluation, 'CalibrationFallbackLevel') ?? 'Sin dato')}
+                                        ${robustMetric('Exact market N', formatCompact(robustField(calibration, 'ExactMarketN', evaluation, 'CalibrationExactMarketN')))}
+                                        ${robustMetric('Family N', formatCompact(robustField(calibration, 'FamilyN', evaluation, 'CalibrationFamilyN')))}
+                                        ${robustMetric('Global N', formatCompact(robustField(calibration, 'GlobalN', evaluation, 'CalibrationGlobalN')))}
+                                        ${robustMetric('Antes de calibrar', formatPercent(beforeCalibration))}
+                                        ${robustMetric('Después de calibrar', formatPercent(afterCalibration))}
+                                        ${robustMetric('Intervalo calibrado', formatRobustInterval(lowerProbability, upperProbability))}
+                                        ${robustMetric('Método del intervalo', robustField(calibration, 'IntervalMethod', evaluation) ?? 'Sin dato')}
+                                        ${robustMetric('Confianza del intervalo', formatPercent(robustField(calibration, 'ConfidenceLevel', evaluation)))}
+                                        ${robustMetric('Peso del prior', formatCompact(robustField(calibration, 'PriorWeight', evaluation)))}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Datos prepartido</h4>
+                                    <div class="robust-evaluation-grid">
+                                        ${robustMetric('Lineup status', robustField(preMatch, 'LineupStatus', evaluation) ?? 'Sin dato')}
+                                        <div class="robust-evaluation-metric"><span>Intelligence evidence</span><strong>${renderEvidenceStatus(evidenceStatus)}</strong></div>
+                                        ${robustMetric('Snapshot age', (() => {
+                                            const seconds = robustField(preMatch, 'SnapshotAgeSeconds', evaluation);
+                                            const minutes = robustField(preMatch, 'SnapshotAgeMinutes', evaluation);
+                                            return seconds !== null && seconds !== undefined
+                                                ? formatAge(seconds)
+                                                : minutes !== null && minutes !== undefined ? formatAge(number(minutes) * 60) : 'Sin dato';
+                                        })())}
+                                        ${robustMetric('Odds age', formatAge(robustField(preMatch, 'OddsAgeSeconds', evaluation)))}
+                                        ${robustMetric('Estado de cuota', robustField(preMatch, 'OddsAvailabilityStatus', evaluation) ?? 'Sin dato')}
+                                        ${robustMetric('Actionable facts', formatCompact(robustField(preMatch, 'ActionableFacts', preMatch, 'ActionableFactCount')))}
+                                        ${robustMetric('Independent sources', formatCompact(robustField(preMatch, 'IndependentSources', preMatch, 'IndependentSourceCount')))}
+                                        ${robustMetric('Fatigue status', robustField(preMatch, 'FatigueDataStatus', evaluation) ?? 'Sin dato')}
+                                        ${robustMetric('Game-state model', robustField(preMatch, 'GameStateModelStatus', evaluation) ?? 'Sin dato')}
+                                        ${robustMetric('Odds reliability', formatPercent(robustField(preMatch, 'OddsReliability', evaluation)))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-0">
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Motivos</h4>
+                                    ${renderRobustCodes(reasons, 'Sin motivos de rechazo registrados.')}
+                                    ${humanReason ? `<div class="small mt-2">${escapeHtml(humanReason)}</div>` : ''}
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div class="robust-evaluation-section h-100">
+                                    <h4>Warnings</h4>
+                                    ${renderRobustCodes(warnings, 'Sin warnings registrados.', true)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="robust-evaluation-section mt-3">
+                            <h4>Versiones e identidad</h4>
+                            <div class="robust-evaluation-grid is-wide">
+                                ${robustMetric('Bot key', robustField(identity, 'BotKey', evaluation) ?? getBotInfo(item).key)}
+                                ${robustMetric('Market family', robustField(identity, 'MarketFamily', versions, 'MarketFamily') ?? marketFamily)}
+                                ${robustMetric('Market type', robustField(identity, 'MarketType', evaluation) ?? getValue(item, 'MarketType'))}
+                                ${robustMetric('Side / line', `${robustField(identity, 'Side', evaluation) ?? getValue(item, 'SelectedSide') ?? '-'} ${formatCompact(robustField(identity, 'Line', evaluation) ?? getValue(item, 'LineValue'))}`)}
+                                ${robustMetric('Bookmaker', robustField(identity, 'Bookmaker', evaluation) ?? getValue(item, 'Source'))}
+                                ${robustMetric('Automation version', robustField(versions, 'AutomationVersion', evaluation) ?? getValue(item, 'AutomationVersion'))}
+                                ${robustMetric('Prediction model', robustField(versions, 'PredictionModelVersion', evaluation, 'BaseModelVersion') ?? robustField(versions, 'BaseModelVersion', evaluation, 'BaseModelVersion'))}
+                                ${robustMetric('Selector version', robustField(versions, 'SelectorVersion', evaluation))}
+                                ${robustMetric('Calibration version', robustField(versions, 'CalibrationVersion', evaluation))}
+                                ${robustMetric('Intelligence version', robustField(versions, 'IntelligenceVersion', evaluation))}
+                                ${robustMetric('Settlement version', robustField(versions, 'SettlementVersion', evaluation))}
+                                ${robustMetric('Robustness version', robustField(versions, 'RobustnessVersion', evaluation) ?? evaluationVersion)}
+                                ${robustMetric('Policy version', robustField(versions, 'PolicyVersion', evaluation))}
+                            </div>
+                        </div>
+                        ${renderRobustComponents(components)}
+                    </section>`;
+            };
+
+            const loadRobustEvaluation = async (id, requestId, item) => {
+                const target = document.getElementById('BotPickRobustEvaluationPanel');
+                if (!target) {
+                    return;
+                }
+
+                try {
+                    let payload = robustEvaluationsById.get(String(id));
+                    if (!payload) {
+                        const response = await fetch(`${robustEvaluationEndpointUrl}?id=${encodeURIComponent(id)}`);
+                        if (response.status === 404) {
+                            if (requestId !== activeDetailRequest) return;
+                            target.innerHTML = `
+                                <div class="robust-evaluation-empty">
+                                    <strong>Sin evaluación robusta</strong>
+                                    <span>Este pick es histórico o todavía no fue procesado por la capa Shadow. Su detalle original sigue disponible y no se inventan datos faltantes.</span>
+                                </div>`;
+                            const evidenceTarget = document.getElementById('BotPickRobustEvidenceStatus');
+                            if (evidenceTarget) evidenceTarget.textContent = 'Sin snapshot robusto';
+                            return;
+                        }
+
+                        if (!response.ok) {
+                            let message = 'No se pudo cargar la evaluación robusta.';
+                            try {
+                                const error = await response.json();
+                                message = getValue(error, 'Error') ?? getValue(error, 'Message') ?? message;
+                            } catch {
+                                // Keep the safe fallback; an upstream proxy can return HTML.
+                            }
+                            throw new Error(message);
+                        }
+
+                        payload = await response.json();
+                        robustEvaluationsById.set(String(id), payload);
+                    }
+
+                    if (requestId !== activeDetailRequest) return;
+                    target.innerHTML = renderRobustEvaluation(payload, item);
+                } catch (error) {
+                    if (requestId !== activeDetailRequest) return;
+                    target.innerHTML = `
+                        <div class="robust-evaluation-error" role="alert">
+                            <strong>Evaluación robusta no disponible</strong>
+                            <span>${escapeHtml(error instanceof Error ? error.message : 'No se pudo consultar la API.')}</span>
+                        </div>`;
+                    const evidenceTarget = document.getElementById('BotPickRobustEvidenceStatus');
+                    if (evidenceTarget) evidenceTarget.textContent = 'Error al consultar snapshot';
+                }
+            };
+
             const openDetail = id => {
                 const item = selectionsById.get(String(id));
                 if (!item) {
                     return;
                 }
 
+                const requestId = ++activeDetailRequest;
+
 	                const sourceUrl = getValue(item, 'SourceUrl');
 	                const botInfo = getBotInfo(item);
 	                const decisionReason = getDecisionReason(item);
+	                const fixtureId = getValue(item, 'ApiFootballFixtureId');
 	                detailSubtitle.textContent = `${getHomeTeam(item)} vs ${getAwayTeam(item)} · ${getLeague(item)} · ${botInfo.label}`;
 	                sourceLink.classList.toggle('d-none', !sourceUrl);
 	                sourceLink.href = sourceUrl || '#';
@@ -3053,8 +4229,8 @@
 	                            <div class="small text-muted">${escapeHtml(getValue(item, 'SettlementReason') ?? getValue(item, 'LastSettlementCheckReason') ?? '-')}</div>
 	                        </div>
 	                        <div class="col-md-4">
-	                            <div class="small text-muted">Neutral adjustment</div>
-	                            <div>${hasNeutralAdjustment(item) ? '<span class="badge text-bg-info">Neutral</span>' : '<span class="text-muted">No</span>'}</div>
+	                            <div class="small text-muted">Estado de evidencia robusta</div>
+	                            <div id="BotPickRobustEvidenceStatus"><span class="placeholder-glow"><span class="placeholder col-8"></span></span></div>
 	                        </div>
 	                        <div class="col-md-4">
 	                            <div class="small text-muted">Direct / Home / Away</div>
@@ -3081,6 +4257,13 @@
                             <div class="fw-semibold">${escapeHtml(formatDateOnly(getValue(item, 'SettledAtUtc')))}</div>
                         </div>
 	                    </div>
+	                    ${renderIntelligenceDecision(decisionReason, fixtureId)}
+	                    <div id="BotPickRobustEvaluationPanel" class="mt-3">
+                            <div class="robust-evaluation-loading" role="status">
+                                <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                                <span>Cargando evaluación robusta Shadow…</span>
+                            </div>
+                        </div>
 	                    <hr />
 	                    <h3 class="h6">Thresholds usados</h3>
 	                    ${renderThresholds(decisionReason?.thresholds)}
@@ -3089,7 +4272,13 @@
                     ${renderReason(getValue(item, 'DecisionReason'))}
                 `;
 
+                if (fixtureId && decisionReason?.featureSnapshot?.footballIntelligence?.enabled) {
+                    const cutoffUtc = decisionReason?.featureSnapshot?.asOfDateUtc ?? null;
+                    void loadIntelligenceEvidence(fixtureId, cutoffUtc);
+                }
+
                 detailModal.show();
+                void loadRobustEvaluation(id, requestId, item);
             };
 
             filtersForm.addEventListener('submit', event => {
@@ -3167,10 +4356,15 @@
                 }
             });
 
-		            refreshButton.addEventListener('click', () => {
+	            refreshButton.addEventListener('click', () => {
                 loadSelections();
                 loadMonthlyHistory();
+                loadPerformanceScorecards();
             });
+            scorecardWindowButtons.forEach(button => button.addEventListener('click', () => {
+                performanceWindow = Number(button.dataset.scorecardWindow) || 30;
+                renderPerformanceScorecards();
+            }));
             settleLocalButton?.addEventListener('click', settleLocalSelections);
             settlePendingButton?.addEventListener('click', settlePendingSelections);
 		    let searchDebounce;
@@ -3179,6 +4373,7 @@
                 searchDebounce = setTimeout(() => render(true), 180);
             });
             strategyPlanSelect.addEventListener('change', () => render(true));
+            intelligenceFilterSelect.addEventListener('change', () => render(true));
             tableBotSelect.addEventListener('change', () => {
                 tableBotKey = tableBotSelect.value;
                 localStorage.setItem(`${storagePrefix}-table-bot`, tableBotKey);
@@ -3187,6 +4382,15 @@
             tableViewButtons.forEach(button => {
                 button.addEventListener('click', () => {
                     tableView = button.dataset.tableView ?? 'all';
+                    pendingReasonFilter = 'all';
+                    localStorage.setItem(`${storagePrefix}-table-view`, tableView);
+                    render(true);
+                });
+            });
+            pendingReasonButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    pendingReasonFilter = button.dataset.pendingReason ?? 'all';
+                    tableView = 'pending';
                     localStorage.setItem(`${storagePrefix}-table-view`, tableView);
                     render(true);
                 });
@@ -3243,6 +4447,12 @@
 	                const button = event.target.closest('button[data-detail-id]');
 	                if (button) {
 	                    openDetail(button.dataset.detailId);
+	                    return;
+	                }
+
+	                const intelligenceButton = event.target.closest('button[data-intelligence-id]');
+	                if (intelligenceButton) {
+	                    void openIntelligence(intelligenceButton.dataset.intelligenceId);
 	                }
 	            });
 
@@ -3295,6 +4505,7 @@
                 initialMonth.getMonth() === today.getMonth();
             loadSelections();
             loadMonthlyHistory();
+            loadPerformanceScorecards();
         })();
     </script>
 }

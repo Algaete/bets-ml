@@ -9,6 +9,7 @@ namespace CornersPrediction.Web.Controllers;
 [Authorize(Policy = PlatformPolicies.Admin)]
 public sealed class BotAutomationController : Controller
 {
+    private static readonly TimeSpan ComponentTimeout = TimeSpan.FromSeconds(15);
     private readonly RecommendationAutomationApiClient _apiClient;
     private readonly ILogger<BotAutomationController> _logger;
 
@@ -26,15 +27,33 @@ public sealed class BotAutomationController : Controller
         var today = DateOnly.FromDateTime(DateTime.Now);
         try
         {
-            var botsTask = _apiClient.GetBotsAsync(cancellationToken);
-            var jobsTask = _apiClient.GetJobsAsync(50, cancellationToken);
-            await Task.WhenAll(botsTask, jobsTask);
+            var botsTask = LoadComponentAsync(
+                "bots",
+                token => _apiClient.GetBotsAsync(token),
+                cancellationToken);
+            var jobsTask = LoadComponentAsync(
+                "procesos",
+                token => _apiClient.GetJobsAsync(50, token),
+                cancellationToken);
+            var leagueCatalogTask = LoadComponentAsync(
+                "catálogo de ligas",
+                token => _apiClient.GetLeagueCatalogAsync(token),
+                cancellationToken);
+            await Task.WhenAll(botsTask, jobsTask, leagueCatalogTask);
+
+            var bots = await botsTask;
+            var jobs = await jobsTask;
+            var leagueCatalog = await leagueCatalogTask;
             return View(new BotAutomationIndexViewModel
             {
-                Bots = await botsTask,
-                Jobs = await jobsTask,
+                Bots = bots.Value ?? [],
+                Jobs = jobs.Value ?? [],
+                LeagueCatalog = leagueCatalog.Value ?? [],
                 DefaultDateFrom = today,
-                DefaultDateTo = today.AddDays(7)
+                DefaultDateTo = today.AddDays(7),
+                BotsLoadError = bots.ErrorMessage,
+                JobsLoadError = jobs.ErrorMessage,
+                LeagueCatalogLoadError = leagueCatalog.ErrorMessage
             });
         }
         catch (Exception exception)
@@ -46,6 +65,32 @@ public sealed class BotAutomationController : Controller
                 DefaultDateTo = today.AddDays(7),
                 LoadError = exception.Message
             });
+        }
+    }
+
+    private async Task<ComponentLoadResult<T>> LoadComponentAsync<T>(
+        string component,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken requestCancellationToken)
+    {
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(requestCancellationToken);
+        timeoutCancellation.CancelAfter(ComponentTimeout);
+
+        try
+        {
+            return ComponentLoadResult<T>.Success(await operation(timeoutCancellation.Token));
+        }
+        catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load bot automation {Component}", component);
+            var detail = exception is OperationCanceledException
+                ? $"La consulta superó {ComponentTimeout.TotalSeconds:0} segundos."
+                : exception.Message;
+            return ComponentLoadResult<T>.Failure($"{component}: {detail}");
         }
     }
 
@@ -102,5 +147,11 @@ public sealed class BotAutomationController : Controller
             _logger.LogError(exception, "Could not {OperationName} from the MVC app", operationName);
             return StatusCode(StatusCodes.Status502BadGateway, new { error = exception.Message });
         }
+    }
+
+    private sealed record ComponentLoadResult<T>(T? Value, string? ErrorMessage)
+    {
+        public static ComponentLoadResult<T> Success(T value) => new(value, null);
+        public static ComponentLoadResult<T> Failure(string message) => new(default, message);
     }
 }

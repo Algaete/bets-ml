@@ -1,6 +1,7 @@
 using AutomatedCornersBot.Api;
 using CornersPrediction.Application.AutomatedCorners;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace CornersPredictionApi.Controllers;
 
@@ -8,12 +9,15 @@ namespace CornersPredictionApi.Controllers;
 [Route("api/automated-corners")]
 public sealed class AutomatedCornersController : ControllerBase
 {
+    private const string PerformanceScorecardsCacheKey = "automated-bot-performance-scorecards-v1";
     private readonly IGetAutomatedCornerSelectionsUseCase _getSelectionsUseCase;
     private readonly IUpdateAutomatedCornerSelectionStatusUseCase _updateSelectionStatusUseCase;
     private readonly IResolveAutomatedCornerSelectionUseCase _resolveSelectionUseCase;
     private readonly ILinkAutomatedCornerSelectionMatchUseCase _linkSelectionMatchUseCase;
     private readonly IDeleteAutomatedCornerSelectionUseCase _deleteSelectionUseCase;
     private readonly IAutomatedBotPickSettlementUseCase _settlementUseCase;
+    private readonly IAutomatedBotPerformanceService _performanceService;
+    private readonly IMemoryCache _cache;
     private readonly AutomatedCornersSelectionService _selectionService;
     private readonly SqlAutomationRepository _automationRepository;
     private readonly ILogger<AutomatedCornersController> _logger;
@@ -25,6 +29,8 @@ public sealed class AutomatedCornersController : ControllerBase
         ILinkAutomatedCornerSelectionMatchUseCase linkSelectionMatchUseCase,
         IDeleteAutomatedCornerSelectionUseCase deleteSelectionUseCase,
         IAutomatedBotPickSettlementUseCase settlementUseCase,
+        IAutomatedBotPerformanceService performanceService,
+        IMemoryCache cache,
         AutomatedCornersSelectionService selectionService,
         SqlAutomationRepository automationRepository,
         ILogger<AutomatedCornersController> logger)
@@ -35,9 +41,37 @@ public sealed class AutomatedCornersController : ControllerBase
         _linkSelectionMatchUseCase = linkSelectionMatchUseCase;
         _deleteSelectionUseCase = deleteSelectionUseCase;
         _settlementUseCase = settlementUseCase;
+        _performanceService = performanceService;
+        _cache = cache;
         _selectionService = selectionService;
         _automationRepository = automationRepository;
         _logger = logger;
+    }
+
+    [HttpGet("performance/scorecards")]
+    [ProducesResponseType(typeof(IReadOnlyList<AutomatedBotPerformanceScorecard>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPerformanceScorecards(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var scorecards = await _cache.GetOrCreateAsync(
+                PerformanceScorecardsCacheKey,
+                async entry =>
+                {
+                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+                    return await _performanceService.GetScorecardsAsync(cancellationToken);
+                });
+            return Ok(scorecards ?? []);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError(exception, "Failed to compute automated bot performance scorecards");
+            return Problem(
+                title: "Could not compute bot performance scorecards",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     [HttpPost("run")]
@@ -86,9 +120,11 @@ public sealed class AutomatedCornersController : ControllerBase
         try
         {
             await _automationRepository.EnsureSchemaAsync(cancellationToken);
-            return Ok(await _settlementUseCase.SettleAsync(
+            var result = await _settlementUseCase.SettleAsync(
                 request ?? new AutomatedBotPickSettlementRequest(),
-                cancellationToken));
+                cancellationToken);
+            _cache.Remove(PerformanceScorecardsCacheKey);
+            return Ok(result);
         }
         catch (ArgumentException exception)
         {
@@ -156,6 +192,7 @@ public sealed class AutomatedCornersController : ControllerBase
         try
         {
             var updatedSelection = await _updateSelectionStatusUseCase.UpdateAsync(id, request, cancellationToken);
+            _cache.Remove(PerformanceScorecardsCacheKey);
             return Ok(updatedSelection);
         }
         catch (ArgumentException exception)
@@ -189,6 +226,7 @@ public sealed class AutomatedCornersController : ControllerBase
         {
             await _automationRepository.EnsureSchemaAsync(cancellationToken);
             var updatedSelection = await _resolveSelectionUseCase.ResolveAsync(id, request, cancellationToken);
+            _cache.Remove(PerformanceScorecardsCacheKey);
             return Ok(updatedSelection);
         }
         catch (ArgumentException exception)
@@ -256,6 +294,8 @@ public sealed class AutomatedCornersController : ControllerBase
         try
         {
             var deleted = await _deleteSelectionUseCase.DeleteAsync(id, cancellationToken);
+            if (deleted)
+                _cache.Remove(PerformanceScorecardsCacheKey);
             return deleted ? NoContent() : NotFound(new { error = $"Automated corner selection {id} was not found." });
         }
         catch (ArgumentException exception)

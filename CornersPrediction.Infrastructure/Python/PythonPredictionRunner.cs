@@ -203,7 +203,17 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
 
             if (!string.IsNullOrWhiteSpace(stderr))
             {
-                _logger.LogWarning("Python prediction stderr: {StdErr}", stderr);
+                var actionableStderr = ExtractActionableStderr(stderr, out var debugLineCount);
+                if (!string.IsNullOrWhiteSpace(actionableStderr))
+                {
+                    _logger.LogWarning("Python prediction stderr: {StdErr}", actionableStderr);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Python prediction completed with {DebugLineCount} diagnostic lines.",
+                        debugLineCount);
+                }
             }
 
             return stdout;
@@ -226,6 +236,43 @@ public sealed class PythonPredictionRunner : IPythonPredictionRunner
                 $"Python executable '{_options.PythonExecutable}' was not found.",
                 exception);
         }
+    }
+
+    private static string ExtractActionableStderr(string stderr, out int debugLineCount)
+    {
+        debugLineCount = 0;
+        var actionable = new List<string>();
+        foreach (var rawLine in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("debug", out _))
+                {
+                    debugLineCount++;
+                    continue;
+                }
+            }
+            catch (JsonException)
+            {
+                // Non-JSON stderr is actionable and must remain visible.
+            }
+
+            actionable.Add(line);
+        }
+
+        var message = string.Join(Environment.NewLine, actionable);
+        const int maximumLoggedCharacters = 4000;
+        return message.Length <= maximumLoggedCharacters
+            ? message
+            : message[..maximumLoggedCharacters] + "…";
     }
 
     /// <summary>

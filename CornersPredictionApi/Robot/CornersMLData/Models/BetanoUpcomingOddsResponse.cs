@@ -59,6 +59,8 @@ namespace CornersMLData.Models
         public BetanoMarketOddsDto? ShotsHomeTeam { get; set; }
         public BetanoMarketOddsDto? ShotsAwayTeam { get; set; }
         public BetanoMarketOddsDto? CardsTotal { get; set; }
+        public List<string> DetectedMarketTabs { get; set; } = new();
+        public List<string> DetectedMarketCards { get; set; } = new();
         public List<string> Notes { get; set; } = new();
     }
 

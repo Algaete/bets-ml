@@ -52,7 +52,12 @@ public sealed class RecommendationJobWorker : BackgroundService
                     continue;
                 }
 
-                await ProcessBatchAsync(scope.ServiceProvider, repository, job, stoppingToken);
+                await ProcessBatchAsync(
+                    scope.ServiceProvider,
+                    repository,
+                    job,
+                    leaseDuration,
+                    stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -72,6 +77,7 @@ public sealed class RecommendationJobWorker : BackgroundService
         IServiceProvider services,
         IRecommendationJobRepository repository,
         RecommendationJobDto job,
+        TimeSpan leaseDuration,
         CancellationToken stoppingToken)
     {
         _logger.LogInformation(
@@ -81,6 +87,14 @@ public sealed class RecommendationJobWorker : BackgroundService
             job.TotalBatches,
             string.Join(',', job.BotKeys),
             string.Join(',', job.MarketFamilies));
+
+        using var batchCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var heartbeatTask = MaintainLeaseAsync(
+            repository,
+            job,
+            leaseDuration,
+            batchCancellation,
+            stoppingToken);
 
         try
         {
@@ -109,7 +123,16 @@ public sealed class RecommendationJobWorker : BackgroundService
                     MarketFamilies: string.Join(',', job.MarketFamilies),
                     HistoricalBackfill: historicalBackfill,
                     BotKeys: string.Join(',', job.BotKeys)),
-                stoppingToken);
+                batchCancellation.Token);
+
+            if (batchCancellation.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogInformation(
+                    "Recommendation job {JobId} batch {Batch} stopped because the job was cancelled or its lease was lost.",
+                    job.RecommendationJobId,
+                    job.NextBatchNumber);
+                return;
+            }
 
             var updated = await repository.CompleteBatchAsync(
                 job.RecommendationJobId,
@@ -146,6 +169,13 @@ public sealed class RecommendationJobWorker : BackgroundService
             await TryRecordFailureAsync(repository, job, "API shutdown interrupted the active batch.");
             throw;
         }
+        catch (OperationCanceledException) when (batchCancellation.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "Recommendation job {JobId} batch {Batch} acknowledged cancellation or lease loss.",
+                job.RecommendationJobId,
+                job.NextBatchNumber);
+        }
         catch (Exception exception)
         {
             _logger.LogError(
@@ -154,6 +184,70 @@ public sealed class RecommendationJobWorker : BackgroundService
                 job.RecommendationJobId,
                 job.NextBatchNumber);
             await TryRecordFailureAsync(repository, job, exception.Message);
+        }
+        finally
+        {
+            batchCancellation.Cancel();
+            try
+            {
+                await heartbeatTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    private async Task MaintainLeaseAsync(
+        IRecommendationJobRepository repository,
+        RecommendationJobDto job,
+        TimeSpan leaseDuration,
+        CancellationTokenSource batchCancellation,
+        CancellationToken stoppingToken)
+    {
+        var heartbeatInterval = TimeSpan.FromSeconds(Math.Clamp(_options.HeartbeatSeconds, 5, 300));
+
+        try
+        {
+            using var timer = new PeriodicTimer(heartbeatInterval);
+            while (await timer.WaitForNextTickAsync(batchCancellation.Token))
+            {
+                bool renewed;
+                try
+                {
+                    renewed = await repository.RenewLeaseAsync(
+                        job.RecommendationJobId,
+                        _workerId,
+                        leaseDuration,
+                        batchCancellation.Token);
+                }
+                catch (Exception exception) when (
+                    exception is not OperationCanceledException &&
+                    !stoppingToken.IsCancellationRequested)
+                {
+                    // The original lease is still valid. Retry on the next tick
+                    // instead of cancelling useful work after one transient SQL error.
+                    _logger.LogWarning(
+                        exception,
+                        "Recommendation job {JobId} heartbeat failed; it will retry on the next tick.",
+                        job.RecommendationJobId);
+                    continue;
+                }
+
+                if (renewed)
+                {
+                    continue;
+                }
+
+                _logger.LogInformation(
+                    "Recommendation job {JobId} no longer owns its lease; cancelling the active batch.",
+                    job.RecommendationJobId);
+                batchCancellation.Cancel();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (batchCancellation.IsCancellationRequested)
+        {
         }
     }
 
@@ -223,6 +317,11 @@ public sealed class RecommendationJobWorker : BackgroundService
             return;
         }
 
+        if (recurring.RefreshOddsBeforeEnqueue)
+        {
+            await RefreshRecurringOddsBestEffortAsync(services, cancellationToken);
+        }
+
         var job = await useCase.EnqueueAsync(
             new CreateRecommendationJobCommand(
                 DateFrom: today,
@@ -240,6 +339,70 @@ public sealed class RecommendationJobWorker : BackgroundService
             job.RecommendationJobId,
             job.Status,
             _nextRecurringAtUtc);
+    }
+
+    private async Task RefreshRecurringOddsBestEffortAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        var pipeline = services.GetRequiredService<ICornersPipelineService>();
+        var pinnacleTask = RefreshOddsSourceBestEffortAsync(
+            "Pinnacle",
+            pipeline.RunPinnacleOddsAsync,
+            cancellationToken);
+        var betanoTask = RefreshOddsSourceBestEffortAsync(
+            "Betano",
+            pipeline.RunBetanoOddsAsync,
+            cancellationToken);
+
+        var results = await Task.WhenAll(pinnacleTask, betanoTask);
+        var pinnacle = results[0];
+        var betano = results[1];
+
+        if (pinnacle?.IsSuccess != true && betano?.IsSuccess != true)
+        {
+            _logger.LogWarning(
+                "Both odds refreshes failed before the recurring recommendation job. " +
+                "The job will still be enqueued; the odds freshness gate remains authoritative.");
+            return;
+        }
+
+        _logger.LogInformation(
+            "Pre-job odds refresh completed. Pinnacle={PinnacleStatus}, Betano={BetanoStatus}.",
+            pinnacle?.Status ?? "Exception",
+            betano?.Status ?? "Exception");
+    }
+
+    private async Task<CornersPipelineStepResult?> RefreshOddsSourceBestEffortAsync(
+        string source,
+        Func<CancellationToken, Task<CornersPipelineStepResult>> refresh,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await refresh(cancellationToken);
+            if (!result.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "{Source} odds refresh failed before the recurring recommendation job: {Message}",
+                    source,
+                    result.Message);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "{Source} odds refresh raised an unexpected error before the recurring recommendation job.",
+                source);
+            return null;
+        }
     }
 
     private async Task TryRecordFailureAsync(

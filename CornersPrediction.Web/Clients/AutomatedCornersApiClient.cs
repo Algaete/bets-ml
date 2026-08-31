@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Net;
+using System.Text.Json;
 using CornersPrediction.Web.Models.BotPicks;
 
 namespace CornersPrediction.Web.Clients;
@@ -21,6 +23,88 @@ public sealed class AutomatedCornersApiClient
             cancellationToken);
 
         return selections ?? Array.Empty<BotPickSelectionViewModel>();
+    }
+
+    public async Task<IReadOnlyList<BotPerformanceScorecardViewModel>> GetPerformanceScorecardsAsync(
+        CancellationToken cancellationToken)
+    {
+        var scorecards = await _httpClient.GetFromJsonAsync<IReadOnlyList<BotPerformanceScorecardViewModel>>(
+            "/api/automated-corners/performance/scorecards",
+            cancellationToken);
+        return scorecards ?? [];
+    }
+
+    public async Task<BotPickRobustEvaluationDetailViewModel?> GetRobustEvaluationAsync(
+        long selectionId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"/api/robust-pick-evaluations/{selectionId}",
+            cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Robust pick evaluation lookup failed with {(int)response.StatusCode}."
+                    : errorBody);
+        }
+
+        return await response.Content.ReadFromJsonAsync<BotPickRobustEvaluationDetailViewModel>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("Robust pick evaluation returned an empty response.");
+    }
+
+    public async Task<BotPickIntelligenceDetailViewModel> GetFootballIntelligenceAsync(
+        long fixtureId,
+        DateTime? cutoffUtc,
+        CancellationToken cancellationToken)
+    {
+        var cutoffQuery = cutoffUtc.HasValue
+            ? $"?cutoffUtc={Uri.EscapeDataString(cutoffUtc.Value.ToUniversalTime().ToString("O"))}"
+            : string.Empty;
+        var latestTask = _httpClient.GetAsync(
+            $"/api/intelligence/fixtures/{fixtureId}/latest{cutoffQuery}",
+            cancellationToken);
+        var factsTask = _httpClient.GetFromJsonAsync<IReadOnlyList<BotPickIntelligenceFactViewModel>>(
+            $"/api/intelligence/fixtures/{fixtureId}/facts{cutoffQuery}",
+            cancellationToken);
+        var documentsTask = _httpClient.GetFromJsonAsync<IReadOnlyList<BotPickIntelligenceDocumentViewModel>>(
+            $"/api/intelligence/fixtures/{fixtureId}/documents{cutoffQuery}",
+            cancellationToken);
+        var snapshotsTask = _httpClient.GetFromJsonAsync<IReadOnlyList<BotPickIntelligenceSnapshotViewModel>>(
+            $"/api/intelligence/fixtures/{fixtureId}/snapshots",
+            cancellationToken);
+
+        await Task.WhenAll(latestTask, factsTask, documentsTask, snapshotsTask);
+        using var latestResponse = await latestTask;
+        JsonElement? latest = null;
+        if (latestResponse.IsSuccessStatusCode)
+        {
+            latest = await latestResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        }
+        else if (latestResponse.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            var errorBody = await latestResponse.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Football intelligence lookup failed with {(int)latestResponse.StatusCode}."
+                    : errorBody);
+        }
+
+        return new BotPickIntelligenceDetailViewModel
+        {
+            Latest = latest,
+            Facts = await factsTask ?? [],
+            Documents = await documentsTask ?? [],
+            Snapshots = await snapshotsTask ?? []
+        };
     }
 
     public async Task<BotPickSelectionViewModel> UpdateSelectionStatusAsync(

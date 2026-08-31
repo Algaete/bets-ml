@@ -86,6 +86,27 @@ public sealed class SqlServerRecommendationJobRepository : IRecommendationJobRep
             },
             cancellationToken);
 
+    public async Task<bool> RenewLeaseAsync(
+        Guid jobId,
+        string workerId,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        var command = new CommandDefinition(
+            "dbo.sp_HeartbeatAutomatedRecommendationJob",
+            new
+            {
+                RecommendationJobId = jobId,
+                WorkerId = workerId,
+                LeaseSeconds = Math.Clamp((int)leaseDuration.TotalSeconds, 60, 86400)
+            },
+            commandType: CommandType.StoredProcedure,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+        return await connection.ExecuteScalarAsync<int>(command) > 0;
+    }
+
     public Task<RecommendationJobDto?> CompleteBatchAsync(
         Guid jobId,
         string workerId,

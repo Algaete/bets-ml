@@ -19,7 +19,7 @@
         actionUpcoming = language == UiText.Spanish ? "Proximos partidos" : "Upcoming matches",
         actionPinnacle = "Pinnacle",
         actionBetano = "Betano",
-        actionBots = language == UiText.Spanish ? "Bot A + Bot B + Bot C" : "Bot A + Bot B + Bot C",
+        actionBots = language == UiText.Spanish ? "Todos los bots activos" : "All active bots",
         actionFull = language == UiText.Spanish ? "Flujo completo" : "Full pipeline"
     });
 }
@@ -37,10 +37,16 @@
 </div>
 
 <section class="surface-panel mb-4">
+    <div class="robot-preflight-grid mb-3" aria-label="Alcance del flujo">
+        <div><span>Próximos partidos</span><strong>API-Football</strong><small>Fuente oficial del pipeline</small></div>
+        <div><span>Persistencia</span><strong>Azure SQL</strong><small>Cuotas, historial y picks</small></div>
+        <div><span>Ejecución</span><strong>Todos los bots activos</strong><small>La selección viene del mantenedor</small></div>
+        <div><span>Mercados</span><strong>4 familias</strong><small>Córners, goles, tiros y tiros al arco</small></div>
+    </div>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
             <h2 class="h6 mb-1">Parametros</h2>
-            <div class="text-muted small">El flujo completo usa el rango elegido para MatchHistory y 7 dias para Upcoming Matches.</div>
+            <div class="text-muted small">El flujo completo usa el rango elegido para MatchHistory y 7 días para próximos partidos.</div>
         </div>
         <div class="robot-panel-controls">
             <label class="robot-panel-select">
@@ -60,7 +66,7 @@
                 </select>
             </label>
             <label class="robot-panel-select">
-                <span>Upcoming</span>
+                <span>Próximos</span>
                 <select id="RobotPanelUpcomingDays" class="form-select form-select-sm">
                     <option value="7" selected>7</option>
                 </select>
@@ -97,9 +103,9 @@
 
     <div class="robot-panel-actions">
         <button type="button" class="btn btn-outline-primary" data-action="match-history">1. MatchHistory</button>
-        <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">2. Upcoming matches</button>
-        <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">3. Pinnacle odds</button>
-        <button type="button" class="btn btn-outline-primary" data-action="betano-odds">4. Betano odds</button>
+        <button type="button" class="btn btn-outline-primary" data-action="upcoming-matches">2. Próximos partidos</button>
+        <button type="button" class="btn btn-outline-primary" data-action="pinnacle-odds">3. Cuotas Pinnacle</button>
+        <button type="button" class="btn btn-outline-primary" data-action="betano-odds">4. Cuotas Betano</button>
         <button type="button" class="btn btn-outline-secondary" data-action="run-bots">5. Ejecutar todos los bots habilitados</button>
         <button type="button" class="btn btn-primary" data-action="full-run">Ejecutar flujo completo</button>
     </div>
@@ -186,6 +192,7 @@
                     <th class="text-end">Errores</th>
                     <th class="text-end">Recomendaciones</th>
                     <th class="text-end">Resultados por bot</th>
+                    <th class="text-end">Duración</th>
                 </tr>
             </thead>
             <tbody id="RobotPanelSummaryBody"></tbody>
@@ -207,15 +214,16 @@
     <pre id="RobotPanelMissingHistoryJson" class="robot-panel-json"></pre>
 </section>
 
-<section class="surface-panel">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <div>
-            <h2 class="h6 mb-1">@UiText.T(language, "RobotPanel.JsonTitle")</h2>
-            <div class="text-muted small">Payload normalizado para revisar detalles de cada corrida.</div>
-        </div>
-    </div>
-    <pre id="RobotPanelJson" class="robot-panel-json">@UiText.T(language, "RobotPanel.JsonWaiting")</pre>
-</section>
+<details class="surface-panel robot-technical-details">
+    <summary>
+        <span>
+            <strong>@UiText.T(language, "RobotPanel.JsonTitle")</strong>
+            <small>Payload técnico normalizado para depuración.</small>
+        </span>
+        <span class="badge text-bg-light">Avanzado</span>
+    </summary>
+    <pre id="RobotPanelJson" class="robot-panel-json mt-3">@UiText.T(language, "RobotPanel.JsonWaiting")</pre>
+</details>
 
 @section Scripts {
     <script>
@@ -236,10 +244,10 @@
             const labels = @Html.Raw(labelsJson);
             const stepDefinitions = [
                 { key: 'match-history', title: 'MatchHistory', subtitle: 'Rango de fechas reciente' },
-                { key: 'upcoming-matches', title: 'Upcoming', subtitle: 'Sincroniza proximos 7 dias' },
+                { key: 'upcoming-matches', title: 'Próximos partidos', subtitle: 'Sincroniza los próximos 7 días' },
                 { key: 'pinnacle-odds', title: 'Pinnacle', subtitle: 'Busqueda de cuotas con persistencia' },
                 { key: 'betano-odds', title: 'Betano', subtitle: 'Busqueda de cuotas con timeout extendido' },
-                { key: 'run-bots', title: 'Bot A + Bot B + Bot C', subtitle: 'Incluye Modelos 2026 · lotes de hasta 100 cuotas' }
+                { key: 'run-bots', title: labels.actionBots, subtitle: 'Respeta el mantenedor · lotes de hasta 100 cuotas' }
             ];
 
             const state = {
@@ -396,6 +404,7 @@
                                 <span>Upd: ${numberOrDash(getValue(result, 'Updated'))}</span>
                                 <span>Err: ${numberOrDash(getValue(result, 'Errors'))}</span>
                                 ${botCounts}
+                                <span>Tiempo: ${getValue(result, 'DurationMs') == null ? '-' : `${(Number(getValue(result, 'DurationMs')) / 1000).toFixed(1)}s`}</span>
                             </div>
                             <div class="robot-step-message">${escapeHtml(message)}</div>
                         </article>
@@ -441,6 +450,7 @@
                         <td class="text-end">${getValue(step, 'StepKey') === 'run-bots'
                             ? escapeHtml(botCountsText(step))
                             : '-'}</td>
+                        <td class="text-end">${getValue(step, 'DurationMs') == null ? '-' : `${(Number(getValue(step, 'DurationMs')) / 1000).toFixed(1)}s`}</td>
                     </tr>
                 `).join('');
 
@@ -538,9 +548,11 @@
 
             const showSuccess = payload => {
                 const status = getValue(payload, 'Status') || (getValue(payload, 'IsSuccess') ? 'Success' : 'Failed');
-                const message = getValue(payload, 'PipelineName')
+                const headline = getValue(payload, 'PipelineName')
                     ? `${getValue(payload, 'PipelineName')}: ${status}`
                     : `${getValue(payload, 'StepName') || 'Step'}: ${status}`;
+                const detail = getValue(payload, 'ErrorMessage') || getValue(payload, 'Message');
+                const message = detail ? `${headline} — ${detail}` : headline;
 
                 statusElement.className = status === 'Failed'
                     ? 'alert alert-danger mb-4'

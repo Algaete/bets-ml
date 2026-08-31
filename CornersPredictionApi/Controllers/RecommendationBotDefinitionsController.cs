@@ -45,6 +45,14 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
         }
     }
 
+    [HttpGet("league-catalog")]
+    [ProducesResponseType(typeof(IReadOnlyList<RecommendationBotLeagueCatalogItem>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> LeagueCatalog(CancellationToken cancellationToken)
+    {
+        await _schemaRepository.EnsureSchemaAsync(cancellationToken);
+        return Ok(await _useCase.GetLeagueCatalogAsync(cancellationToken));
+    }
+
     [HttpPost]
     [ProducesResponseType(typeof(RecommendationBotDefinitionDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -143,5 +151,7 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
             request.MinOddsExclusive,
             request.MinProbabilityLiftOverImplied,
             request.StakeMultiplier,
-            request.StrategyConfigurationJson);
+            request.StrategyConfigurationJson,
+            request.PublishEnabled,
+            request.LeagueFilters);
 }

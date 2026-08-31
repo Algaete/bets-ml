@@ -522,11 +522,19 @@ namespace CornersMLData.Services
                 await PrepareMatchPageAsync(page);
 
                 var defaultSnapshot = await ExtractMatchSnapshotAsync(page);
-                var cornersSnapshot = await ExtractSnapshotForMarketTabAsync(page, "Córners");
-                var allMarketsSnapshot = await ExtractSnapshotForMarketTabAsync(page, "Todo");
-                var snapshot = allMarketsSnapshot.VisibleCards.Count > 0
-                    ? allMarketsSnapshot
-                    : defaultSnapshot;
+                var detectedMarketTabs = await ExtractMarketTabTextsAsync(page);
+                var marketSnapshots = new List<BetanoMatchSnapshot> { defaultSnapshot };
+
+                foreach (var marketTab in BuildRelevantMarketTabs(detectedMarketTabs))
+                {
+                    var marketSnapshot = await TryExtractSnapshotForMarketTabAsync(page, marketTab);
+                    if (marketSnapshot is not null)
+                        marketSnapshots.Add(marketSnapshot);
+                }
+
+                var snapshot = marketSnapshots
+                    .OrderByDescending(item => item.VisibleCards.Count)
+                    .FirstOrDefault() ?? defaultSnapshot;
                 var titleMatch = ParseMatchTitle(snapshot.PageTitle);
                 var homeTeam = titleMatch.HomeTeam ?? candidate.ParsedHomeTeam ?? string.Empty;
                 var awayTeam = titleMatch.AwayTeam ?? candidate.ParsedAwayTeam ?? string.Empty;
@@ -544,32 +552,55 @@ namespace CornersMLData.Services
                         cancellationToken) ?? string.Empty;
                 }
 
-                var cornersCards = cornersSnapshot.VisibleCards.Count > 0
-                    ? cornersSnapshot.VisibleCards
-                    : snapshot.VisibleCards;
-
-                var shotsCards = allMarketsSnapshot.VisibleCards.Count > 0
-                    ? allMarketsSnapshot.VisibleCards
-                    : snapshot.VisibleCards;
+                var allMarketCards = marketSnapshots
+                    .SelectMany(item => item.VisibleCards)
+                    .Where(card => !string.IsNullOrWhiteSpace(card))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var cornersCards = allMarketCards;
+                var shotsCards = allMarketCards;
 
                 var cornersText = cornersCards
                     .Where(x => x.StartsWith("BBCórners Más/Menos", StringComparison.OrdinalIgnoreCase))
                     .OrderByDescending(x => x.Length)
                     .FirstOrDefault();
 
-                var shotsText = shotsCards
-                    .Where(x =>
-                        x.StartsWith("BBTiros al Arco Más/Menos", StringComparison.OrdinalIgnoreCase)
-                        || x.StartsWith("BBRemates al Arco Más/Menos", StringComparison.OrdinalIgnoreCase)
-                        || x.StartsWith("BBTiros a puerta Más/Menos", StringComparison.OrdinalIgnoreCase)
-                        || x.StartsWith("BBRemates a puerta Más/Menos", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(x => x.Length)
-                    .FirstOrDefault();
+                var shotsOnTargetTokens = new[]
+                {
+                    "tirosalarco", "rematesalarco", "tirosapuerta", "rematesapuerta",
+                    "tirosaporteria", "rematesaporteria", "disparosalarco", "disparosapuerta",
+                    "disparosaporteria"
+                };
+                var shotsText = FindTotalMarketCard(
+                    shotsCards,
+                    shotsOnTargetTokens,
+                    excludedTokens: null,
+                    sourceHomeTeam,
+                    sourceAwayTeam);
 
-                var goalsText = FindMarketCard(shotsCards,
-                    "BBGoles Más/Menos", "BBTotal de Goles Más/Menos", "BBGoles - Más/Menos");
-                var totalShotsText = FindMarketCard(shotsCards,
-                    "BBTiros Más/Menos", "BBRemates Más/Menos", "BBTotal de Tiros Más/Menos", "BBTotal de Remates Más/Menos");
+                var goalsText = FindTotalMarketCard(
+                    shotsCards,
+                    new[] { "golestotales", "totaldegoles", "golesmasmenos" },
+                    new[] { "primertiempo", "segundotiempo", "jugador" },
+                    sourceHomeTeam,
+                    sourceAwayTeam)
+                    ?? FindMarketCard(shotsCards,
+                        "BBGoles Más/Menos", "BBGoles totales Más/Menos",
+                        "BBTotal de Goles Más/Menos", "BBGoles - Más/Menos");
+                var shotsTokens = new[] { "tiro", "remate", "disparo" };
+                var shotsExcludedTokens = new[]
+                {
+                    "alarco", "apuerta", "aporteria", "gol", "corner", "tarjeta"
+                };
+                var totalShotsText = FindTotalMarketCard(
+                    shotsCards,
+                    shotsTokens,
+                    shotsExcludedTokens,
+                    sourceHomeTeam,
+                    sourceAwayTeam)
+                    ?? FindMarketCard(shotsCards,
+                        "BBTiros Más/Menos", "BBRemates Más/Menos", "BBDisparos Más/Menos",
+                        "BBTotal de Tiros Más/Menos", "BBTotal de Remates Más/Menos", "BBTotal de Disparos Más/Menos");
                 var cardsText = FindMarketCard(shotsCards,
                     "BBTarjetas Más/Menos", "BBTotal de Tarjetas Más/Menos");
 
@@ -577,11 +608,8 @@ namespace CornersMLData.Services
                 var awayCornersText = FindTeamCornersCard(cornersCards, sourceAwayTeam);
                 var homeGoalsText = FindTeamMarketCard(shotsCards, sourceHomeTeam, new[] { "gol" });
                 var awayGoalsText = FindTeamMarketCard(shotsCards, sourceAwayTeam, new[] { "gol" });
-                var shotsOnTargetTokens = new[] { "tirosalarco", "rematesalarco", "tirosapuerta", "rematesapuerta" };
                 var homeShotsOnTargetText = FindTeamMarketCard(shotsCards, sourceHomeTeam, shotsOnTargetTokens);
                 var awayShotsOnTargetText = FindTeamMarketCard(shotsCards, sourceAwayTeam, shotsOnTargetTokens);
-                var shotsTokens = new[] { "tiro", "remate" };
-                var shotsExcludedTokens = new[] { "alarco", "apuerta" };
                 var homeShotsText = FindTeamMarketCard(shotsCards, sourceHomeTeam, shotsTokens, shotsExcludedTokens);
                 var awayShotsText = FindTeamMarketCard(shotsCards, sourceAwayTeam, shotsTokens, shotsExcludedTokens);
 
@@ -660,6 +688,14 @@ namespace CornersMLData.Services
                     ShotsHomeTeam = BuildMarket(homeShotsText, "Tiros del equipo local", readAllLines: true),
                     ShotsAwayTeam = BuildMarket(awayShotsText, "Tiros del equipo visitante", readAllLines: true),
                     CardsTotal = BuildMarket(cardsText, "Tarjetas Más/Menos", readAllLines: true),
+                    DetectedMarketTabs = detectedMarketTabs,
+                    DetectedMarketCards = allMarketCards
+                        .OrderByDescending(IsShotMarketCard)
+                        .ThenByDescending(card => NormalizeMarketText(card).Contains("gol", StringComparison.Ordinal))
+                        .Select(CompactMarketCard)
+                        .Distinct(StringComparer.Ordinal)
+                        .Take(40)
+                        .ToList(),
                     Notes = notes
                 };
 
@@ -736,7 +772,14 @@ namespace CornersMLData.Services
 
         private static IReadOnlyCollection<decimal> ExtractAvailableLines(string rawText)
         {
-            var matches = Regex.Matches(rawText, @"Más\s*de\s*(?<line>\d+(?:[\.,]\d+)?)\s*\d+[\.,]\d+\s*Menos\s*\k<line>", RegexOptions.IgnoreCase);
+            // Betano concatenates line and odds in the visible text (for example
+            // "Más de5.511.25Menos5.51.04"). Requiring the same line again on
+            // the Under side prevents the first digit of 11.25 from becoming
+            // part of a fake 5.51 line.
+            var matches = Regex.Matches(
+                rawText,
+                @"Más\s*de\s*(?<line>\d+(?:[\.,]\d{1,2})?)(?<over>\d+[\.,]\d{2})\s*Menos\s*\k<line>(?<under>\d+[\.,]\d{2})",
+                RegexOptions.IgnoreCase);
             return matches
                 .Select(match => ParseDecimal(match.Groups["line"].Value))
                 .Where(line => line.HasValue)
@@ -751,6 +794,34 @@ namespace CornersMLData.Services
             return cards
                 .Where(card => prefixes.Any(prefix => card.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(card => card.Length)
+                .FirstOrDefault();
+        }
+
+        private static string? FindTotalMarketCard(
+            IReadOnlyCollection<string> cards,
+            IReadOnlyCollection<string> includedTokens,
+            IReadOnlyCollection<string>? excludedTokens,
+            params string[] teamNames)
+        {
+            var normalizedTeamNames = teamNames
+                .Where(teamName => !string.IsNullOrWhiteSpace(teamName))
+                .Select(NormalizeMarketText)
+                .Where(teamName => teamName.Length > 0)
+                .ToArray();
+
+            return cards
+                .Select(card => new { Card = card, Key = NormalizeMarketText(card) })
+                .Where(item => ContainsOverUnderMarketText(item.Key))
+                .Where(item => includedTokens.Any(token => item.Key.Contains(token, StringComparison.Ordinal)))
+                .Where(item => excludedTokens == null || !excludedTokens.Any(token => item.Key.Contains(token, StringComparison.Ordinal)))
+                .Where(item => !item.Key.Contains("jugador", StringComparison.Ordinal))
+                .Where(item => !item.Key.Contains("mejorad", StringComparison.Ordinal))
+                .Where(item => !item.Key.Contains("betbuilder", StringComparison.Ordinal))
+                .Where(item => !normalizedTeamNames.Any(teamName => item.Key.Contains(teamName, StringComparison.Ordinal)))
+                .OrderByDescending(item => includedTokens.Any(token => item.Key.StartsWith($"bb{token}", StringComparison.Ordinal)))
+                .ThenByDescending(item => item.Key.Contains("total", StringComparison.Ordinal))
+                .ThenByDescending(item => item.Card.Length)
+                .Select(item => item.Card)
                 .FirstOrDefault();
         }
 
@@ -784,6 +855,7 @@ namespace CornersMLData.Services
             return cards
                 .Select(card => new { Card = card, Key = NormalizeMarketText(card) })
                 .Where(item => item.Key.Contains(teamKey, StringComparison.Ordinal))
+                .Where(item => ContainsOverUnderMarketText(item.Key))
                 .Where(item => includedTokens.Any(token => item.Key.Contains(token, StringComparison.Ordinal)))
                 .Where(item => excludedTokens == null || !excludedTokens.Any(token => item.Key.Contains(token, StringComparison.Ordinal)))
                 .OrderByDescending(item => item.Card.Contains("equipo", StringComparison.OrdinalIgnoreCase))
@@ -811,10 +883,36 @@ namespace CornersMLData.Services
             return builder.ToString();
         }
 
+        private static string CompactMarketCard(string value)
+        {
+            const int maximumLength = 180;
+            var compact = Regex.Replace(value, @"\s+", " ").Trim();
+            return compact.Length <= maximumLength
+                ? compact
+                : $"{compact[..maximumLength]}…";
+        }
+
+        private static bool ContainsOverUnderMarketText(string normalizedText) =>
+            normalizedText.Contains("mas", StringComparison.Ordinal)
+            && normalizedText.Contains("menos", StringComparison.Ordinal);
+
+        private static bool IsShotMarketCard(string value)
+        {
+            var normalized = NormalizeMarketText(value);
+            return ContainsOverUnderMarketText(normalized)
+                && (normalized.Contains("tiro", StringComparison.Ordinal)
+                    || normalized.Contains("remate", StringComparison.Ordinal)
+                    || normalized.Contains("disparo", StringComparison.Ordinal));
+        }
+
         private static BetanoLineOddsDto? TryExtractLine(string rawText, decimal line)
         {
-            var lineToken = line.ToString("0.0", CultureInfo.InvariantCulture);
-            var pattern = $@"Más\s*de\s*{Regex.Escape(lineToken)}\s*(?<over>\d+\.\d+)\s*Menos\s*{Regex.Escape(lineToken)}\s*(?<under>\d+\.\d+)";
+            var invariantLine = line.ToString("0.##", CultureInfo.InvariantCulture);
+            var lineToken = Regex.Escape(invariantLine).Replace("\\.", "[\\.,]", StringComparison.Ordinal);
+            if (decimal.Truncate(line) == line)
+                lineToken += @"(?:[\.,]0)?";
+
+            var pattern = $@"Más\s*de\s*{lineToken}\s*(?<over>\d+[\.,]\d+)\s*Menos\s*{lineToken}\s*(?<under>\d+[\.,]\d+)";
             var match = Regex.Match(rawText, pattern, RegexOptions.IgnoreCase);
             if (!match.Success)
                 return null;
@@ -1018,11 +1116,74 @@ namespace CornersMLData.Services
             await ExpandAllShowAllButtonsAsync(page);
         }
 
-        private async Task<BetanoMatchSnapshot> ExtractSnapshotForMarketTabAsync(IPage page, string tabText)
+        private async Task<BetanoMatchSnapshot?> TryExtractSnapshotForMarketTabAsync(IPage page, string tabText)
         {
-            await TryOpenMatchMarketTabAsync(page, tabText);
+            if (!await TryOpenMatchMarketTabAsync(page, tabText))
+                return null;
+
             await PrepareMatchPageAsync(page);
             return await ExtractMatchSnapshotAsync(page);
+        }
+
+        private async Task<List<string>> ExtractMarketTabTextsAsync(IPage page)
+        {
+            try
+            {
+                var rawJson = await page.EvaluateAsync<string>(
+                    @"() => {
+                        const norm = value => (value || '').replace(/\s+/g, ' ').trim();
+                        const candidates = Array.from(document.querySelectorAll('[role=""tab""], button, a, div, span'))
+                            .filter(el => {
+                                const rect = el.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            })
+                            .map(el => norm(el.textContent || ''))
+                            .filter(text => text && text.length <= 32);
+                        return JSON.stringify([...new Set(candidates)]);
+                    }");
+
+                return JsonSerializer.Deserialize<List<string>>(rawJson ?? "[]", JsonOptions)
+                    ?.Where(IsRelevantMarketTab)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList() ?? new List<string>();
+            }
+            catch (Exception exception)
+            {
+                _logger.LogDebug(exception, "No se pudieron descubrir las pestanas de mercados Betano.");
+                return new List<string>();
+            }
+        }
+
+        private static IReadOnlyCollection<string> BuildRelevantMarketTabs(IReadOnlyCollection<string> detectedTabs)
+        {
+            var fallbackTabs = new[]
+            {
+                "Todo", "Todos", "Principales", "Goles", "Equipos", "Tiros", "Remates",
+                "Estadísticas", "Especiales", "Jugadores", "Córners"
+            };
+
+            return detectedTabs
+                .Concat(fallbackTabs)
+                .Where(IsRelevantMarketTab)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToArray();
+        }
+
+        private static bool IsRelevantMarketTab(string value)
+        {
+            var normalized = NormalizeMarketText(value);
+            return normalized is
+                "todo" or "todos" or
+                "principal" or "principales" or
+                "gol" or "goles" or
+                "equipo" or "equipos" or
+                "tiro" or "tiros" or
+                "remate" or "remates" or
+                "estadistica" or "estadisticas" or
+                "especial" or "especiales" or
+                "jugador" or "jugadores" or
+                "corner" or "corners";
         }
 
         private async Task ScrollToRevealMoreAsync(IPage page)
@@ -1229,21 +1390,32 @@ namespace CornersMLData.Services
             }
         }
 
-        private async Task TryOpenMatchMarketTabAsync(IPage page, string tabText)
+        private async Task<bool> TryOpenMatchMarketTabAsync(IPage page, string tabText)
         {
             try
             {
                 var tabs = page.GetByText(tabText, new PageGetByTextOptions { Exact = true });
-                if (await tabs.CountAsync() != 1)
-                    return;
+                var count = await tabs.CountAsync();
+                if (count == 0)
+                    return false;
 
-                await tabs.Nth(0).ClickAsync(new LocatorClickOptions { Timeout = 1500 });
-                await page.WaitForTimeoutAsync(400);
+                for (var index = 0; index < count; index++)
+                {
+                    var tab = tabs.Nth(index);
+                    if (!await tab.IsVisibleAsync())
+                        continue;
+
+                    await tab.ClickAsync(new LocatorClickOptions { Timeout = 1500 });
+                    await page.WaitForTimeoutAsync(500);
+                    return true;
+                }
             }
             catch
             {
                 // Ignore tab navigation failures.
             }
+
+            return false;
         }
 
         private async Task<SqlConnection?> TryOpenConnectionAsync(CancellationToken cancellationToken)

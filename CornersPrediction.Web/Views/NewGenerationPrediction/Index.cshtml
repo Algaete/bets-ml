@@ -1,4 +1,5 @@
 @model CornersPrediction.Web.Models.NewGeneration.NewGenerationIndexViewModel
+@using System.Text.Json
 
 @{
     ViewData["Title"] = "Modelos 2026";
@@ -11,6 +12,9 @@
         .Where(value => !string.IsNullOrWhiteSpace(value))
         .Distinct()
         .SingleOrDefault() ?? "Pendiente";
+    var maeByTargetJson = JsonSerializer.Serialize(Model.ModelCatalog.Models.ToDictionary(
+        item => item.Target,
+        item => item.TestMae));
 }
 
 <style>
@@ -54,7 +58,9 @@
     .next-prediction-card .next-prediction-label { color:var(--bs-secondary-color); font-size:.72rem; font-weight:750; text-transform:uppercase; }
     .next-prediction-card .next-prediction-value { display:block; margin:.35rem 0 .15rem; color:var(--bs-body-color); font-size:2.15rem; line-height:1; }
     .next-prediction-card .next-prediction-rounded { display:block; font-size:.72rem; }
-    .next-prediction-card .next-prediction-meta { display:block; margin-top:.75rem; color:var(--bs-secondary-color); font-size:.64rem; overflow-wrap:anywhere; }
+    .next-prediction-card .next-prediction-mae { display:block; margin-top:.55rem; padding:.35rem .45rem; border-radius:8px; color:var(--bs-body-color); background:var(--card-bg-soft,#f1f5f9); font-size:.68rem; font-weight:750; }
+    .next-prediction-card .next-prediction-meta { display:block; margin-top:.55rem; color:var(--bs-secondary-color); font-size:.64rem; overflow-wrap:anywhere; }
+    .next-result-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem; }
     .next-payload-panel { margin-top:1rem; border:1px solid var(--app-border-color,#e2e8f0); border-radius:14px; overflow:hidden; }
     .next-payload-panel summary { cursor:pointer; padding:1rem; font-weight:700; background:rgba(124,58,237,.05); }
     .next-payload-body { padding:1rem; }
@@ -168,7 +174,7 @@
 
     <section id="NextPredictionResult" class="next-ml-card d-none" aria-live="polite">
         <div class="next-card-heading">
-            <div><h2>Predicciones del partido</h2><p>El decimal es el valor de análisis; el entero se muestra solo como referencia.</p></div>
+            <div><h2>Predicciones del partido</h2><p>El decimal es el valor de análisis. El MAE es una referencia de error medio de prueba, no un intervalo de certeza.</p></div>
         </div>
         <div class="next-result-head">
             <div><span>Partido</span><strong id="NextResultMatch">—</strong></div>
@@ -211,6 +217,10 @@
             </div>
         </div>
         <div id="NextPredictionWarnings" class="alert alert-warning mt-3 d-none"></div>
+        <div class="next-result-actions">
+            <a class="btn btn-sm btn-primary" asp-controller="BotPicks" asp-action="Index">Ver líneas evaluadas en Bot Picks</a>
+            <a class="btn btn-sm btn-outline-secondary" asp-controller="Predictions" asp-action="Index">Comparar con modelos legacy</a>
+        </div>
 
         <details class="next-payload-panel">
             <summary>Ver payload exacto utilizado por cada modelo</summary>
@@ -264,6 +274,7 @@
     let modelAvailable = @Model.ModelCatalog.Available.ToString().ToLowerInvariant();
     let payloadsByTarget = {};
     let labelsByTarget = {};
+    const maeByTarget = @Html.Raw(maeByTargetJson);
 
     const showError = message => {
         errorBox.textContent = message;
@@ -330,6 +341,7 @@
         document.querySelectorAll('[data-prediction-target]').forEach(card => {
             card.querySelector('[data-role="value"]').textContent = '—';
             card.querySelector('[data-role="rounded"]').textContent = 'Redondeado: —';
+            card.querySelector('[data-role="mae"]')?.remove();
             card.querySelector('[data-role="meta"]').textContent = 'No disponible';
         });
     };
@@ -371,19 +383,46 @@
             const predictions = value.predictions || [];
             resetPredictionCards();
             labelsByTarget = {};
+            const predictionByTarget = {};
             predictions.forEach(prediction => {
                 const card = Array.from(document.querySelectorAll('[data-prediction-target]')).find(item => item.dataset.predictionTarget === prediction.target);
                 if (!card) return;
                 card.querySelector('[data-role="value"]').textContent = Number(prediction.predictionClipped).toFixed(2);
                 card.querySelector('[data-role="rounded"]').textContent = `Redondeado: ${prediction.predictionRounded}`;
+                const mae = Number(maeByTarget[prediction.target]);
+                if (Number.isFinite(mae)) {
+                    const predicted = Number(prediction.predictionClipped);
+                    const lower = Math.max(0, predicted - mae);
+                    const upper = predicted + mae;
+                    const maeElement = document.createElement('span');
+                    maeElement.className = 'next-prediction-mae';
+                    maeElement.dataset.role = 'mae';
+                    maeElement.textContent = `MAE ${mae.toFixed(2)} · referencia ${lower.toFixed(2)}–${upper.toFixed(2)}`;
+                    card.querySelector('[data-role="rounded"]').insertAdjacentElement('afterend', maeElement);
+                }
                 card.querySelector('[data-role="meta"]').textContent = `${prediction.modelVersion || '—'} · ${prediction.featureSet || '—'} · hasta ${prediction.trainedThrough || '—'}`;
                 labelsByTarget[prediction.target] = prediction.displayName || prediction.target;
+                predictionByTarget[prediction.target] = Number(prediction.predictionClipped);
             });
             const match = value.match || {};
             $('NextResultMatch').textContent = `${match.homeTeam || payload.homeTeam} vs ${match.awayTeam || payload.awayTeam}`;
             $('NextResultContext').textContent = `${match.matchDate || payload.matchDate} · ${match.league || payload.league}`;
             $('NextResultDuration').textContent = `${value.durationMilliseconds || 0} ms · ${predictions.length} modelos`;
-            const warnings = value.warnings || [];
+            const warnings = [...(value.warnings || [])];
+            [
+                ['Corners', 'TargetHomeCorners', 'TargetAwayCorners', 'TargetTotalCorners'],
+                ['Tiros', 'TargetHomeShots', 'TargetAwayShots', 'TargetTotalShots'],
+                ['Tiros al arco', 'TargetHomeShotsOnGoal', 'TargetAwayShotsOnGoal', 'TargetTotalShotsOnGoal'],
+                ['Goles', 'TargetHomeGoals', 'TargetAwayGoals', 'TargetTotalGoals']
+            ].forEach(([label, homeTarget, awayTarget, totalTarget]) => {
+                const partsTotal = predictionByTarget[homeTarget] + predictionByTarget[awayTarget];
+                const directTotal = predictionByTarget[totalTarget];
+                const totalMae = Number(maeByTarget[totalTarget]);
+                const tolerance = Number.isFinite(totalMae) ? Math.max(0.75, totalMae) : 1;
+                if (Number.isFinite(partsTotal) && Number.isFinite(directTotal) && Math.abs(partsTotal - directTotal) > tolerance) {
+                    warnings.push(`${label}: local + visita (${partsTotal.toFixed(2)}) difiere del modelo total (${directTotal.toFixed(2)}). Revisa el payload antes de usar una línea.`);
+                }
+            });
             $('NextPredictionWarnings').textContent = warnings.join(' ');
             $('NextPredictionWarnings').classList.toggle('d-none', warnings.length === 0);
             payloadsByTarget = value.featurePayloads || {};

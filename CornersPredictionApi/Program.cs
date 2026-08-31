@@ -3,12 +3,16 @@ using CornersMLData.Data;
 using CornersMLData.Services;
 using CornersPrediction.Application;
 using CornersPrediction.Application.Automation.BotC;
+using CornersPrediction.Application.Automation.BotG;
+using CornersPrediction.Application.FootballIntelligence;
+using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPrediction.Infrastructure;
 using CornersPrediction.Infrastructure.Persistence;
 using CornersPredictionApi.ApiFootball;
 using CornersPredictionApi.CompetitionFiltering;
 using CornersPredictionApi.NewGenerationMl;
 using CornersPredictionApi.RecommendationJobs;
+using CornersPredictionApi.FootballIntelligence;
 using DotNetEnv;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Data.SqlClient;
@@ -33,11 +37,61 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddMemoryCache();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.Configure<AutomatedBotOptions>(builder.Configuration.GetSection("AutomatedBot"));
 builder.Services.Configure<BotCMetaModelOptions>(builder.Configuration.GetSection(BotCMetaModelOptions.SectionName));
 builder.Services.AddSingleton<IBotCMetaModelPredictor, FileBotCMetaModelPredictor>();
+builder.Services.Configure<BotGArtifactOptions>(builder.Configuration.GetSection(BotGArtifactOptions.SectionName));
+builder.Services.AddOptions<BotGShadowSettlementOptions>()
+    .Bind(builder.Configuration.GetSection(BotGShadowSettlementOptions.SectionName))
+    .Validate(options => options.StartupDelaySeconds is >= 0 and <= 3600
+        && options.PollMinutes is >= 1 and <= 1440
+        && options.MaximumCandidates is >= 1 and <= 50_000,
+        "Bot G shadow settlement limits are invalid.")
+    .ValidateOnStart();
+builder.Services.AddOptions<RobustPickEvaluationOptions>()
+    .Bind(builder.Configuration.GetSection(RobustPickEvaluationOptions.SectionName))
+    .Validate(options => options.Mode is "Shadow" or "Enforce" or "Disabled"
+        && !string.IsNullOrWhiteSpace(options.Version)
+        && options.SimulationCount is >= 100 and <= 100_000
+        && options.OuterScenarioCount is >= 10 and <= 20_000
+        && options.ProbabilityLowerQuantile is > 0 and < 0.5m
+        && options.ProbabilityUpperQuantile is > 0.5m and < 1m
+        && options.OutcomeAvailabilityLagHours is >= 0 and <= 168
+        && options.EvaluationTimeoutSeconds is >= 1 and <= 600
+        && options.MinimumReevaluationIntervalSeconds is >= 0 and <= 86_400
+        && options.SignificantOddsMovement is > 0 and <= 10m
+        && options.SignificantLineMovement is > 0 and <= 100m
+        && options.DefaultMaxOddsAgeSeconds is >= 1 and <= 86_400
+        && options.MaxLineupOddsAgeSeconds is >= 1 and <= 86_400
+        && options.MaxOddsAgeSecondsBySource.Count > 0
+        && options.MaxOddsAgeSecondsBySource.All(pair =>
+            !string.IsNullOrWhiteSpace(pair.Key) && pair.Value is >= 1 and <= 86_400)
+        && options.Residuals.MinimumEffectiveN >= 1m
+        && options.Residuals.TargetEffectiveN >= options.Residuals.MinimumEffectiveN
+        && options.Residuals.RecencyHalfLifeDays > 0m
+        && options.Residuals.ErrorScaleEpsilon > 0m
+        && options.Policy.MinPositiveEvStability is >= 0m and <= 1m
+        && options.Policy.MinScenarioSideStability is >= 0m and <= 1m
+        && options.Policy.MinCalibrationReliability is >= 0m and <= 1m
+        && !options.Stake.AllowIncrease
+        && options.Stake.HighRobustnessThreshold >= options.Stake.MediumRobustnessThreshold
+        && options.Stake.MediumRobustnessThreshold >= options.Stake.MinimumRobustnessThreshold
+        && options.Stake.MinimumRobustnessThreshold is >= 0m and <= 1m
+        && options.Stake.HighRobustnessThreshold is >= 0m and <= 1m
+        && options.Exposure.MaximumStakePerFixture > 0m
+        && options.Exposure.MaximumStakePerTeam > 0m
+        && options.Exposure.MaximumStakePerCorrelationCluster > 0m
+        && options.Exposure.MaximumRelatedPicksPerFixture > 0,
+        "Robust Pick Evaluation configuration is invalid or would permit a v1 stake increase.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<BotGArtifactRuntime>();
+builder.Services.AddSingleton<IBotGMetaModelService>(provider =>
+    provider.GetRequiredService<BotGArtifactRuntime>());
+builder.Services.AddSingleton<IBotGArtifactEvidenceProvider>(provider =>
+    provider.GetRequiredService<BotGArtifactRuntime>());
 builder.Services.Configure<CompetitionFilterOptions>(
     builder.Configuration.GetSection(CompetitionFilterOptions.SectionName));
 builder.Services.AddSingleton<CompetitionEligibilityPolicy>();
@@ -56,7 +110,9 @@ builder.Services.AddHttpClient<PinnacleUpcomingOddsScraper>(client =>
 builder.Services.AddSingleton<SqlAutomationRepository>();
 builder.Services.AddSingleton<FeatureBuilder>();
 builder.Services.AddHttpClient<PredictionApiClient>();
+builder.Services.AddScoped<BotGAutomationService>();
 builder.Services.AddScoped<AutomatedCornersSelectionService>();
+builder.Services.AddHostedService<BotGShadowSettlementWorker>();
 builder.Services.Configure<ApiFootballOptions>(builder.Configuration.GetSection(ApiFootballOptions.SectionName));
 builder.Services.AddHttpClient<ApiFootballClient>((serviceProvider, client) =>
 {
@@ -69,6 +125,77 @@ builder.Services.AddScoped<ApiFootballRepository>();
 builder.Services.AddScoped<ApiFootballSyncService>();
 builder.Services.AddScoped<ApiFootballBotPickReconciliationService>();
 builder.Services.AddScoped<ApiFootballUpcomingMatchesSyncService>();
+builder.Services.AddOptions<FootballIntelligenceOptions>()
+    .Bind(builder.Configuration.GetSection(FootballIntelligenceOptions.SectionName))
+    .Validate(options => options.FixtureLookAheadHours is >= 1 and <= 168
+        && options.MaxConcurrentFixtures is >= 1 and <= 8
+        && options.WorkerPollMinutes is >= 1 and <= 60
+        && options.ArticleMaxCharacters is >= 500 and <= 100_000
+        && options.MaximumQueriesPerTeam is >= 1 and <= 30
+        && options.MaximumArticlesPerTeam is >= 1 and <= 30
+        && options.CutoffsMinutesBeforeKickoff.Length > 0
+        && options.CutoffsMinutesBeforeKickoff.All(value => value >= 0),
+        "FootballIntelligence limits and cutoff schedule are invalid.")
+    .ValidateOnStart();
+builder.Services.AddOptions<NewsSearchOptions>()
+    .Bind(builder.Configuration.GetSection(NewsSearchOptions.SectionName))
+    .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _)
+        && options.TimeoutSeconds is >= 5 and <= 120
+        && options.MaximumResultsPerQuery is >= 1 and <= 20
+        && options.MinimumRequestDelayMilliseconds >= 0,
+        "FootballIntelligence news-search options are invalid.")
+    .ValidateOnStart();
+builder.Services.AddOptions<NewsLlmOptions>()
+    .Bind(builder.Configuration.GetSection(NewsLlmOptions.SectionName))
+    .Validate(options => !options.Enabled
+        || (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _)
+            && !string.IsNullOrWhiteSpace(options.ApiKey)
+            && !string.IsNullOrWhiteSpace(options.Model)
+            && !string.IsNullOrWhiteSpace(options.PromptVersion)
+            && options.TimeoutSeconds is >= 5 and <= 180),
+        "FootballIntelligence OpenAI options are incomplete or invalid.")
+    .ValidateOnStart();
+builder.Services.AddScoped<IStructuredFootballDataProvider, ApiFootballStructuredDataProvider>();
+builder.Services.AddScoped<IEntityResolver, FootballEntityResolver>();
+builder.Services.AddHttpClient<BraveNewsSearchProvider>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<NewsSearchOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("CornersPrediction-IntelligenceSearch/1.0");
+});
+builder.Services.AddScoped<INewsSearchProvider>(provider =>
+    provider.GetRequiredService<BraveNewsSearchProvider>());
+builder.Services.AddHttpClient<HttpArticleContentExtractor>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("CornersPrediction-ArticleExtractor/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    AutomaticDecompression = System.Net.DecompressionMethods.GZip
+        | System.Net.DecompressionMethods.Deflate
+});
+builder.Services.AddScoped<IArticleContentExtractor>(provider =>
+    provider.GetRequiredService<HttpArticleContentExtractor>());
+builder.Services.AddHttpClient<OpenAiNewsFactExtractor>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<NewsLlmOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 180));
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("CornersPrediction-FootballNews/1.0");
+});
+builder.Services.AddScoped<ILlmFactExtractionClient>(provider =>
+    provider.GetRequiredService<OpenAiNewsFactExtractor>());
+builder.Services.AddScoped<INewsFactExtractor>(provider =>
+{
+    var options = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<NewsLlmOptions>>().Value;
+    return options.Enabled
+        ? provider.GetRequiredService<OpenAiNewsFactExtractor>()
+        : provider.GetRequiredService<RuleBasedNewsFactExtractor>();
+});
+builder.Services.AddScoped<IMatchIntelligenceService, MatchIntelligenceService>();
+builder.Services.AddHostedService<UpcomingFixtureIntelligenceWorker>();
 builder.Services.AddSingleton<ApiFootballHistoricalBatchCoordinator>();
 builder.Services.Configure<NewGenerationMlOptions>(
     builder.Configuration.GetSection(NewGenerationMlOptions.SectionName));
@@ -79,6 +206,7 @@ builder.Services.AddScoped<NewGenerationPredictionService>();
 builder.Services.Configure<RecommendationJobOptions>(
     builder.Configuration.GetSection(RecommendationJobOptions.SectionName));
 builder.Services.AddHostedService<RecommendationJobWorker>();
+builder.Services.AddSingleton<FootballIntelligenceSchemaInitializer>();
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -148,17 +276,20 @@ if (swaggerEnabled)
 
 app.MapControllers();
 
-if (!string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("DefaultConnection")))
-{
-    app.Lifetime.ApplicationStarted.Register(() =>
-    {
-        _ = Task.Run(() => InitializeRobotDatabaseAsync(app.Services));
-    });
-}
-
 app.Logger.LogInformation("Initializing the local API database");
 await DatabaseInitializer.EnsureDatabaseCreatedAsync(app.Services);
 app.Logger.LogInformation("Local API database is ready");
+
+// Finish schema verification before accepting requests. Running the same work
+// from ApplicationStarted allowed the first dashboard requests to queue behind
+// the migration semaphore and then hit their UI timeout even though SQL was
+// healthy. Startup now has one honest readiness boundary instead of exposing a
+// half-ready API.
+if (!string.IsNullOrWhiteSpace(app.Configuration.GetConnectionString("DefaultConnection")))
+{
+    app.Logger.LogInformation("Initializing robot database objects");
+    await InitializeRobotDatabaseAsync(app.Services);
+}
 
 app.Run();
 
@@ -201,6 +332,14 @@ static IDictionary<string, string?> BuildDeploymentConfigurationFromEnvironment(
             Environment.GetEnvironmentVariable("AUTOMATED_BOT_PREDICTION_API_BASE_URL"),
         ["AutomatedBot:PredictionApi:InternalApiKey"] = Environment.GetEnvironmentVariable("INTERNAL_API_KEY"),
         ["ApiFootball:ApiKey"] = Environment.GetEnvironmentVariable("API_FOOTBALL_KEY"),
+        ["FootballIntelligence:Enabled"] = Environment.GetEnvironmentVariable("FOOTBALL_INTELLIGENCE_ENABLED"),
+        ["FootballIntelligence:WorkerEnabled"] = Environment.GetEnvironmentVariable("FOOTBALL_INTELLIGENCE_WORKER_ENABLED"),
+        ["FootballIntelligence:WorkerPollMinutes"] = Environment.GetEnvironmentVariable("FOOTBALL_INTELLIGENCE_WORKER_POLL_MINUTES"),
+        ["FootballIntelligence:NewsSearch:Provider"] = Environment.GetEnvironmentVariable("FOOTBALL_NEWS_SEARCH_PROVIDER"),
+        ["FootballIntelligence:NewsSearch:ApiKey"] = Environment.GetEnvironmentVariable("BRAVE_SEARCH_API_KEY"),
+        ["FootballIntelligence:OpenAI:Enabled"] = Environment.GetEnvironmentVariable("FOOTBALL_NEWS_OPENAI_ENABLED"),
+        ["FootballIntelligence:OpenAI:ApiKey"] = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
+        ["FootballIntelligence:OpenAI:Model"] = Environment.GetEnvironmentVariable("FOOTBALL_NEWS_OPENAI_MODEL"),
         ["NewGenerationMl:ModelsRoot"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_MODELS_ROOT"),
         ["NewGenerationMl:ActiveVersion"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_ACTIVE_VERSION"),
         ["NewGenerationMl:PythonExecutable"] = Environment.GetEnvironmentVariable("NEW_GENERATION_ML_PYTHON_EXECUTABLE"),
@@ -209,6 +348,13 @@ static IDictionary<string, string?> BuildDeploymentConfigurationFromEnvironment(
         ["BotCMetaModel:Enabled"] = Environment.GetEnvironmentVariable("BOT_C_META_MODEL_ENABLED"),
         ["BotCMetaModel:ArtifactPath"] = Environment.GetEnvironmentVariable("BOT_C_META_MODEL_ARTIFACT_PATH"),
         ["BotCMetaModel:ArtifactPaths:bot-d-features-1.0.0"] = Environment.GetEnvironmentVariable("BOT_D_META_MODEL_ARTIFACT_PATH"),
+        ["BotG:Enabled"] = Environment.GetEnvironmentVariable("BOT_G_ENABLED"),
+        ["BotG:ArtifactPath"] = Environment.GetEnvironmentVariable("BOT_G_ARTIFACT_PATH"),
+        ["RobustPickEvaluation:Enabled"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_ENABLED"),
+        ["RobustPickEvaluation:Mode"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_MODE"),
+        ["RobustPickEvaluation:Version"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_VERSION"),
+        ["RobustPickEvaluation:OutcomeAvailabilityLagHours"] = Environment.GetEnvironmentVariable("ROBUST_PICK_OUTCOME_AVAILABILITY_LAG_HOURS"),
+        ["RobustPickEvaluation:DefaultMaxOddsAgeSeconds"] = Environment.GetEnvironmentVariable("ROBUST_PICK_DEFAULT_MAX_ODDS_AGE_SECONDS"),
         ["PinnacleGuestApi:BaseUrl"] = Environment.GetEnvironmentVariable("PINNACLE_GUEST_API_BASE_URL"),
         ["PinnacleGuestApi:ApiKey"] = Environment.GetEnvironmentVariable("PINNACLE_GUEST_API_KEY"),
         ["BetanoScraping:BrowserChannel"] = Environment.GetEnvironmentVariable("BETANO_BROWSER_CHANNEL"),
@@ -248,11 +394,17 @@ static async Task InitializeRobotDatabaseAsync(IServiceProvider services)
             .GetRequiredService<CanonicalNameNormalizationRepository>()
             .EnsureReadyAsync();
         await scope.ServiceProvider
+            .GetRequiredService<ApiFootballRepository>()
+            .EnsureSchemaAsync(CancellationToken.None);
+        await scope.ServiceProvider
             .GetRequiredService<SqlAutomationRepository>()
             .EnsureSchemaAsync(CancellationToken.None);
         await scope.ServiceProvider
-            .GetRequiredService<ApiFootballRepository>()
+            .GetRequiredService<IRobustPickEvaluationRepository>()
             .EnsureSchemaAsync(CancellationToken.None);
+        await scope.ServiceProvider
+            .GetRequiredService<FootballIntelligenceSchemaInitializer>()
+            .EnsureReadyAsync(CancellationToken.None);
         await EnsureMatchHistoryPerformanceIndexesAsync(scope.ServiceProvider, CancellationToken.None);
         logger.LogInformation("Robot database objects are ready.");
     }

@@ -79,8 +79,23 @@ public sealed class ApiFootballClient
         // not reuse an earlier, incomplete response from the same process.
         GetAsync($"/fixtures/statistics?fixture={fixtureId}", cancellationToken);
 
+    public Task<JsonElement> GetFixtureStatisticsCachedAsync(long fixtureId, CancellationToken cancellationToken) =>
+        // A bulk synchronization probes up to two fixtures before processing the
+        // whole competition. Reuse only those responses inside the same scoped
+        // bulk request so the probe is not charged and awaited twice.
+        GetCachedAsync($"/fixtures/statistics?fixture={fixtureId}", cancellationToken);
+
     public Task<JsonElement> GetFixtureLineupsAsync(long fixtureId, CancellationToken cancellationToken) =>
         GetCachedAsync($"/fixtures/lineups?fixture={fixtureId}", cancellationToken);
+
+    public Task<JsonElement> GetFixtureInjuriesAsync(long fixtureId, CancellationToken cancellationToken) =>
+        GetAsync($"/injuries?fixture={fixtureId}", cancellationToken);
+
+    public Task<JsonElement> GetSquadAsync(int teamId, CancellationToken cancellationToken) =>
+        GetCachedAsync($"/players/squads?team={teamId}", cancellationToken);
+
+    public Task<JsonElement> GetFixturePlayersAsync(long fixtureId, CancellationToken cancellationToken) =>
+        GetAsync($"/fixtures/players?fixture={fixtureId}", cancellationToken);
 
     public Task<JsonElement> GetStandingsAsync(int leagueId, int season, CancellationToken cancellationToken) =>
         GetAsync($"/standings?league={leagueId}&season={season}", cancellationToken);

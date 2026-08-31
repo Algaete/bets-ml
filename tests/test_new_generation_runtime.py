@@ -176,7 +176,8 @@ class HomeCorners2026RuntimeTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             actual = list(pool.map(execute, cases))
         expected = [case["expected"]["prediction_raw"] for case in cases]
-        for left, right in zip(actual, expected, strict=True):
+        self.assertEqual(len(actual), len(expected))
+        for left, right in zip(actual, expected):
             self.assertLessEqual(abs(left - right), self.fixture["tolerance"])
 
     def test_worker_loads_model_once(self):

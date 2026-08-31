@@ -4,6 +4,7 @@ public sealed class AutomatedCornerSelectionDto
 {
     public long AutomatedCornerBetSelectionId { get; init; }
     public Guid RunId { get; init; }
+    public string BotKey { get; init; } = string.Empty;
     public string AutomationVersion { get; init; } = string.Empty;
     public string Source { get; init; } = string.Empty;
     public string? SourceMatchId { get; init; }

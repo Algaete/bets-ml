@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,20 +19,112 @@ namespace CornersMLData.Data
         private const int MaximumPersistenceAttempts = 3;
         private static readonly SemaphoreSlim DatabaseObjectsLock = new(1, 1);
         private static bool _databaseObjectsVerified;
-        private const string UpsertAndSnapshotSql = """
-            EXEC dbo.sp_UpsertPartidoProximoCuotaBetano
-                @SourceMatchId = @SourceMatchId,
-                @SourceUrl = @SourceUrl,
-                @MatchDate = @MatchDate,
-                @League = @League,
-                @HomeTeam = @HomeTeam,
-                @AwayTeam = @AwayTeam,
-                @HomeTeamGender = @HomeTeamGender,
-                @AwayTeamGender = @AwayTeamGender,
-                @MarketType = @MarketType,
-                @LineValue = @LineValue,
-                @OverOdds = @OverOdds,
-                @UnderOdds = @UnderOdds;
+        private const string UpsertMatchBatchSql = """
+            MERGE dbo.PartidosProximosCuotas AS Target
+            USING
+            (
+                SELECT
+                    Source,
+                    SourceMatchId,
+                    SourceUrl,
+                    MatchDate,
+                    League,
+                    StandardizedLeague,
+                    HomeTeam,
+                    AwayTeam,
+                    StandardizedHomeTeam,
+                    StandardizedAwayTeam,
+                    HomeTeamGender,
+                    AwayTeamGender,
+                    MarketType,
+                    LineValue,
+                    OverOdds,
+                    UnderOdds
+                FROM OPENJSON(@RowsJson)
+                WITH
+                (
+                    Source NVARCHAR(30) '$.Source',
+                    SourceMatchId NVARCHAR(100) '$.SourceMatchId',
+                    SourceUrl NVARCHAR(1000) '$.SourceUrl',
+                    MatchDate DATETIME2 '$.MatchDate',
+                    League NVARCHAR(300) '$.League',
+                    StandardizedLeague NVARCHAR(300) '$.StandardizedLeague',
+                    HomeTeam NVARCHAR(300) '$.HomeTeam',
+                    AwayTeam NVARCHAR(300) '$.AwayTeam',
+                    StandardizedHomeTeam NVARCHAR(300) '$.StandardizedHomeTeam',
+                    StandardizedAwayTeam NVARCHAR(300) '$.StandardizedAwayTeam',
+                    HomeTeamGender NVARCHAR(1) '$.HomeTeamGender',
+                    AwayTeamGender NVARCHAR(1) '$.AwayTeamGender',
+                    MarketType NVARCHAR(50) '$.MarketType',
+                    LineValue DECIMAL(10, 2) '$.LineValue',
+                    OverOdds DECIMAL(18, 6) '$.OverOdds',
+                    UnderOdds DECIMAL(18, 6) '$.UnderOdds'
+                )
+            ) AS Source
+                ON Target.Source = Source.Source
+               AND CAST(Target.MatchDate AS DATE) = CAST(Source.MatchDate AS DATE)
+               AND COALESCE(Target.StandardizedLeague, Target.League) = COALESCE(Source.StandardizedLeague, Source.League)
+               AND COALESCE(Target.StandardizedHomeTeam, Target.HomeTeam) = COALESCE(Source.StandardizedHomeTeam, Source.HomeTeam)
+               AND COALESCE(Target.StandardizedAwayTeam, Target.AwayTeam) = COALESCE(Source.StandardizedAwayTeam, Source.AwayTeam)
+               AND Target.MarketType = Source.MarketType
+               AND Target.LineValue = Source.LineValue
+            WHEN MATCHED THEN
+                UPDATE SET
+                    Target.SourceMatchId = Source.SourceMatchId,
+                    Target.SourceUrl = Source.SourceUrl,
+                    Target.MatchDate = Source.MatchDate,
+                    Target.League = Source.League,
+                    Target.StandardizedLeague = Source.StandardizedLeague,
+                    Target.HomeTeam = Source.HomeTeam,
+                    Target.AwayTeam = Source.AwayTeam,
+                    Target.StandardizedHomeTeam = Source.StandardizedHomeTeam,
+                    Target.StandardizedAwayTeam = Source.StandardizedAwayTeam,
+                    Target.HomeTeamGender = Source.HomeTeamGender,
+                    Target.AwayTeamGender = Source.AwayTeamGender,
+                    Target.OverOdds = Source.OverOdds,
+                    Target.UnderOdds = Source.UnderOdds,
+                    Target.UpdatedAtUtc = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT
+                (
+                    Source,
+                    SourceMatchId,
+                    SourceUrl,
+                    MatchDate,
+                    League,
+                    StandardizedLeague,
+                    HomeTeam,
+                    AwayTeam,
+                    StandardizedHomeTeam,
+                    StandardizedAwayTeam,
+                    HomeTeamGender,
+                    AwayTeamGender,
+                    MarketType,
+                    LineValue,
+                    OverOdds,
+                    UnderOdds,
+                    UpdatedAtUtc
+                )
+                VALUES
+                (
+                    Source.Source,
+                    Source.SourceMatchId,
+                    Source.SourceUrl,
+                    Source.MatchDate,
+                    Source.League,
+                    Source.StandardizedLeague,
+                    Source.HomeTeam,
+                    Source.AwayTeam,
+                    Source.StandardizedHomeTeam,
+                    Source.StandardizedAwayTeam,
+                    Source.HomeTeamGender,
+                    Source.AwayTeamGender,
+                    Source.MarketType,
+                    Source.LineValue,
+                    Source.OverOdds,
+                    Source.UnderOdds,
+                    SYSUTCDATETIME()
+                );
 
             INSERT INTO dbo.CornerOddsSnapshots
             (
@@ -53,25 +146,43 @@ namespace CornersMLData.Data
                 OverOdds,
                 UnderOdds
             )
-            VALUES
-            (
+            SELECT
                 @CapturedAtUtc,
-                N'Betano',
-                @SourceMatchId,
-                @SourceUrl,
-                @MatchDate,
-                @League,
-                @StandardizedLeague,
-                @HomeTeam,
-                @AwayTeam,
-                @StandardizedHomeTeam,
-                @StandardizedAwayTeam,
-                @HomeTeamGender,
-                @AwayTeamGender,
-                @MarketType,
-                @LineValue,
-                @OverOdds,
-                @UnderOdds
+                Source,
+                SourceMatchId,
+                SourceUrl,
+                MatchDate,
+                League,
+                StandardizedLeague,
+                HomeTeam,
+                AwayTeam,
+                StandardizedHomeTeam,
+                StandardizedAwayTeam,
+                HomeTeamGender,
+                AwayTeamGender,
+                MarketType,
+                LineValue,
+                OverOdds,
+                UnderOdds
+            FROM OPENJSON(@RowsJson)
+            WITH
+            (
+                Source NVARCHAR(30) '$.Source',
+                SourceMatchId NVARCHAR(100) '$.SourceMatchId',
+                SourceUrl NVARCHAR(1000) '$.SourceUrl',
+                MatchDate DATETIME2 '$.MatchDate',
+                League NVARCHAR(300) '$.League',
+                StandardizedLeague NVARCHAR(300) '$.StandardizedLeague',
+                HomeTeam NVARCHAR(300) '$.HomeTeam',
+                AwayTeam NVARCHAR(300) '$.AwayTeam',
+                StandardizedHomeTeam NVARCHAR(300) '$.StandardizedHomeTeam',
+                StandardizedAwayTeam NVARCHAR(300) '$.StandardizedAwayTeam',
+                HomeTeamGender NVARCHAR(1) '$.HomeTeamGender',
+                AwayTeamGender NVARCHAR(1) '$.AwayTeamGender',
+                MarketType NVARCHAR(50) '$.MarketType',
+                LineValue DECIMAL(10, 2) '$.LineValue',
+                OverOdds DECIMAL(18, 6) '$.OverOdds',
+                UnderOdds DECIMAL(18, 6) '$.UnderOdds'
             );
             """;
 
@@ -356,56 +467,23 @@ END;
             if (match.MatchDateLocal == null)
                 return 0;
 
-            var persistedRows = 0;
+            var rows = BuildMatchRows(match);
+            if (rows.Count == 0)
+                return 0;
 
-            persistedRows += await UpsertMarketAsync(
-                conn,
-                tx,
-                match,
-                "CornersTotal",
-                match.CornersTotal,
-                capturedAtUtc,
-                cancellationToken);
+            await conn.ExecuteAsync(new CommandDefinition(
+                commandText: UpsertMatchBatchSql,
+                parameters: new
+                {
+                    RowsJson = JsonSerializer.Serialize(rows),
+                    CapturedAtUtc = capturedAtUtc
+                },
+                transaction: tx,
+                commandType: CommandType.Text,
+                commandTimeout: 120,
+                cancellationToken: cancellationToken));
 
-            persistedRows += await UpsertMarketAsync(
-                conn,
-                tx,
-                match,
-                "CornersHomeTeam",
-                match.CornersHomeTeam,
-                capturedAtUtc,
-                cancellationToken);
-
-            persistedRows += await UpsertMarketAsync(
-                conn,
-                tx,
-                match,
-                "CornersAwayTeam",
-                match.CornersAwayTeam,
-                capturedAtUtc,
-                cancellationToken);
-
-            persistedRows += await UpsertMarketAsync(
-                conn,
-                tx,
-                match,
-                "ShotsOnTargetTotal",
-                match.ShotsOnTargetTotal,
-                capturedAtUtc,
-                cancellationToken);
-
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "ShotsOnTargetHomeTeam", match.ShotsOnTargetHomeTeam, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "ShotsOnTargetAwayTeam", match.ShotsOnTargetAwayTeam, capturedAtUtc, cancellationToken);
-
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "GoalsTotal", match.GoalsTotal, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "GoalsHomeTeam", match.GoalsHomeTeam, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "GoalsAwayTeam", match.GoalsAwayTeam, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "ShotsTotal", match.ShotsTotal, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "ShotsHomeTeam", match.ShotsHomeTeam, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "ShotsAwayTeam", match.ShotsAwayTeam, capturedAtUtc, cancellationToken);
-            persistedRows += await UpsertMarketAsync(conn, tx, match, "CardsTotal", match.CardsTotal, capturedAtUtc, cancellationToken);
-
-            return persistedRows;
+            return rows.Count;
         }
 
         private async Task NormalizeMatchIdentityAsync(
@@ -439,56 +517,69 @@ END;
             match.StandardizedAwayTeam = match.AwayTeam;
         }
 
-        private static async Task<int> UpsertMarketAsync(
-            SqlConnection conn,
-            SqlTransaction tx,
+        private static IReadOnlyCollection<BetanoOddsRow> BuildMatchRows(
+            BetanoUpcomingFootballOddsMatch match)
+        {
+            var rows = new Dictionary<string, BetanoOddsRow>(StringComparer.OrdinalIgnoreCase);
+            AddMarketRows(rows, match, "CornersTotal", match.CornersTotal);
+            AddMarketRows(rows, match, "CornersHomeTeam", match.CornersHomeTeam);
+            AddMarketRows(rows, match, "CornersAwayTeam", match.CornersAwayTeam);
+            AddMarketRows(rows, match, "ShotsOnTargetTotal", match.ShotsOnTargetTotal);
+            AddMarketRows(rows, match, "ShotsOnTargetHomeTeam", match.ShotsOnTargetHomeTeam);
+            AddMarketRows(rows, match, "ShotsOnTargetAwayTeam", match.ShotsOnTargetAwayTeam);
+            AddMarketRows(rows, match, "GoalsTotal", match.GoalsTotal);
+            AddMarketRows(rows, match, "GoalsHomeTeam", match.GoalsHomeTeam);
+            AddMarketRows(rows, match, "GoalsAwayTeam", match.GoalsAwayTeam);
+            AddMarketRows(rows, match, "ShotsTotal", match.ShotsTotal);
+            AddMarketRows(rows, match, "ShotsHomeTeam", match.ShotsHomeTeam);
+            AddMarketRows(rows, match, "ShotsAwayTeam", match.ShotsAwayTeam);
+            AddMarketRows(rows, match, "CardsTotal", match.CardsTotal);
+            return rows.Values.ToArray();
+        }
+
+        private static void AddMarketRows(
+            IDictionary<string, BetanoOddsRow> rows,
             BetanoUpcomingFootballOddsMatch match,
             string marketType,
-            BetanoMarketOddsDto? market,
-            DateTime capturedAtUtc,
-            CancellationToken cancellationToken)
+            BetanoMarketOddsDto? market)
         {
-            if (market?.Lines == null || market.Lines.Count == 0)
-                return 0;
-
-            var persisted = 0;
+            if (match.MatchDateLocal == null || market?.Lines == null || market.Lines.Count == 0)
+                return;
 
             foreach (var line in market.Lines)
             {
                 if (line.OverOdds == null && line.UnderOdds == null)
                     continue;
 
-                var parameters = new DynamicParameters();
-                parameters.Add("@SourceMatchId", NormalizeNullable(match.SourceMatchId));
-                parameters.Add("@SourceUrl", NormalizeNullable(match.SourceUrl));
-                parameters.Add("@MatchDate", match.MatchDateLocal);
-                parameters.Add("@League", NormalizeRequired(match.League));
-                parameters.Add("@HomeTeam", NormalizeRequired(match.HomeTeam));
-                parameters.Add("@AwayTeam", NormalizeRequired(match.AwayTeam));
-                parameters.Add("@StandardizedLeague", NormalizeRequired(match.StandardizedLeague));
-                parameters.Add("@StandardizedHomeTeam", NormalizeRequired(match.StandardizedHomeTeam));
-                parameters.Add("@StandardizedAwayTeam", NormalizeRequired(match.StandardizedAwayTeam));
-                parameters.Add("@HomeTeamGender", NormalizeGender(match.HomeTeamGender));
-                parameters.Add("@AwayTeamGender", NormalizeGender(match.AwayTeamGender));
-                parameters.Add("@MarketType", marketType);
-                parameters.Add("@LineValue", line.Line);
-                parameters.Add("@OverOdds", line.OverOdds);
-                parameters.Add("@UnderOdds", line.UnderOdds);
-                parameters.Add("@CapturedAtUtc", capturedAtUtc);
+                var row = new BetanoOddsRow
+                {
+                    SourceMatchId = NormalizeNullable(match.SourceMatchId),
+                    SourceUrl = NormalizeNullable(match.SourceUrl),
+                    MatchDate = match.MatchDateLocal.Value,
+                    League = NormalizeRequired(match.League),
+                    StandardizedLeague = NormalizeRequired(match.StandardizedLeague),
+                    HomeTeam = NormalizeRequired(match.HomeTeam),
+                    AwayTeam = NormalizeRequired(match.AwayTeam),
+                    StandardizedHomeTeam = NormalizeRequired(match.StandardizedHomeTeam),
+                    StandardizedAwayTeam = NormalizeRequired(match.StandardizedAwayTeam),
+                    HomeTeamGender = NormalizeGender(match.HomeTeamGender),
+                    AwayTeamGender = NormalizeGender(match.AwayTeamGender),
+                    MarketType = marketType,
+                    LineValue = line.Line,
+                    OverOdds = line.OverOdds,
+                    UnderOdds = line.UnderOdds
+                };
 
-                var command = new CommandDefinition(
-                    commandText: UpsertAndSnapshotSql,
-                    parameters: parameters,
-                    transaction: tx,
-                    commandType: CommandType.Text,
-                    commandTimeout: 60,
-                    cancellationToken: cancellationToken);
-
-                await conn.ExecuteAsync(command);
-                persisted++;
+                var key = string.Join(
+                    '|',
+                    row.MatchDate.ToString("yyyyMMdd"),
+                    row.StandardizedLeague,
+                    row.StandardizedHomeTeam,
+                    row.StandardizedAwayTeam,
+                    row.MarketType,
+                    row.LineValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                rows[key] = row;
             }
-
-            return persisted;
         }
 
         private static string NormalizeRequired(string? value)
@@ -550,6 +641,26 @@ END;
         {
             var safeError = error.Length <= 300 ? error : error[..300] + "...";
             return $"{match.HomeTeam} vs {match.AwayTeam}: {safeError}";
+        }
+
+        private sealed class BetanoOddsRow
+        {
+            public string Source { get; init; } = "Betano";
+            public string? SourceMatchId { get; init; }
+            public string? SourceUrl { get; init; }
+            public DateTime MatchDate { get; init; }
+            public string League { get; init; } = string.Empty;
+            public string StandardizedLeague { get; init; } = string.Empty;
+            public string HomeTeam { get; init; } = string.Empty;
+            public string AwayTeam { get; init; } = string.Empty;
+            public string StandardizedHomeTeam { get; init; } = string.Empty;
+            public string StandardizedAwayTeam { get; init; } = string.Empty;
+            public string HomeTeamGender { get; init; } = "M";
+            public string AwayTeamGender { get; init; } = "M";
+            public string MarketType { get; init; } = string.Empty;
+            public decimal LineValue { get; init; }
+            public decimal? OverOdds { get; init; }
+            public decimal? UnderOdds { get; init; }
         }
 
         private sealed record BetanoMatchPersistenceAttempt(

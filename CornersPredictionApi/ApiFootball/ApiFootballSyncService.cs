@@ -246,7 +246,10 @@ public sealed class ApiFootballSyncService
                     DryRun: true,
                     UpdateExisting: request.UpdateExisting,
                     SyncStandings: false,
-                    SyncLineups: false), cancellationToken, settleBotPicks: false);
+                    SyncLineups: false),
+                    cancellationToken,
+                    settleBotPicks: false,
+                    cacheFixtureStatistics: true);
 
                 if (!probe.FixtureStatisticsCovered || probe.Processed <= probe.Skipped)
                 {
@@ -285,7 +288,10 @@ public sealed class ApiFootballSyncService
                         DryRun: false,
                         UpdateExisting: request.UpdateExisting,
                         SyncStandings: request.SyncStandings,
-                        SyncLineups: request.SyncLineups), cancellationToken, settleBotPicks: false);
+                        SyncLineups: request.SyncLineups),
+                        cancellationToken,
+                        settleBotPicks: false,
+                        cacheFixtureStatistics: true);
             }
 
             return new CompetitionSyncOutcome(
@@ -373,7 +379,8 @@ public sealed class ApiFootballSyncService
     public async Task<ApiFootballSyncResult> SyncAsync(
         ApiFootballSyncRequest request,
         CancellationToken cancellationToken,
-        bool settleBotPicks = true)
+        bool settleBotPicks = true,
+        bool cacheFixtureStatistics = false)
     {
         Validate(request);
         await _repository.EnsureSchemaAsync(cancellationToken);
@@ -434,9 +441,13 @@ public sealed class ApiFootballSyncService
 
                 var matchData = new ApiFootballMatchData { Fixture = fixture };
                 ParseStatistics(
-                    await _client.GetFixtureStatisticsAsync(
-                        fixture.FixtureId,
-                        fixtureCancellationToken),
+                    await (cacheFixtureStatistics
+                        ? _client.GetFixtureStatisticsCachedAsync(
+                            fixture.FixtureId,
+                            fixtureCancellationToken)
+                        : _client.GetFixtureStatisticsAsync(
+                            fixture.FixtureId,
+                            fixtureCancellationToken)),
                     matchData);
                 if (request.SyncLineups && league.Lineups)
                 {

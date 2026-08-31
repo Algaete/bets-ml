@@ -1,13 +1,15 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using CornersPrediction.Application.AutomatedCorners;
 
 namespace CornersPrediction.Application.Automation.BotE;
 
 /// <summary>
-/// A labelled decision produced by the source bot.  SourceProbability is the
-/// probability that the source bot actually evaluated, not the raw ML output.
+/// A labelled decision produced by the source bot. SourceProbability is the
+/// probability immediately before empirical calibration, not the raw ML output
+/// and not the recursively calibrated final probability.
 /// </summary>
 public sealed record BotECalibrationObservation(
     long EvaluationId,
@@ -22,6 +24,43 @@ public sealed record BotECalibrationObservation(
     double MarketNoVigProbability,
     double DataQualityScore,
     string BaseModelVersion);
+
+public static class BotECalibrationSourceProbabilityResolver
+{
+    public static double? Resolve(
+        string? featureSnapshotJson,
+        double? baseCalibratedProbability)
+    {
+        if (!string.IsNullOrWhiteSpace(featureSnapshotJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(featureSnapshotJson);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("empiricalCalibration", out var calibration)
+                    && calibration.ValueKind == JsonValueKind.Object
+                    && calibration.TryGetProperty("probabilityBeforeEmpiricalCalibration", out var probability))
+                {
+                    return probability.ValueKind == JsonValueKind.Number
+                           && probability.TryGetDouble(out var parsed)
+                        ? ValidProbability(parsed)
+                        : null;
+                }
+            }
+            catch (JsonException)
+            {
+                // Legacy rows can still use the explicitly persisted base probability.
+            }
+        }
+
+        return baseCalibratedProbability.HasValue
+            ? ValidProbability(baseCalibratedProbability.Value)
+            : null;
+    }
+
+    private static double? ValidProbability(double value) =>
+        double.IsFinite(value) && value > 0d && value < 1d ? value : null;
+}
 
 public sealed record BotEEmpiricalCalibrationConfiguration
 {

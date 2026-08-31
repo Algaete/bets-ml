@@ -1,0 +1,20 @@
+@model CornersPrediction.Web.Models.BotPicks.BotH2026IndexViewModel
+@{
+    string YesNo(bool value) => value ? "Sí" : "No";
+    var status = Model.Status;
+}
+<section class="h-card">
+    <div class="h-card-header"><div class="d-flex flex-wrap align-items-center justify-content-between gap-2"><div><h2 class="h5 mb-1">Estado y barreras de seguridad</h2><p class="small text-secondary mb-0">Ningún control de esta página modifica datos.</p></div>@if (Model.StatusAvailable) { <span class="h-status @(status.State == "READY" ? "h-status-ready" : "h-status-warning")">@status.State</span> }</div></div>
+    <div class="h-card-body">
+        @if (!Model.StatusAvailable)
+        {
+            <div class="alert alert-warning mb-0">@Model.StatusErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-status">Reintentar</button></div>
+        }
+        else
+        {
+            <div class="small text-secondary mb-3">Última captura: <strong class="text-body">@(status.LastPredictionTimestampUtc?.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "—")</strong></div>
+            <div class="h-metrics mb-3"><div class="h-metric"><span class="h-metric-label">Capturas auditables</span><span class="h-metric-value">@status.CapturedEvaluations.ToString("N0")</span></div><div class="h-metric"><span class="h-metric-label">Sin capturar</span><span class="h-metric-value">@status.UncapturedEligibleEvaluations.ToString("N0")</span></div><div class="h-metric"><span class="h-metric-label">Publicaciones inseguras</span><span class="h-metric-value">@status.UnsafePublicationRows.ToString("N0")</span></div><div class="h-metric"><span class="h-metric-label">Primera predicción</span><span class="h-metric-value fs-6">@(status.FirstPredictionTimestampUtc?.ToString("yyyy-MM-dd") ?? "—")</span></div></div>
+            <div class="row g-2"><div class="col-12 col-lg-6"><div class="h-guard"><span class="h-guard-mark">@(status.SchemaReady && status.DefinitionExists ? "✓" : "!")</span><div><strong>Esquema y definición</strong><div class="small text-secondary">Esquema: @YesNo(status.SchemaReady) · definición H: @YesNo(status.DefinitionExists) · habilitado: @YesNo(status.IsEnabled)</div></div></div></div><div class="col-12 col-lg-6"><div class="h-guard"><span class="h-guard-mark">@(!status.PublishEnabled && status.ShadowOnly ? "✓" : "!")</span><div><strong>Publicación bloqueada</strong><div class="small text-secondary">Shadow-only: @YesNo(status.ShadowOnly) · publicar: @YesNo(status.PublishEnabled)</div></div></div></div><div class="col-12 col-lg-6"><div class="h-guard"><span class="h-guard-mark">@(status.CaptureTriggerEnabled ? "✓" : "!")</span><div><strong>Captura automática</strong><div class="small text-secondary">Snapshot exacto: @YesNo(status.CaptureTriggerEnabled)</div></div></div></div><div class="col-12 col-lg-6"><div class="h-guard"><span class="h-guard-mark">@(status.PublicationGuardsEnabled && status.UnsafePublicationRows == 0 ? "✓" : "!")</span><div><strong>Guardas activas</strong><div class="small text-secondary">Protección: @YesNo(status.PublicationGuardsEnabled) · filas inseguras: @status.UnsafePublicationRows</div></div></div></div></div>
+        }
+    </div>
+</section>

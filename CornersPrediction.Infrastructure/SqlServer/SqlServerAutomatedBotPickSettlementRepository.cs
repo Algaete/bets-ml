@@ -172,6 +172,15 @@ public sealed class SqlServerAutomatedBotPickSettlementRepository : IAutomatedBo
                   )
                   OR
                   (
+                      @BotKey = N'G2026'
+                      AND
+                      (
+                          RIGHT(normalized.AutomationVersionKey, 6) = N'-G2026'
+                          OR normalized.DecisionBotKey IN (N'G', N'G2026')
+                      )
+                  )
+                  OR
+                  (
                       @BotKey = N'LEGACY'
                       AND RIGHT(normalized.AutomationVersionKey, 2) <> N'-A'
                       AND RIGHT(normalized.AutomationVersionKey, 2) <> N'-B'
@@ -179,12 +188,13 @@ public sealed class SqlServerAutomatedBotPickSettlementRepository : IAutomatedBo
                       AND RIGHT(normalized.AutomationVersionKey, 6) <> N'-D2026'
                       AND RIGHT(normalized.AutomationVersionKey, 6) <> N'-E2026'
                       AND RIGHT(normalized.AutomationVersionKey, 6) <> N'-F2026'
+                      AND RIGHT(normalized.AutomationVersionKey, 6) <> N'-G2026'
                       AND normalized.DecisionBotKey NOT IN
-                          (N'A', N'B', N'C', N'C2026', N'D', N'D2026', N'E', N'E2026', N'F', N'F2026')
+                          (N'A', N'B', N'C', N'C2026', N'D', N'D2026', N'E', N'E2026', N'F', N'F2026', N'G', N'G2026')
                   )
                   OR
                   (
-                      @BotKey NOT IN (N'A', N'B', N'C2026', N'D2026', N'E2026', N'F2026', N'LEGACY')
+                      @BotKey NOT IN (N'A', N'B', N'C2026', N'D2026', N'E2026', N'F2026', N'G2026', N'LEGACY')
                       AND
                       (
                           normalized.DecisionBotKey = @BotKey

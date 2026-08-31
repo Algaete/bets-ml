@@ -25,6 +25,13 @@
     {
         initialGender = "F";
     }
+    var now = DateTime.Now;
+    var todayCount = Model.Matches.Count(match => match.FechaPartido.Date == now.Date);
+    var next48HoursCount = Model.Matches.Count(match => match.FechaPartido >= now && match.FechaPartido <= now.AddHours(48));
+    var latestSync = Model.Matches
+        .Select(match => match.FechaActualizacion ?? match.FechaRegistro)
+        .DefaultIfEmpty()
+        .Max();
 }
 
 <div class="upcoming-hero mb-4">
@@ -39,7 +46,27 @@
     </div>
 </div>
 
+<section class="upcoming-overview mb-4" aria-label="Resumen de próximos partidos">
+    <div class="upcoming-overview-card">
+        <span>Hoy</span><strong>@todayCount</strong><small>partidos programados</small>
+    </div>
+    <div class="upcoming-overview-card">
+        <span>Próximas 48 horas</span><strong>@next48HoursCount</strong><small>ventana inmediata</small>
+    </div>
+    <div class="upcoming-overview-card">
+        <span>Ligas</span><strong>@leagueOptions.Length</strong><small>en la semana visible</small>
+    </div>
+    <div class="upcoming-overview-card is-freshness">
+        <span>Datos sincronizados</span><strong>@(latestSync == default ? "Sin dato" : latestSync.ToString("dd-MM HH:mm"))</strong><small>persistidos desde API-Football</small>
+    </div>
+</section>
+
 <section class="surface-panel upcoming-filter-panel mb-4">
+    <div class="upcoming-quick-filters mb-3" role="group" aria-label="Ventana de tiempo">
+        <button class="upcoming-quick-filter is-active" type="button" data-time-window="all">Toda la semana <span>@Model.Matches.Count</span></button>
+        <button class="upcoming-quick-filter" type="button" data-time-window="today">Hoy <span>@todayCount</span></button>
+        <button class="upcoming-quick-filter" type="button" data-time-window="48h">Próximas 48h <span>@next48HoursCount</span></button>
+    </div>
     <div class="upcoming-filter-grid">
         <div>
             <label class="form-label" for="UpcomingGenderFilter">@T("UpcomingMatches.Gender")</label>
@@ -139,6 +166,7 @@
                                      data-match-id="@match.PartidoID"
                                      data-gender="@match.TeamGenderForPrediction"
                                      data-league="@match.Liga"
+                                     data-kickoff="@match.FechaPartido.ToString("O")"
                                      data-search="@searchText">
                                 <div class="upcoming-card-top">
                                     <span class="upcoming-date-chip">
@@ -150,6 +178,11 @@
                                     {
                                         <span class="upcoming-tag knockout">KO</span>
                                     }
+                                </div>
+
+                                <div class="upcoming-card-context">
+                                    <span data-kickoff-relative="@match.FechaPartido.ToString("O")">Calculando inicio…</span>
+                                    <span>Actualizado @((match.FechaActualizacion ?? match.FechaRegistro).ToString("dd-MM HH:mm"))</span>
                                 </div>
 
                                 <div class="upcoming-teams">
@@ -214,6 +247,8 @@
             const noResults = document.getElementById('UpcomingNoResults');
             const cards = Array.from(document.querySelectorAll('.upcoming-match-card'));
             const leagueSections = Array.from(document.querySelectorAll('.upcoming-league-section'));
+            const timeWindowButtons = Array.from(document.querySelectorAll('[data-time-window]'));
+            let activeTimeWindow = 'all';
 
             const normalize = value => String(value ?? '')
                 .trim()
@@ -226,15 +261,27 @@
                 const league = normalize(leagueFilter?.value);
                 const search = normalize(searchFilter?.value);
                 let visibleCount = 0;
+                const now = new Date();
+                const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const tomorrowStart = new Date(todayStart);
+                tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+                const next48Hours = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
                 for (const card of cards) {
                     const cardGender = normalize(card.dataset.gender);
                     const cardLeague = normalize(card.dataset.league);
                     const cardSearch = normalize(card.dataset.search);
+                    const kickoff = new Date(card.dataset.kickoff);
+                    const matchesTimeWindow = activeTimeWindow === 'today'
+                        ? kickoff >= todayStart && kickoff < tomorrowStart
+                        : activeTimeWindow === '48h'
+                            ? kickoff >= now && kickoff <= next48Hours
+                            : true;
                     const isVisible =
                         (!gender || cardGender === gender) &&
                         (!league || cardLeague === league) &&
-                        (!search || cardSearch.includes(search));
+                        (!search || cardSearch.includes(search)) &&
+                        matchesTimeWindow;
 
                     card.classList.toggle('d-none', !isVisible);
                     if (isVisible) {
@@ -263,6 +310,11 @@
             genderFilter?.addEventListener('change', applyFilters);
             leagueFilter?.addEventListener('change', applyFilters);
             searchFilter?.addEventListener('input', applyFilters);
+            timeWindowButtons.forEach(button => button.addEventListener('click', () => {
+                activeTimeWindow = button.dataset.timeWindow || 'all';
+                timeWindowButtons.forEach(item => item.classList.toggle('is-active', item === button));
+                applyFilters();
+            }));
             clearButton?.addEventListener('click', () => {
                 if (genderFilter) {
                     genderFilter.value = '';
@@ -275,8 +327,20 @@
                 if (searchFilter) {
                     searchFilter.value = '';
                 }
+                activeTimeWindow = 'all';
+                timeWindowButtons.forEach(item => item.classList.toggle('is-active', item.dataset.timeWindow === 'all'));
 
                 applyFilters();
+            });
+
+            document.querySelectorAll('[data-kickoff-relative]').forEach(element => {
+                const kickoff = new Date(element.dataset.kickoffRelative);
+                const minutes = Math.round((kickoff.getTime() - Date.now()) / 60000);
+                if (!Number.isFinite(minutes)) element.textContent = 'Hora por confirmar';
+                else if (minutes < 0) element.textContent = 'Inicio ya alcanzado';
+                else if (minutes < 60) element.textContent = `Comienza en ${minutes} min`;
+                else if (minutes < 48 * 60) element.textContent = `Comienza en ${Math.round(minutes / 60)} h`;
+                else element.textContent = `Comienza en ${Math.round(minutes / 1440)} días`;
             });
 
             applyFilters();

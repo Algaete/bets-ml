@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CornersPrediction.Application.Automation.BotD;
 using CornersPrediction.Application.Automation.BotE;
+using CornersPrediction.Application.FootballIntelligence;
 
 namespace CornersPrediction.Application.Automation.BotC;
 
@@ -31,6 +32,8 @@ public static class BotCDecisionCodes
     public const string ApprovedTeamStrength = "APPROVED_TEAM_STRENGTH_SUPPORT";
     public const string RejectedTeamStrength = "REJECTED_TEAM_STRENGTH_QUALITY_LOW";
     public const string ApprovedEmpiricalCalibration = "APPROVED_EMPIRICAL_MARKET_CALIBRATION";
+    public const string ApprovedFootballIntelligence = "APPROVED_FOOTBALL_INTELLIGENCE_ADJUSTMENT";
+    public const string NeutralFootballIntelligence = "NEUTRAL_FOOTBALL_INTELLIGENCE_NO_USABLE_EVIDENCE";
     public const string RejectedCalibrationUnavailable = "REJECTED_CALIBRATION_SAMPLE_LOW";
     public const string RejectedCalibrationReliability = "REJECTED_CALIBRATION_RELIABILITY_LOW";
 }
@@ -53,6 +56,8 @@ public static class BotCRiskFlags
     public const string BaseModelTemporalLeakage = "BaseModelTemporalLeakage";
     public const string TeamStrengthUnavailable = "TeamStrengthUnavailable";
     public const string EmpiricalCalibrationUnavailable = "EmpiricalCalibrationUnavailable";
+    public const string FootballIntelligenceUnavailable = "FootballIntelligenceUnavailable";
+    public const string FootballIntelligenceApplied = "FootballIntelligenceApplied";
 }
 
 public sealed record BotCStrategyConfiguration
@@ -100,6 +105,7 @@ public sealed record BotCStrategyConfiguration
         new Dictionary<string, BotCMarketThresholdConfiguration>(StringComparer.OrdinalIgnoreCase);
     public BotDTeamStrengthConfiguration TeamStrength { get; init; } = new();
     public BotEEmpiricalCalibrationConfiguration EmpiricalCalibration { get; init; } = new();
+    public FootballIntelligenceAdjustmentConfiguration FootballIntelligence { get; init; } = new();
 
     public BotCCalibrationProfile ResolveCalibration(string marketType, string selection)
     {
@@ -239,6 +245,7 @@ public sealed record BotCStrategyConfiguration
 
         BotDTeamStrengthCalculator.Validate(value.TeamStrength);
         BotEEmpiricalCalibrationCalculator.Validate(value.EmpiricalCalibration);
+        FootballIntelligenceAdjustmentCalculator.Validate(value.FootballIntelligence);
         if (value.TeamStrength.Enabled && value.EmpiricalCalibration.Enabled)
         {
             throw new ArgumentException(
@@ -325,6 +332,7 @@ public static class BotCStrategyCatalog
         var config = BotCStrategyConfiguration.FromJson(configurationJson);
         var strengthEnabled = config.TeamStrength.Enabled;
         var empiricalCalibrationEnabled = config.EmpiricalCalibration.Enabled;
+        var footballIntelligenceEnabled = config.FootballIntelligence.Enabled;
         var pipeline = new List<string>
         {
             "Valida línea, cuota, mercado y timestamp.",
@@ -343,6 +351,11 @@ public static class BotCStrategyCatalog
             pipeline.Add($"Carga resultados etiquetados de todas las evaluaciones de {config.EmpiricalCalibration.SourceBotKey} y vuelve a filtrar por disponibilidad estrictamente anterior al candidato.");
             pipeline.Add("Selecciona evidencia jerárquica por mercado+lado, familia+lado o lado global; deduplica y reduce el peso de múltiples líneas del mismo fixture.");
             pipeline.Add("Estima una tasa empírica local por similitud de probabilidad, recencia y calidad; aplica prior hacia no-vig y un límite conservador por incertidumbre.");
+        }
+        if (footballIntelligenceEnabled)
+        {
+            pipeline.Add("Carga el último snapshot pre-partido cuya evidencia fue conocida antes del cutoff del candidato.");
+            pipeline.Add("Ajusta de forma acotada la probabilidad según bajas, dudas y alineaciones; si no existe evidencia utilizable, el ajuste es exactamente cero.");
         }
         pipeline.AddRange(
         [
@@ -392,6 +405,19 @@ public static class BotCStrategyCatalog
                 "reliability y Brier base/mercado"
             ];
         }
+        if (footballIntelligenceEnabled)
+        {
+            featureGroups["Inteligencia pre-partido"] =
+            [
+                "bajas y suspensiones estructuradas de API-Football",
+                "noticias públicas con fecha y primera observación auditables",
+                "alineación oficial cuando está disponible",
+                "impacto ofensivo, defensivo, amplitud y balón parado",
+                "confianza, número de fuentes y conflictos",
+                "ajuste de probabilidad limitado por mercado",
+                "neutralidad exacta cuando no existe evidencia suficiente"
+            ];
+        }
 
         var approvalRules = new List<string>
         {
@@ -414,6 +440,11 @@ public static class BotCStrategyCatalog
             approvalRules.Add($"Calibrador empírico disponible con reliability >= {config.EmpiricalCalibration.MinimumReliability:0.###}.");
             approvalRules.Add($"Muestra efectiva >= {config.EmpiricalCalibration.MinimumEffectiveObservations} fixtures independientes.");
             approvalRules.Add($"Solo resultados disponibles al menos {config.EmpiricalCalibration.OutcomeAvailabilityLagHours} h antes del candidato.");
+        }
+        if (footballIntelligenceEnabled)
+        {
+            approvalRules.Add($"La inteligencia solo influye con confianza >= {config.FootballIntelligence.MinimumTeamConfidence:0.###}, al menos {config.FootballIntelligence.MinimumActionableFacts} hecho accionable y {config.FootballIntelligence.MinimumIndependentSources} fuente independiente.");
+            approvalRules.Add("Ausencia, baja calidad, antigüedad o evidencia posterior al cutoff producen ajuste 0; nunca rechazan ni aprueban por sí solas.");
         }
 
         return new BotCStrategyManifest(
@@ -438,6 +469,7 @@ public static class BotCStrategyCatalog
                 "El repositorio consulta MatchHistory con fecha estrictamente anterior.",
                 strengthEnabled ? "La red de resultados de Bot D también descarta todo partido con fecha igual o posterior a AsOfDateUtc." : "Las features históricas solo usan observaciones estrictamente anteriores.",
                 empiricalCalibrationEnabled ? $"El calibrador solo acepta outcomes cuyo kickoff + {config.EmpiricalCalibration.OutcomeAvailabilityLagHours} h sea estrictamente anterior a AsOfDateUtc." : "La calibración estática conserva su TrainedThrough cuando existe.",
+                footballIntelligenceEnabled ? "Cada documento y hecho debe tener PublishedAtUtc/FirstSeenAtUtc menor o igual al cutoff; snapshots posteriores se ignoran." : "La inteligencia de noticias está deshabilitada para esta estrategia.",
                 "El snapshot guarda AsOfDateUtc, schema y configuración.",
                 "No usa resultado ni estadísticas del partido candidato.",
                 "Rechaza candidatos cuya fecha no es posterior al TrainedThrough del modelo base.",

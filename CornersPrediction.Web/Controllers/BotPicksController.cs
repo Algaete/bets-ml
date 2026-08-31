@@ -1,4 +1,5 @@
 using CornersPrediction.Web.Clients;
+using CornersPrediction.Web.Models.BotAutomation;
 using CornersPrediction.Web.Models.BotPicks;
 using CornersPrediction.Web.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -11,13 +12,16 @@ namespace CornersPrediction.Web.Controllers;
 public sealed class BotPicksController : Controller
 {
     private readonly AutomatedCornersApiClient _automatedCornersApiClient;
+    private readonly RecommendationAutomationApiClient _recommendationAutomationApiClient;
     private readonly ILogger<BotPicksController> _logger;
 
     public BotPicksController(
         AutomatedCornersApiClient automatedCornersApiClient,
+        RecommendationAutomationApiClient recommendationAutomationApiClient,
         ILogger<BotPicksController> logger)
     {
         _automatedCornersApiClient = automatedCornersApiClient;
+        _recommendationAutomationApiClient = recommendationAutomationApiClient;
         _logger = logger;
     }
 
@@ -70,8 +74,38 @@ public sealed class BotPicksController : Controller
         try
         {
             ApplyDefaultMonthRange(filters);
-            var selections = await _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken);
-            return Json(FilterMarketFamily(selections, marketFamily));
+            var selectionsTask = _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken);
+            var definitionsTask = _recommendationAutomationApiClient.GetBotsAsync(cancellationToken);
+            var performanceTask = _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken);
+            var selections = FilterVisibleBots(FilterMarketFamily(
+                await selectionsTask,
+                marketFamily));
+            IReadOnlyList<RecommendationBotDefinitionViewModel> definitions;
+            IReadOnlyList<BotPerformanceScorecardViewModel> performance;
+            try
+            {
+                definitions = await definitionsTask;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Bot Picks loaded without bot definitions; the productive plan will fail closed to monitoring");
+                definitions = [];
+            }
+
+            try
+            {
+                performance = await performanceTask;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(exception, "Bot Picks loaded without server performance gates");
+                performance = [];
+            }
+
+            BotPickProductionPlanner.Apply(selections, definitions, marketFamily, performance);
+            return Json(selections);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -83,6 +117,37 @@ public sealed class BotPicksController : Controller
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 new { error = "Bot picks could not be loaded. Check that the API and stored procedure are available." });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> PerformanceScorecards(
+        [FromQuery] string marketFamily = "corners",
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var family = marketFamily.Trim().ToUpperInvariant() switch
+            {
+                "GOALS" => "GOALS",
+                "SHOTS" => "SHOTS",
+                "SOG" => "SOG",
+                _ => "CORNERS"
+            };
+            var rows = await _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken);
+            return Json(rows.Where(row => row.MarketFamily == family
+                && (row.Dimension == "BotFamily"
+                    || row.Dimension == "BotMarketType"
+                    || row.Dimension == "BotMarketSideBookmakerVersion")));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load server bot performance scorecards");
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "No se pudo cargar el semáforo de rendimiento." });
         }
     }
 
@@ -102,7 +167,7 @@ public sealed class BotPicksController : Controller
                 },
                 cancellationToken);
 
-            var summaries = FilterMarketFamily(selections, marketFamily)
+            var summaries = FilterVisibleBots(FilterMarketFamily(selections, marketFamily))
                 .GroupBy(selection => new
                 {
                     Month = new DateTime(selection.MatchDate.Year, selection.MatchDate.Month, 1),
@@ -151,6 +216,74 @@ public sealed class BotPicksController : Controller
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 new { error = "Monthly bot history could not be loaded." });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> Intelligence(
+        [FromQuery] long fixtureId,
+        [FromQuery] DateTime? cutoffUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (fixtureId <= 0)
+        {
+            return BadRequest(new { error = "FixtureId inválido." });
+        }
+
+        try
+        {
+            return Json(await _automatedCornersApiClient.GetFootballIntelligenceAsync(
+                fixtureId,
+                cutoffUtc,
+                cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "La consulta de inteligencia fue cancelada." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Could not load pre-match intelligence for FixtureId={FixtureId}",
+                fixtureId);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "No se pudo cargar la inteligencia prepartido." });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> RobustEvaluation(
+        [FromQuery] long id,
+        CancellationToken cancellationToken = default)
+    {
+        if (id <= 0)
+        {
+            return BadRequest(new { error = "SelectionId inválido." });
+        }
+
+        try
+        {
+            var detail = await _automatedCornersApiClient.GetRobustEvaluationAsync(id, cancellationToken);
+            return detail is null
+                ? NotFound(new
+                {
+                    available = false,
+                    message = "Este pick todavía no tiene una evaluación robusta. Los picks históricos siguen disponibles sin ella."
+                })
+                : Json(detail);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "La consulta de evaluación robusta fue cancelada." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load robust evaluation for Bot Pick {SelectionId}", id);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "No se pudo cargar la evaluación robusta desde la API." });
         }
     }
 
@@ -302,6 +435,15 @@ public sealed class BotPicksController : Controller
         return selections.Where(selection => allowed.Contains(selection.MarketType)).ToArray();
     }
 
+    private static IReadOnlyList<BotPickSelectionViewModel> FilterVisibleBots(
+        IReadOnlyList<BotPickSelectionViewModel> selections)
+        => selections
+            .Where(selection => !string.Equals(
+                ResolveBotKey(selection),
+                "B",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
     private static string ResolveBotKey(BotPickSelectionViewModel selection)
     {
         var automationVersion = selection.AutomationVersion.Trim();
@@ -359,18 +501,19 @@ public sealed class BotPicksController : Controller
             }
         }
 
-        return "Legacy";
+        // Rows created before bot profiles existed belong to the original Bot A strategy.
+        return "A";
     }
 
     private static string ResolveBotLabel(string botKey) => botKey switch
     {
         "A" => "Bot A Actual",
-        "B" => "Bot B Conservador",
+        "B" => "Bot B · Retirado",
         "C" => "Bot C · Modelos 2026",
         "D" => "Bot D · Team Strength Gap",
         "E" => "Bot E · Calibración empírica",
         "F" => "Bot F · Legacy ML calibrado",
-        _ => "Otros / Legacy"
+        _ => "Bots personalizados"
     };
 
     private static int BotSortOrder(string botKey) => botKey switch

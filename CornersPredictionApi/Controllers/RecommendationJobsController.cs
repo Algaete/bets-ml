@@ -82,7 +82,9 @@ public sealed class RecommendationJobsController : ControllerBase
         var definitions = await _botDefinitionsUseCase.GetAllAsync(cancellationToken);
         return Ok(new
         {
-            botKeys = definitions.Where(bot => bot.IsEnabled).Select(bot => bot.BotKey),
+            botKeys = definitions
+                .Where(bot => bot.IsEnabled && !RecommendationBotLifecycle.IsRetired(bot.BotKey))
+                .Select(bot => bot.BotKey),
             marketFamilies = new[] { "CORNERS", "GOALS", "SHOTS", "SOG" },
             modes = new[] { RecommendationJobModes.HistoricalBackfill, RecommendationJobModes.Live },
             persistence = "Azure SQL",

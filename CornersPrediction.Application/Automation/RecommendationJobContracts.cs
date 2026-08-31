@@ -89,6 +89,12 @@ public interface IRecommendationJobRepository
         TimeSpan leaseDuration,
         CancellationToken cancellationToken);
 
+    Task<bool> RenewLeaseAsync(
+        Guid jobId,
+        string workerId,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken);
+
     Task<RecommendationJobDto?> CompleteBatchAsync(
         Guid jobId,
         string workerId,
@@ -153,7 +159,12 @@ public sealed class RecommendationJobsUseCase : IRecommendationJobsUseCase
             throw new ArgumentException($"Unknown bot keys: {string.Join(", ", missing)}.");
         }
 
-        var disabled = definitions.Where(definition => !definition.IsEnabled).Select(definition => definition.BotKey).ToArray();
+        var disabled = definitions
+            .Where(definition =>
+                !definition.IsEnabled ||
+                RecommendationBotLifecycle.IsRetired(definition.BotKey))
+            .Select(definition => definition.BotKey)
+            .ToArray();
         if (disabled.Length > 0)
         {
             throw new ArgumentException($"Disabled bot keys cannot be executed: {string.Join(", ", disabled)}.");

@@ -163,6 +163,7 @@ public sealed class AutomatedBotPickSettlementUseCase : IAutomatedBotPickSettlem
             "D" => "D2026",
             "E" => "E2026",
             "F" => "F2026",
+            "G" => "G2026",
             _ => botKey
         };
 

@@ -43,6 +43,10 @@
     var latestRecordDate = records.Length == 0
         ? "-"
         : records.Max(match => match.MatchDate).ToString("yyyy-MM-dd");
+    var cornersObserved = records.Count(match => match.HomeCorners + match.AwayCorners > 0);
+    var shotsObserved = records.Count(match => match.HomeShots + match.AwayShots > 0);
+    var sogObserved = records.Count(match => match.HomeShotsOnGoal + match.AwayShotsOnGoal > 0);
+    decimal Coverage(int count) => records.Length == 0 ? 0 : Math.Round(count * 100m / records.Length, 1);
 }
 
 <div class="betting-hero match-history-hero mb-4">
@@ -68,10 +72,31 @@
         <div class="metric-value">@distinctTeamsCount</div>
     </div>
     <div class="metric-tile compact">
-        <div class="metric-label">Prom. corners / ultimo</div>
+        <div class="metric-label">Prom. córners · último partido</div>
         <div class="metric-value">@averageCorners.ToString("0.0") · @latestRecordDate</div>
     </div>
 </section>
+
+<section class="surface-panel match-history-quality mb-4" aria-labelledby="MatchHistoryQualityTitle">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+            <h2 id="MatchHistoryQualityTitle" class="h6 mb-1">Cobertura aparente de los registros visibles</h2>
+            <div class="text-muted small">Mide filas con un total mayor que cero. Sirve como alerta rápida; un 0 legítimo debe verificarse con los flags de disponibilidad del backend.</div>
+        </div>
+        <span class="badge text-bg-light">@records.Length registros analizados</span>
+    </div>
+    <div class="match-history-quality-grid">
+        <div><span>Córners</span><strong>@Coverage(cornersObserved)%</strong><div class="progress"><div class="progress-bar" style="width:@Coverage(cornersObserved).ToString(System.Globalization.CultureInfo.InvariantCulture)%"></div></div><small>@cornersObserved de @records.Length con valor</small></div>
+        <div><span>Tiros</span><strong>@Coverage(shotsObserved)%</strong><div class="progress"><div class="progress-bar" style="width:@Coverage(shotsObserved).ToString(System.Globalization.CultureInfo.InvariantCulture)%"></div></div><small>@shotsObserved de @records.Length con valor</small></div>
+        <div><span>Tiros al arco</span><strong>@Coverage(sogObserved)%</strong><div class="progress"><div class="progress-bar" style="width:@Coverage(sogObserved).ToString(System.Globalization.CultureInfo.InvariantCulture)%"></div></div><small>@sogObserved de @records.Length con valor</small></div>
+    </div>
+</section>
+
+<nav class="match-history-workspace-nav mb-4" aria-label="Herramientas de MatchHistory">
+    <a href="#MatchHistoryRecords">Explorar registros</a>
+    <a href="#MatchHistoryManual">Agregar manual</a>
+    <a href="#MatchHistoryBulk">Importar JSON</a>
+</nav>
 
 @if (TempData["SuccessMessage"] is string successMessage)
 {
@@ -83,6 +108,8 @@
 
 <div class="row g-4">
     <div class="col-12 col-xl-5">
+        <details id="MatchHistoryManual" class="match-history-operation" open="@(!ViewData.ModelState.IsValid ? "open" : null)">
+            <summary><span><strong>Agregar partido manualmente</strong><small>Úsalo cuando API-Football todavía no haya insertado el resultado.</small></span><span>Abrir formulario</span></summary>
         <div class="surface-panel match-history-panel">
             <div class="match-history-panel-header">
                 <div>
@@ -243,7 +270,10 @@
                 </form>
             </div>
         </div>
+        </details>
 
+        <details id="MatchHistoryBulk" class="match-history-operation mt-3" open="@(Model.BulkResult is not null ? "open" : null)">
+            <summary><span><strong>Importación masiva</strong><small>Construye y valida varios partidos antes de enviarlos.</small></span><span>Abrir importador</span></summary>
         <div class="surface-panel match-history-panel mt-4">
             <div class="match-history-panel-header">
                 <div>
@@ -458,25 +488,26 @@
                 }
             </div>
         </div>
+        </details>
     </div>
 
     <div class="col-12 col-xl-7">
-        <div class="surface-panel match-history-panel match-history-records-panel">
+        <div id="MatchHistoryRecords" class="surface-panel match-history-panel match-history-records-panel">
             <div class="match-history-panel-header">
                 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                     <div>
-                        <div class="text-muted small text-uppercase fw-semibold">Recent dataset</div>
+                        <div class="text-muted small text-uppercase fw-semibold">Explorador local</div>
                         <h2 class="h5 mb-1">@UiText.T(language, "MatchHistory.SavedRecords")</h2>
-                        <div class="text-muted small">Last records entered manually in the system.</div>
+                        <div class="text-muted small">Últimos registros disponibles según los filtros. Un cero no se interpreta automáticamente como dato confirmado.</div>
                     </div>
-                    <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Clear</a>
+                    <a class="btn btn-sm btn-outline-secondary" asp-action="Index">Limpiar</a>
                 </div>
             </div>
             <div class="match-history-filter-bar">
                 <form method="get" class="row g-3 align-items-end">
                     <div class="col-md-5">
-                        <label class="form-label" for="FilterLeague">League</label>
-                        <input id="FilterLeague" name="League" class="form-control" list="LeagueOptions" value="@Model.Filters.League" placeholder="All leagues" autocomplete="off" />
+                        <label class="form-label" for="FilterLeague">Liga</label>
+                        <input id="FilterLeague" name="League" class="form-control" list="LeagueOptions" value="@Model.Filters.League" placeholder="Todas las ligas" autocomplete="off" />
                         <datalist id="LeagueOptions">
                             @foreach (var league in leagueOptions)
                             {
@@ -485,8 +516,8 @@
                         </datalist>
                     </div>
                     <div class="col-md-5">
-                        <label class="form-label" for="FilterTeam">Team</label>
-                        <input id="FilterTeam" name="Team" class="form-control" list="FilterTeamOptions" value="@Model.Filters.Team" placeholder="Home or away team" autocomplete="off" />
+                        <label class="form-label" for="FilterTeam">Equipo</label>
+                        <input id="FilterTeam" name="Team" class="form-control" list="FilterTeamOptions" value="@Model.Filters.Team" placeholder="Local o visitante" autocomplete="off" />
                         <datalist id="FilterTeamOptions">
                             @foreach (var team in filterTeamOptions)
                             {
@@ -495,31 +526,31 @@
                         </datalist>
                     </div>
                     <div class="col-md-2">
-                        <label class="form-label" for="FilterTake">Take</label>
+                        <label class="form-label" for="FilterTake">Cantidad</label>
                         <input id="FilterTake" name="Take" class="form-control" type="number" min="1" max="100" value="@Model.Filters.Take" />
                     </div>
                     <div class="col-12 d-flex justify-content-end gap-2">
-                        <a class="btn btn-outline-secondary" asp-action="Index">Reset</a>
-                        <button class="btn btn-outline-primary" type="submit">Search</button>
+                        <a class="btn btn-outline-secondary" asp-action="Index">Restablecer</a>
+                        <button class="btn btn-outline-primary" type="submit">Buscar</button>
                     </div>
                 </form>
             </div>
             <div class="match-history-table-shell">
                 <div id="recordsEmpty" class="empty-state @(records.Length == 0 ? "" : "d-none")">
-                    <div class="fw-semibold">No match records found</div>
-                    <div class="text-muted small">Try changing the filters or importing a JSON batch.</div>
+                    <div class="fw-semibold">No se encontraron partidos</div>
+                    <div class="text-muted small">Cambia los filtros o utiliza la importación JSON.</div>
                 </div>
                 <div id="recordsTableWrap" class="table-responsive @(records.Length == 0 ? "d-none" : "")">
                     <table class="table table-sm align-middle mb-0 table-sticky-head match-history-table">
                         <thead>
                             <tr>
-                                <th>Date</th>
-                                <th>Match</th>
-                                <th>Score</th>
-                                <th>Corners</th>
-                                <th>Shots</th>
-                                <th>Poss.</th>
-                                <th class="text-end">Actions</th>
+                                <th>Fecha</th>
+                                <th>Partido</th>
+                                <th>Marcador</th>
+                                <th>Córners</th>
+                                <th>Tiros / al arco</th>
+                                <th>Posesión</th>
+                                <th class="text-end">Acciones</th>
                             </tr>
                         </thead>
                         <tbody id="recordsBody">
@@ -538,11 +569,14 @@
                                         <span class="badge text-bg-primary stat-pill">@match.HomeCorners - @match.AwayCorners</span>
                                         <div class="small text-muted">Total @match.TotalCorners</div>
                                     </td>
-                                    <td class="text-nowrap">@match.HomeShots - @match.AwayShots</td>
+                                    <td class="text-nowrap">
+                                        <div>@match.HomeShots - @match.AwayShots</div>
+                                        <div class="small text-muted">Al arco @match.HomeShotsOnGoal - @match.AwayShotsOnGoal</div>
+                                    </td>
                                     <td class="text-nowrap">@match.HomePossession.ToString("0.#")% - @match.AwayPossession.ToString("0.#")%</td>
                                     <td class="text-end text-nowrap">
-                                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Edit</button>
-                                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Delete</button>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-id="@match.Id">Editar</button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-id="@match.Id">Eliminar</button>
                                     </td>
                                 </tr>
                             }

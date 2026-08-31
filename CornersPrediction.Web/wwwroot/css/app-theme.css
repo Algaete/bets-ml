@@ -115,6 +115,10 @@ a:hover {
   color: var(--text-muted);
 }
 
+.sidebar-section-label {
+  color: color-mix(in srgb, var(--text-muted) 78%, transparent);
+}
+
 .sidebar-link:hover,
 .sidebar-link:focus {
   color: var(--text-main);
@@ -152,6 +156,47 @@ a:hover {
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.08);
 }
 
+.app-environment-chip {
+  border-color: var(--border-color);
+  color: var(--text-muted);
+  background: var(--card-bg-soft);
+}
+
+.upcoming-overview-card,
+.upcoming-quick-filter {
+  border-color: var(--border-color);
+  color: var(--text-main);
+  background: var(--card-bg);
+}
+
+.upcoming-overview-card strong {
+  color: var(--text-main);
+}
+
+.upcoming-overview-card span,
+.upcoming-overview-card small,
+.upcoming-card-context {
+  color: var(--text-muted);
+}
+
+.upcoming-card-context {
+  border-color: var(--border-color);
+}
+
+.match-history-quality-grid > div,
+.match-history-operation > summary,
+.match-history-workspace-nav {
+  border-color: var(--border-color);
+  color: var(--text-main);
+  background: var(--card-bg);
+}
+
+.match-history-quality-grid span,
+.match-history-quality-grid small,
+.match-history-operation > summary small {
+  color: var(--text-muted);
+}
+
 .topbar-title {
   color: var(--text-main);
 }
@@ -172,6 +217,8 @@ a:hover {
 .surface-panel,
 .bankroll-panel,
 .metric-tile,
+.betting-risk-grid article,
+.user-admin-metrics article,
 .card,
 .upcoming-match-card,
 .prediction-result-card,
@@ -220,6 +267,13 @@ a:hover {
 .metric-tile {
   background:
     linear-gradient(135deg, var(--card-bg), var(--card-bg-soft)) !important;
+}
+
+:root[data-theme="dark"] .betting-row-menu > summary,
+:root[data-theme="dark"] .betting-row-menu > div {
+  border-color: #475569;
+  background: #111827;
+  color: #e2e8f0;
 }
 
 .metric-label,
@@ -1192,6 +1246,7 @@ label {
 /* Bot Picks cockpit keeps readable contrast in both themes. */
 :root[data-theme="dark"] .bot-picks-command-bar,
 :root[data-theme="dark"] .bot-picks-table-toolbar,
+:root[data-theme="dark"] .bot-picks-pending-breakdown,
 :root[data-theme="dark"] .bot-picks-row-menu > div {
   border-color: #334155;
   background: rgba(15, 23, 42, 0.96);
@@ -1216,10 +1271,23 @@ label {
 }
 
 :root[data-theme="dark"] .bot-picks-quick-view,
+:root[data-theme="dark"] .bot-picks-pending-reasons button,
 :root[data-theme="dark"] .bot-picks-row-menu > summary {
   border-color: #475569;
   background: #111827;
   color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .bot-picks-pending-reasons button:hover,
+:root[data-theme="dark"] .bot-picks-pending-reasons button.is-active {
+  border-color: #fbbf24;
+  background: #422006;
+  color: #fef3c7;
+}
+
+:root[data-theme="dark"] .bot-picks-pending-reasons button strong {
+  background: #78350f;
+  color: #fef3c7;
 }
 
 :root[data-theme="dark"] .bot-picks-quick-view span,
@@ -1238,6 +1306,34 @@ label {
 :root[data-theme="dark"] .bot-picks-quick-view.is-active span {
   background: #dbeafe;
   color: #1e3a8a;
+}
+
+:root[data-theme="dark"] .robot-preflight-grid > div,
+:root[data-theme="dark"] .robot-batch-console,
+:root[data-theme="dark"] .robot-batch-metric,
+:root[data-theme="dark"] .robot-batch-picker,
+:root[data-theme="dark"] .robot-batch-range,
+:root[data-theme="dark"] .robot-step-card {
+  border-color: #334155;
+  background: #111827;
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .robot-preflight-grid strong,
+:root[data-theme="dark"] .robot-batch-range strong,
+:root[data-theme="dark"] .robot-step-title,
+:root[data-theme="dark"] .robot-step-metrics {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .robot-preflight-grid span,
+:root[data-theme="dark"] .robot-preflight-grid small,
+:root[data-theme="dark"] .robot-batch-metric span,
+:root[data-theme="dark"] .robot-batch-picker span,
+:root[data-theme="dark"] .robot-batch-range span,
+:root[data-theme="dark"] .robot-step-subtitle,
+:root[data-theme="dark"] .robot-step-message {
+  color: #cbd5e1;
 }
 
 :root[data-theme="dark"] .bot-comparison-card.is-active {

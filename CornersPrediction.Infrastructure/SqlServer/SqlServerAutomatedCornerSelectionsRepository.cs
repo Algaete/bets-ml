@@ -13,6 +13,7 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         SELECT
             s.AutomatedCornerBetSelectionId,
             s.RunId,
+            s.BotKey,
             s.AutomationVersion,
             s.Source,
             s.SourceMatchId,

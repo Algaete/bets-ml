@@ -30,7 +30,7 @@ namespace CornersMLData.Services
         private readonly ILogger<PinnacleUpcomingOddsScraper> _logger;
         private readonly CompetitionEligibilityPolicy _competitionPolicy;
         private readonly string _apiBaseUrl;
-        private readonly string _apiKey;
+        private readonly string? _apiKey;
         private readonly int _parallelism;
         private readonly int _upcomingDays;
 
@@ -46,13 +46,9 @@ namespace CornersMLData.Services
             _apiBaseUrl = NormalizeBaseUrl(
                 configuration["PinnacleGuestApi:BaseUrl"] ?? DefaultApiBaseUrl);
             var configuredApiKey = configuration["PinnacleGuestApi:ApiKey"];
-            if (string.IsNullOrWhiteSpace(configuredApiKey))
-            {
-                throw new InvalidOperationException(
-                    "PinnacleGuestApi:ApiKey is required. Set PINNACLE_GUEST_API_KEY.");
-            }
-
-            _apiKey = configuredApiKey.Trim();
+            _apiKey = string.IsNullOrWhiteSpace(configuredApiKey)
+                ? null
+                : configuredApiKey.Trim();
             _parallelism = Math.Clamp(
                 configuration.GetValue("PinnacleGuestApi:Parallelism", 6),
                 1,
@@ -171,6 +167,13 @@ namespace CornersMLData.Services
                 cancellationToken) ?? new List<ArcadiaMarket>();
 
             var match = BuildMatchMetadata(candidate);
+            match.AvailableMarketUnits = candidate.MarketMatchups
+                .Select(marketMatchup => marketMatchup.Units?.Trim())
+                .Where(units => !string.IsNullOrWhiteSpace(units))
+                .Select(units => units!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(units => units, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             var openMarkets = markets
                 .Where(market => market.Period == 0)
                 .Where(market => market.Status.Equals("open", StringComparison.OrdinalIgnoreCase))
@@ -198,11 +201,20 @@ namespace CornersMLData.Services
             match.GoalsTotal = BuildMarket(goalMarkets, "total", null, "Total Goals Match");
             match.GoalsHomeTeam = BuildMarket(goalMarkets, "team_total", "home", "Team Total Goals Match - Home");
             match.GoalsAwayTeam = BuildMarket(goalMarkets, "team_total", "away", "Team Total Goals Match - Away");
-            var shotsOnTargetMarkets = GetUnitMarkets(candidate, openMarkets, "Shots on Target", "Shots On Target", "ShotsOnTarget");
+            var shotsOnTargetMarkets = GetUnitMarkets(
+                candidate,
+                openMarkets,
+                "Shots on Target",
+                "Shots On Target",
+                "ShotsOnTarget",
+                "Shots on Goal",
+                "Shots On Goal",
+                "ShotsOnGoal",
+                "Shots on Frame");
             match.ShotsOnTargetTotal = BuildMarket(shotsOnTargetMarkets, "total", null, "Total Shots on Target Match");
             match.ShotsOnTargetHomeTeam = BuildMarket(shotsOnTargetMarkets, "team_total", "home", "Team Total Shots on Target Match - Home");
             match.ShotsOnTargetAwayTeam = BuildMarket(shotsOnTargetMarkets, "team_total", "away", "Team Total Shots on Target Match - Away");
-            var shotsMarkets = GetUnitMarkets(candidate, openMarkets, "Shots");
+            var shotsMarkets = GetUnitMarkets(candidate, openMarkets, "Shots", "Total Shots", "Shot Attempts");
             match.ShotsTotal = BuildMarket(shotsMarkets, "total", null, "Total Shots Match");
             match.ShotsHomeTeam = BuildMarket(shotsMarkets, "team_total", "home", "Team Total Shots Match - Home");
             match.ShotsAwayTeam = BuildMarket(shotsMarkets, "team_total", "away", "Team Total Shots Match - Away");
@@ -316,7 +328,10 @@ namespace CornersMLData.Services
             using var request = new HttpRequestMessage(
                 HttpMethod.Get,
                 new Uri(new Uri(_apiBaseUrl), relativeUrl));
-            request.Headers.TryAddWithoutValidation("X-API-Key", _apiKey);
+            if (!string.IsNullOrWhiteSpace(_apiKey))
+            {
+                request.Headers.TryAddWithoutValidation("X-API-Key", _apiKey);
+            }
             request.Headers.TryAddWithoutValidation("X-Language", "en-GB");
             request.Headers.TryAddWithoutValidation("X-Customer-Culture", "en-GB");
 
@@ -324,6 +339,13 @@ namespace CornersMLData.Services
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
+            if (_apiKey is null &&
+                response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                throw new InvalidOperationException(
+                    "Pinnacle guest API rejected anonymous access. Configure an authorized PINNACLE_GUEST_API_KEY.");
+            }
+
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken);
         }
@@ -416,11 +438,34 @@ namespace CornersMLData.Services
             IEnumerable<ArcadiaMarket> markets,
             params string[] units)
         {
+            var normalizedUnits = units
+                .Select(NormalizeMarketUnit)
+                .Where(unit => unit.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
             var matchupIds = candidate.MarketMatchups
-                .Where(matchup => units.Any(unit => matchup.Units.Equals(unit, StringComparison.OrdinalIgnoreCase)))
+                .Where(matchup => normalizedUnits.Contains(NormalizeMarketUnit(matchup.Units)))
                 .Select(matchup => matchup.Id)
                 .ToHashSet();
             return markets.Where(market => matchupIds.Contains(market.MatchupId)).ToArray();
+        }
+
+        private static string NormalizeMarketUnit(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            var decomposed = value.Normalize(NormalizationForm.FormD);
+            var normalized = new StringBuilder(decomposed.Length);
+            foreach (var character in decomposed)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                    continue;
+
+                if (char.IsLetterOrDigit(character))
+                    normalized.Append(char.ToLowerInvariant(character));
+            }
+
+            return normalized.ToString();
         }
 
         private sealed record PinnacleApiCandidate(

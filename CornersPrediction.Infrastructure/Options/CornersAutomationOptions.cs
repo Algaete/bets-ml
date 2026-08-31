@@ -10,7 +10,7 @@ public sealed class CornersAutomationOptions
 
     public int DefaultTimeoutSeconds { get; init; } = 120;
 
-    public int BetanoTimeoutSeconds { get; init; } = 900;
+    public int BetanoTimeoutSeconds { get; init; } = 1200;
 
     public int BotTimeoutSeconds { get; init; } = 300;
 
@@ -26,7 +26,7 @@ public sealed class CornersAutomationOptions
 
     public int PinnacleTake { get; init; } = 100;
 
-    public int BetanoTake { get; init; } = 40;
+    public int BetanoTake { get; init; } = 32;
 
     public int DefaultUpcomingDays { get; init; } = 7;
 

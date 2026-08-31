@@ -6,6 +6,26 @@
     ViewData["Title"] = T("Betting.Title");
     var moneyStep = Model.WorkingCurrencyCode == "CLP" ? "1" : "0.01";
     var settledBets = Model.Summary.WonBets + Model.Summary.LostBets + Model.Summary.VoidBets + Model.Summary.CashoutBets;
+    var pendingExposurePercent = Model.CurrentBankroll > 0
+        ? Model.PendingStake * 100m / Model.CurrentBankroll
+        : 0m;
+    var closingOddsRecords = Model.Records
+        .Where(record => record.ClosingOdds.HasValue && record.ClosingOdds.Value > 0 && record.Odds > 0)
+        .ToArray();
+    var averageClvPercent = closingOddsRecords.Length == 0
+        ? (decimal?)null
+        : closingOddsRecords.Average(record => (record.Odds / record.ClosingOdds!.Value - 1m) * 100m);
+    var decisiveRecent = Model.Records
+        .Where(record => record.Status is "Won" or "Lost")
+        .OrderByDescending(record => record.MatchDate)
+        .ThenByDescending(record => record.Id)
+        .ToArray();
+    var currentStreakCount = decisiveRecent.Length == 0
+        ? 0
+        : decisiveRecent.TakeWhile(record => record.Status == decisiveRecent[0].Status).Count();
+    var currentStreak = decisiveRecent.Length == 0
+        ? "Sin resultados"
+        : $"{currentStreakCount} {(decisiveRecent[0].Status == "Won" ? "ganada(s)" : "perdida(s)")}";
     var activeFilterCount = new[]
     {
         Model.Filters.CurrencyCode,
@@ -78,8 +98,15 @@
         return record.MarketType switch
         {
             "TotalShots" => $"Shots {(record.ActualTotalShots?.ToString() ?? "-")}",
+            "HomeShots" => $"Shots local {(record.ActualHomeShots?.ToString() ?? "-")}",
+            "AwayShots" => $"Shots visita {(record.ActualAwayShots?.ToString() ?? "-")}",
             "TotalShotsOnGoal" => $"SOG {(record.ActualTotalShotsOnGoal?.ToString() ?? "-")}",
-            _ => $"Corners {(record.ActualTotalCorners?.ToString() ?? "-")}"
+            "HomeShotsOnGoal" => $"SOG local {(record.ActualHomeShotsOnGoal?.ToString() ?? "-")}",
+            "AwayShotsOnGoal" => $"SOG visita {(record.ActualAwayShotsOnGoal?.ToString() ?? "-")}",
+            "HomeCorners" => $"Córners local {(record.ActualHomeCorners?.ToString() ?? "-")}",
+            "AwayCorners" => $"Córners visita {(record.ActualAwayCorners?.ToString() ?? "-")}",
+            "TotalGoals" or "HomeGoals" or "AwayGoals" => "Goles -",
+            _ => $"Córners {(record.ActualTotalCorners?.ToString() ?? "-")}"
         };
     }
 }
@@ -190,6 +217,29 @@
             <div class="metric-value">@Money(Model.Summary.AverageStake, Model.WorkingCurrencyCode)</div>
         </div>
     </div>
+</section>
+
+<section class="betting-risk-grid mb-4" aria-label="Riesgo y calidad de la muestra">
+    <article>
+        <span>Exposición pendiente</span>
+        <strong class="@(pendingExposurePercent >= 25 ? "text-danger" : pendingExposurePercent >= 10 ? "text-warning" : "")">@pendingExposurePercent.ToString("N1")%</strong>
+        <small>@Money(Model.PendingStake, Model.WorkingCurrencyCode) del bankroll actual</small>
+    </article>
+    <article>
+        <span>Racha actual</span>
+        <strong>@currentStreak</strong>
+        <small>Solo ganadas y perdidas de la vista actual</small>
+    </article>
+    <article>
+        <span>Mejor / peor resultado</span>
+        <strong><span class="text-success">@Money(Model.Summary.BestProfit, Model.WorkingCurrencyCode)</span> / <span class="text-danger">@Money(Model.Summary.WorstLoss, Model.WorkingCurrencyCode)</span></strong>
+        <small>Resultado unitario dentro de los filtros</small>
+    </article>
+    <article>
+        <span>CLV promedio</span>
+        <strong class="@(averageClvPercent > 0 ? "text-success" : averageClvPercent < 0 ? "text-danger" : "")">@(averageClvPercent.HasValue ? $"{averageClvPercent.Value:N2}%" : "Sin muestra")</strong>
+        <small>@closingOddsRecords.Length apuestas con cuota de cierre</small>
+    </article>
 </section>
 
 <div class="collapse mb-4" id="BankrollMovementPanel">
@@ -398,22 +448,27 @@
                             <td>
                                 <div class="betting-actions">
                                     <a class="btn btn-sm btn-outline-secondary" asp-controller="Betting" asp-action="Details" asp-route-id="@record.Id">@T("Common.View")</a>
-                                    <a class="btn btn-sm btn-outline-primary" asp-controller="Betting" asp-action="Edit" asp-route-id="@record.Id">@T("Common.Edit")</a>
-                                    @foreach (var status in new[] { "Won", "Lost", "Void", "Cashout" })
-                                    {
-                                        <form method="post" asp-controller="Betting" asp-action="MarkStatus" class="d-inline">
-                                            @Html.AntiForgeryToken()
-                                            <input type="hidden" name="id" value="@record.Id" />
-                                            <input type="hidden" name="status" value="@status" />
-                                            <button type="submit" class="btn btn-sm @StatusButton(status)">@status</button>
-                                        </form>
-                                    }
-                                    <form method="post" asp-controller="Betting" asp-action="Delete" class="d-inline" onsubmit="return confirm('@T("Common.DeleteBetConfirm")');">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="id" value="@record.Id" />
-                                        <input type="hidden" name="currencyCode" value="@record.CurrencyCode" />
-                                        <button type="submit" class="btn btn-sm btn-outline-danger">@T("Common.Delete")</button>
-                                    </form>
+                                    <details class="betting-row-menu">
+                                        <summary>Más</summary>
+                                        <div>
+                                            <a class="btn btn-sm btn-outline-primary" asp-controller="Betting" asp-action="Edit" asp-route-id="@record.Id">@T("Common.Edit")</a>
+                                            @foreach (var status in new[] { "Won", "Lost", "Void", "Cashout" })
+                                            {
+                                                <form method="post" asp-controller="Betting" asp-action="MarkStatus">
+                                                    @Html.AntiForgeryToken()
+                                                    <input type="hidden" name="id" value="@record.Id" />
+                                                    <input type="hidden" name="status" value="@status" />
+                                                    <button type="submit" class="btn btn-sm @StatusButton(status)">@status</button>
+                                                </form>
+                                            }
+                                            <form method="post" asp-controller="Betting" asp-action="Delete" onsubmit="return confirm('@T("Common.DeleteBetConfirm")');">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="id" value="@record.Id" />
+                                                <input type="hidden" name="currencyCode" value="@record.CurrencyCode" />
+                                                <button type="submit" class="btn btn-sm btn-outline-danger">@T("Common.Delete")</button>
+                                            </form>
+                                        </div>
+                                    </details>
                                 </div>
                             </td>
                         </tr>

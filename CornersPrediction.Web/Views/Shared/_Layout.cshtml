@@ -1,4 +1,5 @@
-﻿<!DOCTYPE html>
+﻿@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+<!DOCTYPE html>
 @{
     var language = UiText.GetLanguage(Context);
 }
@@ -29,9 +30,19 @@
         var isAuthenticated = User.Identity?.IsAuthenticated == true;
         var canUsePredictions = User.IsInRole("Admin") || User.IsInRole("Analyst") || User.IsInRole("User");
         var canAdminUsers = User.IsInRole("Admin");
+        var activeSection = activeController switch
+        {
+            "UpcomingMatches" or "MatchHistory" => language == UiText.Spanish ? "Operación y datos" : "Operations and data",
+            "Predictions" or "NewGenerationPrediction" or "BotPicks" or "BotG2026" or "BotH2026" => language == UiText.Spanish ? "Análisis y modelos" : "Analysis and models",
+            "Betting" => language == UiText.Spanish ? "Banca y apuestas" : "Bankroll and betting",
+            "RobotPanel" or "BotAutomation" or "UserAdmin" => language == UiText.Spanish ? "Administración" : "Administration",
+            _ => UiText.T(language, "App.Name")
+        };
+        var environmentLabel = HostEnvironment.IsDevelopment() ? "Local" : HostEnvironment.EnvironmentName;
     }
+    <a class="skip-to-content" href="#MainContent">@(language == UiText.Spanish ? "Saltar al contenido" : "Skip to content")</a>
     <div class="app-shell" id="AppShell">
-        <aside class="app-sidebar" id="AppSidebar" aria-label="Main menu">
+        <aside class="app-sidebar" id="AppSidebar" aria-label="@(language == UiText.Spanish ? "Menú principal" : "Main menu")">
             <div class="sidebar-brand">
                 <a asp-area="" asp-controller="UpcomingMatches" asp-action="Index">
                     <span class="brand-mark">CP</span>
@@ -44,56 +55,74 @@
             <nav class="sidebar-nav">
                 @if (isAuthenticated)
                 {
+                    <div class="sidebar-section-label">@(language == UiText.Spanish ? "Operación" : "Operations")</div>
+                }
+                @if (isAuthenticated)
+                {
                     <a class="sidebar-link @(activeController == "UpcomingMatches" ? "active" : "")" asp-area="" asp-controller="UpcomingMatches" asp-action="Index">
-                        <span class="sidebar-icon">UP</span>
+                        <span class="sidebar-icon" aria-hidden="true">UP</span>
                         <span>@UiText.T(language, "Nav.UpcomingMatches")</span>
                     </a>
+                    @if (canUsePredictions)
+                    {
+                        <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
+                            <span class="sidebar-icon" aria-hidden="true">MH</span>
+                            <span>@UiText.T(language, "Nav.MatchHistory")</span>
+                        </a>
+                    }
                 }
                 @if (canUsePredictions)
                 {
+                    <div class="sidebar-section-label">@(language == UiText.Spanish ? "Análisis" : "Analysis")</div>
                     <a class="sidebar-link @(activeController == "Predictions" ? "active" : "")" asp-area="" asp-controller="Predictions" asp-action="Index">
-                        <span class="sidebar-icon">PR</span>
-                        <span>@UiText.T(language, "Nav.Predictions")</span>
+                        <span class="sidebar-icon" aria-hidden="true">LG</span>
+                        <span><span class="sidebar-link-title">@UiText.T(language, "Nav.Predictions")</span><span class="sidebar-link-meta">Legacy</span></span>
                     </a>
                     <a class="sidebar-link @(activeController == "NewGenerationPrediction" ? "active" : "")" asp-area="" asp-controller="NewGenerationPrediction" asp-action="Index">
-                        <span class="sidebar-icon">26</span>
-                        <span>Modelos 2026</span>
-                    </a>
-                    <a class="sidebar-link @(activeController == "MatchHistory" ? "active" : "")" asp-area="" asp-controller="MatchHistory" asp-action="Index">
-                        <span class="sidebar-icon">MH</span>
-                        <span>@UiText.T(language, "Nav.MatchHistory")</span>
+                        <span class="sidebar-icon" aria-hidden="true">26</span>
+                        <span><span class="sidebar-link-title">Modelos 2026</span><span class="sidebar-link-meta">12 ML</span></span>
                     </a>
                     <a class="sidebar-link @(activeController == "BotPicks" ? "active" : "")" asp-area="" asp-controller="BotPicks" asp-action="Index">
-                        <span class="sidebar-icon">BP</span>
+                        <span class="sidebar-icon" aria-hidden="true">BP</span>
                         <span>@UiText.T(language, "Nav.BotPicks")</span>
+                    </a>
+                    <a class="sidebar-link @(activeController == "BotG2026" ? "active" : "")" asp-area="" asp-controller="BotG2026" asp-action="Index">
+                        <span class="sidebar-icon" aria-hidden="true">G</span>
+                        <span><span class="sidebar-link-title">G2026</span><span class="sidebar-link-meta">Shadow lab</span></span>
+                    </a>
+                    <a class="sidebar-link @(activeController == "BotH2026" ? "active" : "")" asp-area="" asp-controller="BotH2026" asp-action="Index">
+                        <span class="sidebar-icon" aria-hidden="true">H</span>
+                        <span><span class="sidebar-link-title">H2026</span><span class="sidebar-link-meta">Shadow · sólo lectura</span></span>
                     </a>
                 }
                 @if (isAuthenticated)
                 {
+                    <div class="sidebar-section-label">@(language == UiText.Spanish ? "Banca" : "Bankroll")</div>
                     <a class="sidebar-link @(activeController == "Betting" ? "active" : "")" asp-area="" asp-controller="Betting" asp-action="Index">
-                        <span class="sidebar-icon">BT</span>
+                        <span class="sidebar-icon" aria-hidden="true">BT</span>
                         <span>@UiText.T(language, "Nav.Betting")</span>
                     </a>
                 }
                 @if (canAdminUsers)
                 {
+                    <div class="sidebar-section-label">@(language == UiText.Spanish ? "Administración" : "Administration")</div>
                     <a class="sidebar-link @(activeController == "RobotPanel" ? "active" : "")" asp-area="" asp-controller="RobotPanel" asp-action="Index">
-                        <span class="sidebar-icon">RB</span>
+                        <span class="sidebar-icon" aria-hidden="true">RB</span>
                         <span>@UiText.T(language, "Nav.RobotPanel")</span>
                     </a>
                     <a class="sidebar-link @(activeController == "BotAutomation" ? "active" : "")" asp-area="" asp-controller="BotAutomation" asp-action="Index">
-                        <span class="sidebar-icon">BA</span>
+                        <span class="sidebar-icon" aria-hidden="true">BA</span>
                         <span>Bots y procesos</span>
                     </a>
                     <a class="sidebar-link @(activeController == "UserAdmin" ? "active" : "")" asp-area="" asp-controller="UserAdmin" asp-action="Index">
-                        <span class="sidebar-icon">UA</span>
+                        <span class="sidebar-icon" aria-hidden="true">UA</span>
                         <span>@UiText.T(language, "Nav.Users")</span>
                     </a>
                 }
             </nav>
             <div class="sidebar-footer">
-                <span class="small text-white-50">@UiText.T(language, "App.LocalWorkspace")</span>
-                <span class="small fw-semibold">2026</span>
+                <span><span class="app-status-dot" aria-hidden="true"></span><span class="small">@environmentLabel</span></span>
+                <span class="small fw-semibold">SQL Azure</span>
             </div>
         </aside>
 
@@ -101,14 +130,17 @@
 
         <div class="app-main">
             <header class="app-topbar">
-                <button class="sidebar-toggle" type="button" id="SidebarToggle" aria-controls="AppSidebar" aria-expanded="true" aria-label="Toggle menu">
+                <button class="sidebar-toggle" type="button" id="SidebarToggle" aria-controls="AppSidebar" aria-expanded="true" aria-label="@(language == UiText.Spanish ? "Abrir o cerrar menú" : "Toggle menu")">
                     <span aria-hidden="true">&#9776;</span>
                 </button>
                 <div>
                     <div class="topbar-title">@ViewData["Title"]</div>
-                    <div class="topbar-subtitle">@UiText.T(language, "App.Name")</div>
+                    <div class="topbar-subtitle">@activeSection</div>
                 </div>
                 <div class="ms-auto d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                    <span class="app-environment-chip" title="Web @environmentLabel · datos persistidos en Azure SQL">
+                        <span class="app-status-dot" aria-hidden="true"></span>@environmentLabel · Azure SQL
+                    </span>
                     <button id="ThemeToggle" class="btn btn-sm btn-outline-theme theme-toggle d-inline-flex align-items-center" type="button" data-theme-toggle aria-pressed="false">
                         <span class="theme-toggle-icon" data-theme-toggle-icon aria-hidden="true">L</span>
                         <span data-theme-toggle-label>Modo claro</span>
@@ -147,12 +179,12 @@
                 </form>
             </header>
 
-            <main role="main" class="app-content">
+            <main role="main" class="app-content" id="MainContent" tabindex="-1">
                 @RenderBody()
             </main>
 
             <footer class="app-footer text-muted">
-                &copy; 2026 - Corners Prediction
+                &copy; 2026 · Corners Prediction · Web @environmentLabel · Datos Azure SQL
             </footer>
         </div>
     </div>
@@ -160,6 +192,7 @@
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     <script src="~/js/theme-toggle.js" asp-append-version="true"></script>
+    <script src="~/js/lab-tables.js" asp-append-version="true"></script>
     <script>
         (() => {
             const shell = document.getElementById('AppShell');

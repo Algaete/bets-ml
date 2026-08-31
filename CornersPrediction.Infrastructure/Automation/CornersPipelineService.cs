@@ -295,10 +295,12 @@ public sealed class CornersPipelineService : ICornersPipelineService
         var upcoming = await RunUpcomingMatchesAsync(upcomingDays, cancellationToken);
         steps.Add(upcoming);
 
-        var pinnacle = await RunPinnacleOddsAsync(cancellationToken);
+        var oddsRefreshes = await Task.WhenAll(
+            RunPinnacleOddsAsync(cancellationToken),
+            RunBetanoOddsAsync(cancellationToken));
+        var pinnacle = oddsRefreshes[0];
+        var betano = oddsRefreshes[1];
         steps.Add(pinnacle);
-
-        var betano = await RunBetanoOddsAsync(cancellationToken);
         steps.Add(betano);
 
         var hasCriticalDataFailure = !matchHistory.IsSuccess || !upcoming.IsSuccess;
@@ -362,13 +364,15 @@ public sealed class CornersPipelineService : ICornersPipelineService
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutSource.IsCancellationRequested)
         {
             _logger.LogWarning(exception, "Timeout while running pipeline step {StepKey}", stepKey);
+            var timeoutMinutes = Math.Max(1, (int)Math.Ceiling(timeout.TotalMinutes));
             return CreateFailureStep(
                 stepKey,
                 stepName,
                 days,
                 startedAtUtc,
                 timedOut: true,
-                message: "The request timed out while waiting for the external API.");
+                message: $"La fuente externa no completo el proceso dentro de {timeoutMinutes} minutos. " +
+                    "La ejecucion se cancelo para no dejar el panel esperando indefinidamente.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

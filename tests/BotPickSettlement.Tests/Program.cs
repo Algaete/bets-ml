@@ -1,8 +1,12 @@
 using CornersPrediction.Application.AutomatedCorners;
+using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotC;
 using CornersPrediction.Application.Automation.BotD;
 using CornersPrediction.Application.Automation.BotE;
+using CornersPrediction.Application.FootballIntelligence;
 using CornersPrediction.Application.Teams;
+using CornersPrediction.Domain.FootballIntelligence;
+using System.Text.RegularExpressions;
 
 var tests = new (string Name, Action Execute)[]
 {
@@ -47,9 +51,106 @@ var tests = new (string Name, Action Execute)[]
     ,("Bot E preserves uncertainty for identical outcomes", BotEUncertaintyDoesNotCollapse)
     ,("Bot E evidence hash changes after a result correction", BotEEvidenceHashTracksCorrections)
     ,("Bot E calibration is deterministic regardless of input order", BotECalibrationIsDeterministic)
+    ,("Bot F calibration history uses its pre-calibration probability", BotFHistoryUsesPreCalibrationProbability)
+    ,("Bot E and H calibration history preserves legacy base probability", BotEAndHHistoryPreservesBaseProbability)
+    ,("Calibration history repository never feeds FinalProbability", CalibrationHistoryRepositoryAvoidsFinalProbability)
+    ,("Production decisions use the exact immutable bilateral odds snapshot", ProductionUsesImmutableBilateralOddsSnapshot)
     ,("Bot C and D ignore calibration history while Bot E is disabled", BotCAndDRemainUnchangedWhenBotEIsDisabled)
     ,("Bot F legacy source requires version and temporal provenance", BotFLegacySourceRequiresProvenance)
+    ,("Football intelligence is exactly neutral without usable evidence", FootballIntelligenceIsNeutralWithoutEvidence)
+    ,("Football intelligence applies only bounded market-specific evidence", FootballIntelligenceAppliesBoundedMarketSignal)
+    ,("Football intelligence reports the effective adjustment after probability clamping", FootballIntelligenceReportsEffectiveClampedAdjustment)
+    ,("Every active built-in bot enables football intelligence while B stays retired", ActiveBotsEnableFootballIntelligence)
+    ,("Bots E and F keep identical decisions when internet evidence is absent", BotEAndFRemainNumericallyUnchangedWithoutInternetEvidence)
+    ,("Lexical news extraction only accepts explicit availability statements", NewsExtractionRequiresExplicitEvidence)
+    ,("News queries balance English Spanish and Portuguese", NewsQueriesAreLanguageBalanced)
+    ,("News facts deduplicate by player and official lineups prevail", NewsFactsConsolidateDeterministically)
+    ,("Football intelligence SQL avoids entity Id parameter collisions", FootballIntelligenceSqlAvoidsIdParameterCollisions)
+    ,("API-Football intelligence parser tolerates optional null numbers", FootballIntelligenceParserToleratesNullNumbers)
+    ,("API-Football card absences are classified as suspensions", FootballIntelligenceClassifiesCardSuspensions)
+    ,("Manual settlement SQL is auditable and excluded from automatic reconciliation", ManualSettlementSqlIsProtected)
+    ,("Bot B is retired without deleting historical picks", BotBIsRetired)
+    ,("Bot H is seeded as a valid shadow-only calibration challenger", BotHIsShadowOnlyChallenger)
+    ,("Chile corners exclusion merges idempotently without replacing league filters", ChileCornersExclusionMergesIdempotently)
 };
+
+static void ProductionUsesImmutableBilateralOddsSnapshot()
+{
+    var repository = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(),
+        "CornersPredictionApi",
+        "Robot",
+        "AutomatedCornersBot",
+        "SqlAutomationRepository.cs"));
+    var service = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(),
+        "CornersPredictionApi",
+        "Robot",
+        "AutomatedCornersBot",
+        "AutomatedCornersSelectionService.cs"));
+
+    Assert(repository.Contains(
+        "WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotOverOdds",
+        StringComparison.Ordinal));
+    Assert(repository.Contains(
+        "WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotUnderOdds",
+        StringComparison.Ordinal));
+    Assert(service.Contains("candidate.Odds.SnapshotOverOdds is > 1m", StringComparison.Ordinal));
+    Assert(service.Contains("candidate.Odds.SnapshotUnderOdds is > 1m", StringComparison.Ordinal));
+    Assert(service.Contains(
+        "EnsureUtc(bundle.Odds.OddsCapturedAtUtc ?? bundle.Odds.UpdatedAtUtc)",
+        StringComparison.Ordinal));
+    Assert(service.Contains(
+        "var enforceLiveProductionGate = !effectiveRequest.DryRun && !historicalMode;",
+        StringComparison.Ordinal));
+}
+
+static void ChileCornersExclusionMergesIdempotently()
+{
+    var schema = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(), "CornersPredictionApi", "sql", "automated_corners_bot.sql"));
+
+    Assert(schema.Contains(
+        "WHERE BotKey IN (N'A', N'B', N'C2026', N'D2026', N'E2026', N'F2026')",
+        StringComparison.Ordinal));
+    Assert(schema.Contains("THEN @ChileFilterJson", StringComparison.Ordinal));
+    Assert(schema.Contains("FROM OPENJSON(@ChileMergedFilterJson)", StringComparison.Ordinal));
+    Assert(schema.Contains("@CornerFilterPath", StringComparison.Ordinal));
+    Assert(schema.Contains("JSON_MODIFY(\n                @ChileMergedFilterJson,\n                @CornerFilterPath",
+        StringComparison.Ordinal));
+    Assert(schema.Contains("@CornersFilterIndex = @FirstCornersFilterIndex", StringComparison.Ordinal));
+    Assert(schema.Contains("COLLATE Latin1_General_100_CI_AI <> N'Chile - *'", StringComparison.Ordinal));
+    Assert(!schema.Contains(
+        "AND LeagueFilterJson IS NULL;",
+        StringComparison.Ordinal));
+}
+
+static void BotHIsShadowOnlyChallenger()
+{
+    Assert(RecommendationBotLifecycle.IsShadowOnly("H2026"));
+    var schema = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(), "CornersPredictionApi", "sql", "automated_corners_bot.sql"));
+    Assert(schema.Contains("N'H2026' AS BotKey", StringComparison.Ordinal));
+    Assert(schema.Contains("PublishEnabled = 0", StringComparison.Ordinal));
+    var match = Regex.Match(
+        schema,
+        "N'(?<json>\\{\"configurationVersion\":\"bot-h-corners-calibration-shadow-1\\.0\\.0\".*?\\})' AS StrategyConfigurationJson",
+        RegexOptions.Singleline | RegexOptions.CultureInvariant);
+    Assert(match.Success);
+    var configuration = BotCStrategyConfiguration.FromJson(match.Groups["json"].Value.Replace("''", "'"));
+    Assert(configuration.EmpiricalCalibration.Enabled);
+    Assert(configuration.EmpiricalCalibration.SourceBotKey == "C2026");
+    Assert(configuration.ResolveThresholds("TotalCorners", "Over").Enabled == false);
+    Assert(configuration.ResolveThresholds("HomeTeamCorners", "Over").MinimumFinalEdge >= 0.04d);
+}
+
+static void FootballIntelligenceClassifiesCardSuspensions()
+{
+    Assert(StructuredFootballEvidenceClassifier.IsSuspension("Missing Fixture", "Yellow Cards"));
+    Assert(StructuredFootballEvidenceClassifier.IsSuspension(null, "Red Card"));
+    Assert(StructuredFootballEvidenceClassifier.IsSuspension("Suspended", null));
+    Assert(!StructuredFootballEvidenceClassifier.IsSuspension("Missing Fixture", "Groin Injury"));
+}
 
 foreach (var test in tests)
 {
@@ -58,6 +159,109 @@ foreach (var test in tests)
 }
 
 Console.WriteLine($"{tests.Length} Bot Pick settlement tests passed.");
+
+static void BotFHistoryUsesPreCalibrationProbability()
+{
+    var asOf = new DateTime(2026, 8, 20, 12, 0, 0, DateTimeKind.Utc);
+    var history = Enumerable.Range(1, 24)
+        .Select(index => BotEObservation(
+            8000 + index,
+            9000 + index,
+            asOf.AddDays(-index),
+            side: "Under",
+            line: 9.5m,
+            actual: 8,
+            sourceProbability: 0.90d))
+        .ToArray();
+    var configuration = new BotCStrategyConfiguration
+    {
+        ConfigurationVersion = "bot-f-recursive-calibration-regression",
+        EmpiricalCalibration = BotETestConfiguration(
+            minimumObservations: 2,
+            minimumExactMarketObservations: 2,
+            probabilityBandwidth: 0.50d)
+    };
+    var decision = new BotCPickDecisionEngine().Evaluate(
+        BotCInput(asOf) with { CalibrationHistory = history },
+        configuration);
+    var probability = BotECalibrationSourceProbabilityResolver.Resolve(
+        decision.FeatureSnapshotJson,
+        decision.BaseCalibratedProbability);
+
+    Assert(probability.HasValue);
+    AssertClose(probability.GetValueOrDefault(), decision.BaseCalibratedProbability);
+    Assert(Math.Abs(probability.GetValueOrDefault() - decision.FinalProbability) > 0.000001d);
+}
+
+static void BotEAndHHistoryPreservesBaseProbability()
+{
+    var asOf = new DateTime(2026, 8, 13, 12, 0, 0, DateTimeKind.Utc);
+    var sourceCDecision = new BotCPickDecisionEngine().Evaluate(
+        BotCInput(asOf),
+        new BotCStrategyConfiguration());
+    var currentSourceProbability = BotECalibrationSourceProbabilityResolver.Resolve(
+        sourceCDecision.FeatureSnapshotJson,
+        sourceCDecision.BaseCalibratedProbability);
+    var legacySourceProbability = BotECalibrationSourceProbabilityResolver.Resolve(
+        "{\"featureSchemaVersion\":\"legacy\"}",
+        0.58d);
+    var malformedLegacySourceProbability = BotECalibrationSourceProbabilityResolver.Resolve(
+        "[]",
+        0.57d);
+
+    Assert(currentSourceProbability.HasValue);
+    AssertClose(currentSourceProbability.GetValueOrDefault(), sourceCDecision.FinalProbability);
+    Assert(legacySourceProbability.HasValue);
+    AssertClose(legacySourceProbability.GetValueOrDefault(), 0.58d);
+    Assert(malformedLegacySourceProbability.HasValue);
+    AssertClose(malformedLegacySourceProbability.GetValueOrDefault(), 0.57d);
+    Assert(BotECalibrationSourceProbabilityResolver.Resolve(
+        "{\"empiricalCalibration\":{\"probabilityBeforeEmpiricalCalibration\":1.1}}",
+        0.58d) is null);
+}
+
+static void CalibrationHistoryRepositoryAvoidsFinalProbability()
+{
+    var repository = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(),
+        "CornersPredictionApi",
+        "Robot",
+        "AutomatedCornersBot",
+        "SqlAutomationRepository.cs"));
+    var methodStart = repository.IndexOf(
+        "GetBotECalibrationHistoryAsync(",
+        StringComparison.Ordinal);
+    Assert(methodStart >= 0);
+    var methodEnd = repository.IndexOf(
+        "public async Task<UpsertSelectionResult>",
+        methodStart,
+        StringComparison.Ordinal);
+    Assert(methodEnd > methodStart);
+    var method = repository[methodStart..methodEnd];
+
+    Assert(!method.Contains("SourceProbability = e.FinalProbability", StringComparison.Ordinal));
+    Assert(method.Contains(
+        "BotECalibrationSourceProbabilityResolver.Resolve",
+        StringComparison.Ordinal));
+    Assert(method.Contains("FeatureSnapshotJson", StringComparison.Ordinal));
+}
+
+static void BotBIsRetired()
+{
+    Assert(RecommendationBotLifecycle.IsRetired("B"));
+    Assert(RecommendationBotLifecycle.IsRetired(" b "));
+    Assert(!RecommendationBotLifecycle.IsRetired("A"));
+    Assert(!RecommendationBotLifecycle.IsRetired("C2026"));
+
+    var root = FindRepositoryRoot();
+    var schema = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPredictionApi",
+        "sql",
+        "automated_corners_bot.sql"));
+    Assert(schema.Contains("WHERE BotKey = N'B'", StringComparison.Ordinal));
+    Assert(schema.Contains("SET IsEnabled = 0", StringComparison.Ordinal));
+}
 
 static void ZeroIsNotNull()
 {
@@ -68,6 +272,84 @@ static void ZeroIsNotNull()
             candidate, out var actual, out _, out _, out _, out _));
         Assert(actual == 0);
     }
+}
+
+static void ManualSettlementSqlIsProtected()
+{
+    var root = FindRepositoryRoot();
+    var migration = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPredictionApi",
+        "sql",
+        "20260818_fix_manual_bot_pick_settlement.sql"));
+    var candidateSql = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPrediction.Infrastructure",
+        "SqlServer",
+        "SqlServerAutomatedBotPickSettlementRepository.cs"));
+
+    Assert(migration.Contains("SettlementActualValue = @ActualValue", StringComparison.Ordinal));
+    Assert(migration.Contains("SettlementFactor = @SettlementFactor", StringComparison.Ordinal));
+    Assert(migration.Contains("SettlementSource = N'Manual'", StringComparison.Ordinal));
+    Assert(migration.Contains("LastSettlementCheckReason = @SettlementReason", StringComparison.Ordinal));
+    Assert(migration.Contains("CREATE OR ALTER PROCEDURE dbo.sp_UpdateAutomatedCornerBetSelectionStatus", StringComparison.Ordinal));
+    Assert(candidateSql.Contains(
+        "s.SettlementSource IN (N'LocalMatchHistory', N'LocalMatchHistoryHistorical')",
+        StringComparison.Ordinal));
+}
+
+static void FootballIntelligenceSqlAvoidsIdParameterCollisions()
+{
+    var root = FindRepositoryRoot();
+    var repository = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPrediction.Infrastructure",
+        "SqlServer",
+        "SqlServerFootballIntelligenceRepository.cs"));
+
+    Assert(!repository.Contains("DECLARE @Id BIGINT", StringComparison.Ordinal));
+    Assert(repository.Contains("DECLARE @PersistedId BIGINT", StringComparison.Ordinal));
+}
+
+static void FootballIntelligenceParserToleratesNullNumbers()
+{
+    var root = FindRepositoryRoot();
+    var provider = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPredictionApi",
+        "FootballIntelligence",
+        "ApiFootballStructuredDataProvider.cs"));
+
+    Assert(provider.Contains(
+        "value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined",
+        StringComparison.Ordinal));
+    Assert(provider.Contains(
+        "value.ValueKind == JsonValueKind.Number && value.TryGetInt32",
+        StringComparison.Ordinal));
+    Assert(provider.Contains(
+        "value.ValueKind == JsonValueKind.Number && value.TryGetInt64",
+        StringComparison.Ordinal));
+}
+
+static string FindRepositoryRoot()
+{
+    var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
+    while (directory is not null)
+    {
+        if (File.Exists(Path.Combine(directory.FullName, "CornersPrediction.sln")))
+            return directory.FullName;
+        directory = directory.Parent;
+    }
+
+    directory = new DirectoryInfo(AppContext.BaseDirectory);
+    while (directory is not null)
+    {
+        if (File.Exists(Path.Combine(directory.FullName, "CornersPrediction.sln")))
+            return directory.FullName;
+        directory = directory.Parent;
+    }
+
+    throw new DirectoryNotFoundException("CornersPrediction repository root was not found.");
 }
 
 static void MissingStatisticStaysPending()
@@ -331,6 +613,12 @@ static void ProviderTeamAliasesAreDeterministic()
     Assert(TeamNameMatcher.FindBestMatch("España", ["Spain"])?.Confidence >= 0.96);
     Assert(TeamNameMatcher.FindBestMatch("St Louis City SC", ["St. Louis City"])?.Confidence >= 0.96);
     Assert(TeamNameMatcher.FindBestMatch("Los Chankas", ["Club Deportivo Los Chankas"])?.Confidence >= 0.96);
+    Assert(TeamNameMatcher.FindBestMatch("Coventry City", ["Coventry"])?.Confidence >= 0.98);
+    Assert(TeamNameMatcher.FindBestMatch("Coventry", ["Coventry City"])?.Confidence >= 0.98);
+    Assert(TeamNameMatcher.FindBestMatch("Vicenza", ["Vicenza Virtus"])?.Confidence == 1);
+    Assert(TeamNameMatcher.FindBestMatch("Jaguares de Cordoba", ["Jaguares"])?.Confidence == 1);
+    Assert(TeamNameMatcher.FindBestMatch("Boyaca Chico", ["Chico"])?.Confidence == 1);
+    Assert(TeamNameMatcher.FindBestMatch("Manchester City", ["Manchester United"]) is null);
     Assert(TeamNameMatcher.FindBestMatch("FC Juarez", ["Juarez U21"]) is null);
 }
 
@@ -923,6 +1211,277 @@ static void BotFLegacySourceRequiresProvenance()
     });
     Assert(valid.BasePredictionSource == "LEGACY");
 }
+
+static void FootballIntelligenceIsNeutralWithoutEvidence()
+{
+    var asOf = new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc);
+    var configuration = IntelligenceConfiguration();
+    var cases = new MatchIntelligenceSnapshotPair?[]
+    {
+        null,
+        new(5001, IntelligenceSnapshot(1, 5001, asOf.AddHours(-1), actionableFacts: 0), null),
+        new(5002, IntelligenceSnapshot(2, 5002, asOf.AddHours(-1), confidence: 0.20m), null),
+        new(5003, IntelligenceSnapshot(3, 5003, asOf.AddHours(1)), null),
+        new(5004, IntelligenceSnapshot(4, 5004, asOf.AddHours(-1), ageMinutes: 5000), null)
+    };
+
+    foreach (var snapshots in cases)
+    {
+        var result = FootballIntelligenceAdjustmentCalculator.Calculate(
+            asOf,
+            "HomeTeamGoals",
+            "Over",
+            0.61d,
+            snapshots,
+            configuration);
+        Assert(!result.IsApplied);
+        AssertClose(result.ProbabilityAdjustment, 0d);
+        AssertClose(result.ProbabilityBefore, 0.61d);
+        AssertClose(result.ProbabilityAfter, 0.61d);
+    }
+}
+
+static void FootballIntelligenceAppliesBoundedMarketSignal()
+{
+    var asOf = new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc);
+    var snapshots = new MatchIntelligenceSnapshotPair(
+        6001,
+        IntelligenceSnapshot(
+            10,
+            6001,
+            asOf.AddMinutes(-5),
+            attackImpact: 0.50m,
+            goalImpact: 0.30m,
+            missingGoalShare: 0.20m),
+        null);
+    var over = FootballIntelligenceAdjustmentCalculator.Calculate(
+        asOf, "HomeTeamGoals", "Over", 0.60d, snapshots, IntelligenceConfiguration());
+    var under = FootballIntelligenceAdjustmentCalculator.Calculate(
+        asOf, "HomeTeamGoals", "Under", 0.60d, snapshots, IntelligenceConfiguration());
+
+    Assert(over.IsApplied && under.IsApplied);
+    Assert(over.ProbabilityAdjustment < 0d);
+    Assert(under.ProbabilityAdjustment > 0d);
+    Assert(Math.Abs(over.ProbabilityAdjustment) <= 0.0400000001d);
+    Assert(Math.Abs(under.ProbabilityAdjustment) <= 0.0400000001d);
+}
+
+static void FootballIntelligenceReportsEffectiveClampedAdjustment()
+{
+    var asOf = new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc);
+    var snapshots = new MatchIntelligenceSnapshotPair(
+        6002,
+        IntelligenceSnapshot(
+            11,
+            6002,
+            asOf.AddMinutes(-5),
+            attackImpact: 0.90m,
+            goalImpact: 0.90m,
+            missingGoalShare: 0.90m),
+        null);
+    var result = FootballIntelligenceAdjustmentCalculator.Calculate(
+        asOf,
+        "HomeTeamGoals",
+        "Under",
+        0.99d,
+        snapshots,
+        IntelligenceConfiguration());
+
+    Assert(result.IsApplied);
+    AssertClose(result.ProbabilityAfter, 1d);
+    AssertClose(result.ProbabilityAdjustment, 0.01d);
+    AssertClose(result.ProbabilityAdjustment, result.ProbabilityAfter - result.ProbabilityBefore);
+}
+
+static void ActiveBotsEnableFootballIntelligence()
+{
+    var schema = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(), "CornersPredictionApi", "sql", "automated_corners_bot.sql"));
+    Assert(schema.Contains(
+        "BotKey IN (N'A', N'C2026', N'D2026', N'E2026', N'F2026', N'G2026', N'H2026')",
+        StringComparison.Ordinal));
+    Assert(schema.Contains("'$.footballIntelligence'", StringComparison.Ordinal));
+    Assert(schema.Contains("N'bot-a-intelligence-1.1.0'", StringComparison.Ordinal));
+    Assert(schema.Contains("N'bot-c-intelligence-1.1.0'", StringComparison.Ordinal));
+    Assert(schema.Contains("N'bot-d-strength-intelligence-1.1.0'", StringComparison.Ordinal));
+    Assert(schema.Contains("N'bot-g-goals-market-intelligence-1.1.0'", StringComparison.Ordinal));
+    Assert(schema.Contains("N'bot-h-corners-calibration-shadow-1.1.0-intelligence'", StringComparison.Ordinal));
+    Assert(RecommendationBotLifecycle.IsRetired("B"));
+}
+
+static void BotEAndFRemainNumericallyUnchangedWithoutInternetEvidence()
+{
+    var asOf = new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc);
+    var history = Enumerable.Range(1, 24)
+        .Select(index => BotEObservation(
+            4000 + index,
+            7000 + index,
+            asOf.AddDays(-index),
+            line: 9.5m,
+            actual: index % 2 == 0 ? 10 : 8,
+            sourceProbability: 0.58d))
+        .ToArray();
+    var input = BotCInput(asOf) with { CalibrationHistory = history };
+    var calibration = BotETestConfiguration(2, 2, minimumEffectiveObservations: 1);
+    var eBaseline = new BotCStrategyConfiguration { EmpiricalCalibration = calibration };
+    var eIntelligence = eBaseline with { FootballIntelligence = IntelligenceConfiguration() };
+    var fBaseline = eBaseline with
+    {
+        BasePredictionSource = "LEGACY",
+        BaseModelVersionOverride = "legacy-test-v1",
+        BaseModelTrainedThroughUtc = asOf.AddYears(-1)
+    };
+    var fIntelligence = fBaseline with { FootballIntelligence = IntelligenceConfiguration() };
+    var engine = new BotCPickDecisionEngine();
+
+    AssertNeutralEngineDecision(engine.Evaluate(input, eBaseline), engine.Evaluate(input, eIntelligence));
+    AssertNeutralEngineDecision(engine.Evaluate(input, fBaseline), engine.Evaluate(input, fIntelligence));
+}
+
+static void NewsExtractionRequiresExplicitEvidence()
+{
+    var extractor = new RuleBasedNewsFactExtractor();
+    var request = new NewsExtractionRequest(
+        8001,
+        new DateTime(2026, 8, 19, 20, 0, 0, DateTimeKind.Utc),
+        new DateTime(2026, 8, 18, 12, 0, 0, DateTimeKind.Utc),
+        "Alpha FC",
+        "Beta FC",
+        "Team news",
+        new DateTime(2026, 8, 18, 10, 0, 0, DateTimeKind.Utc),
+        "Alex Uno returned to training. Alex Dos has been ruled out. Alex Tres is not injured.",
+        "en",
+        ["Alex Uno", "Alex Dos", "Alex Tres"]);
+    var result = extractor.ExtractAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+
+    Assert(result.Facts.Count == 2);
+    Assert(result.Facts.Single(value => value.PlayerName == "Alex Uno").AvailabilityStatus == AvailabilityStatus.Unknown);
+    Assert(result.Facts.Single(value => value.PlayerName == "Alex Dos").AvailabilityStatus == AvailabilityStatus.ConfirmedOut);
+    Assert(result.Facts.All(value => value.PlayerName != "Alex Tres"));
+}
+
+static void NewsQueriesAreLanguageBalanced()
+{
+    var queries = new FootballNewsQueryBuilder()
+        .Build("Alpha FC", "Beta FC", languages: ["en", "es", "pt"])
+        .Take(6)
+        .ToArray();
+    Assert(queries.Any(value => value.Contains("injury update", StringComparison.Ordinal)));
+    Assert(queries.Any(value => value.Contains("lesionados", StringComparison.Ordinal)));
+    Assert(queries.Any(value => value.Contains("desfalques", StringComparison.Ordinal)));
+}
+
+static void NewsFactsConsolidateDeterministically()
+{
+    var cutoff = new DateTime(2026, 8, 18, 18, 0, 0, DateTimeKind.Utc);
+    var injury = IntelligenceFact(
+        1,
+        101,
+        "Alex Uno",
+        FootballNewsEventType.Injury,
+        AvailabilityStatus.ConfirmedOut,
+        cutoff.AddHours(-3));
+    var duplicateName = injury with { Id = 2, PlayerNameExtracted = "A. Uno", FirstSeenAtUtc = cutoff.AddHours(-2) };
+    var officialStarter = IntelligenceFact(
+        3,
+        101,
+        "Alex Uno",
+        FootballNewsEventType.OfficialStarter,
+        AvailabilityStatus.Starting,
+        cutoff.AddMinutes(-30));
+    var consolidated = new NewsFactConsolidator().Consolidate(
+        [injury, duplicateName, officialStarter],
+        cutoff);
+
+    Assert(consolidated.Count == 3);
+    Assert(consolidated.Count(value => value.IsCurrent) == 1);
+    Assert(consolidated.Single(value => value.IsCurrent).EventType == FootballNewsEventType.OfficialStarter);
+}
+
+static FootballNewsFact IntelligenceFact(
+    long id,
+    int playerId,
+    string playerName,
+    FootballNewsEventType eventType,
+    AvailabilityStatus status,
+    DateTime observedAtUtc) => new()
+{
+    Id = id,
+    NewsDocumentId = id,
+    FactHash = $"test-{id}",
+    FixtureId = 9001,
+    TeamId = 100,
+    PlayerId = playerId,
+    TeamNameExtracted = "Alpha FC",
+    PlayerNameExtracted = playerName,
+    EventType = eventType,
+    AvailabilityStatus = status,
+    Certainty = FactCertainty.Confirmed,
+    ProbabilityAvailable = status == AvailabilityStatus.Starting ? 1m : 0m,
+    EvidenceSnippet = eventType.ToString(),
+    FixtureRelevance = 1m,
+    ExtractionConfidence = 1m,
+    SourceConfidence = 1m,
+    EffectiveConfidence = 1m,
+    ResolutionStatus = EntityResolutionStatus.ResolvedExact,
+    IsCurrent = true,
+    ExtractionModel = "test",
+    PromptVersion = "test-v1",
+    IsCurrentExtraction = true,
+    FirstSeenAtUtc = observedAtUtc,
+    EventEffectiveAtUtc = observedAtUtc,
+    CreatedAtUtc = observedAtUtc
+};
+
+static void AssertNeutralEngineDecision(BotCPickDecision baseline, BotCPickDecision withIntelligence)
+{
+    Assert(baseline.Decision == withIntelligence.Decision);
+    Assert(baseline.SelectedSide == withIntelligence.SelectedSide);
+    AssertClose(baseline.FinalProbability, withIntelligence.FinalProbability);
+    AssertClose(baseline.FinalEdge, withIntelligence.FinalEdge);
+    AssertClose(baseline.FinalExpectedValue, withIntelligence.FinalExpectedValue);
+    AssertClose(baseline.SelectionScore, withIntelligence.SelectionScore);
+    Assert(withIntelligence.DecisionReasons.Contains(BotCDecisionCodes.NeutralFootballIntelligence));
+}
+
+static FootballIntelligenceAdjustmentConfiguration IntelligenceConfiguration() => new()
+{
+    Enabled = true,
+    Weight = 0.35d,
+    MaximumProbabilityAdjustment = 0.04d,
+    MinimumTeamConfidence = 0.60d,
+    MaximumSnapshotAgeMinutes = 4320,
+    MinimumActionableFacts = 1,
+    MinimumIndependentSources = 1
+};
+
+static MatchTeamIntelligenceSnapshot IntelligenceSnapshot(
+    long id,
+    long fixtureId,
+    DateTime cutoffUtc,
+    int actionableFacts = 1,
+    decimal confidence = 0.80m,
+    int ageMinutes = 10,
+    decimal attackImpact = 0m,
+    decimal goalImpact = 0m,
+    decimal missingGoalShare = 0m) => new()
+{
+    Id = id,
+    FixtureId = fixtureId,
+    TeamId = 100,
+    IsHomeTeam = true,
+    CutoffAtUtc = cutoffUtc,
+    KickoffAtUtc = cutoffUtc.AddHours(2),
+    IndependentSourceCount = actionableFacts > 0 ? 1 : 0,
+    ActionableFactCount = actionableFacts,
+    OverallNewsConfidence = confidence,
+    SnapshotAgeMinutes = ageMinutes,
+    AttackAvailabilityImpact = attackImpact,
+    GoalScoringAvailabilityImpact = goalImpact,
+    MissingGoalShare = missingGoalShare,
+    RiskFlagsJson = "[]",
+    DetailJson = "{}"
+};
 
 static void AssertSameDecisionValues(BotCPickDecision expected, BotCPickDecision actual)
 {

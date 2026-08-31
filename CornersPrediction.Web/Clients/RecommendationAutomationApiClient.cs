@@ -19,6 +19,12 @@ public sealed class RecommendationAutomationApiClient
             "/api/recommendation-bots",
             cancellationToken) ?? [];
 
+    public async Task<IReadOnlyList<RecommendationBotLeagueCatalogItemViewModel>> GetLeagueCatalogAsync(
+        CancellationToken cancellationToken) =>
+        await _httpClient.GetFromJsonAsync<IReadOnlyList<RecommendationBotLeagueCatalogItemViewModel>>(
+            "/api/recommendation-bots/league-catalog",
+            cancellationToken) ?? [];
+
     public async Task<IReadOnlyList<RecommendationJobViewModel>> GetJobsAsync(
         int take,
         CancellationToken cancellationToken) =>

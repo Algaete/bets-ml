@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CornersPrediction.Application.Automation.BotD;
 using CornersPrediction.Application.Automation.BotE;
+using CornersPrediction.Application.FootballIntelligence;
 
 namespace CornersPrediction.Application.Automation.BotC;
 
@@ -31,7 +32,9 @@ public sealed record BotCPickEvaluationInput(
     string HomeTeam = "",
     string AwayTeam = "",
     IReadOnlyList<BotDTeamResultObservation>? TeamStrengthHistory = null,
-    IReadOnlyList<BotECalibrationObservation>? CalibrationHistory = null);
+    IReadOnlyList<BotECalibrationObservation>? CalibrationHistory = null,
+    MatchIntelligenceSnapshotPair? FootballIntelligenceSnapshot = null,
+    DateTime? PredictionTimestampUtc = null);
 
 public sealed record BotCDistributionStatistics(
     int SampleCount,
@@ -384,13 +387,31 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
         {
             decisionEngine = EmpiricalCalibrationEngine;
         }
-        var finalProbability = config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
+        var probabilityBeforeFootballIntelligence = config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
             ? empiricalCalibration.ConservativeEquivalentProbability
             : probabilityBeforeEmpiricalCalibration;
+        var footballIntelligence = FootballIntelligenceAdjustmentCalculator.Calculate(
+            asOfUtc,
+            market.Key,
+            selectedSide,
+            probabilityBeforeFootballIntelligence,
+            input.FootballIntelligenceSnapshot,
+            config.FootballIntelligence);
+        var finalProbability = footballIntelligence.ProbabilityAfter;
+        if (config.FootballIntelligence.Enabled)
+        {
+            risks.Add(footballIntelligence.IsApplied
+                ? BotCRiskFlags.FootballIntelligenceApplied
+                : BotCRiskFlags.FootballIntelligenceUnavailable);
+            reasons.Add(footballIntelligence.IsApplied
+                ? BotCDecisionCodes.ApprovedFootballIntelligence
+                : BotCDecisionCodes.NeutralFootballIntelligence);
+        }
         var finalEdge = finalProbability - marketReference;
-        var finalExpectedValue = config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
+        var expectedValueBeforeFootballIntelligence = config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
             ? empiricalCalibration.ConservativeExpectedValue
-            : finalProbability * Convert.ToDouble(selectedOdds.Value) - 1d;
+            : probabilityBeforeFootballIntelligence * Convert.ToDouble(selectedOdds.Value) - 1d;
+        var finalExpectedValue = finalProbability * Convert.ToDouble(selectedOdds.Value) - 1d;
         var contextLineComponent = Clamp01(0.5d + contextDistanceSigma / 4d);
         var edgeComponent = Clamp01((finalEdge + 0.05d) / 0.20d);
         var evComponent = Clamp01((finalExpectedValue + 0.05d) / 0.30d);
@@ -454,6 +475,7 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
         {
             featureSchemaVersion = config.FeatureSchemaVersion,
             configurationVersion = config.ConfigurationVersion,
+            predictionTimestampUtc = EnsureUtc(input.PredictionTimestampUtc ?? input.OddsCapturedAtUtc),
             asOfDateUtc = asOfUtc,
             oddsCapturedAtUtc = EnsureUtc(input.OddsCapturedAtUtc),
             leakageGuard = new { strictBeforeAsOf = true, inputRows = input.HomeOverall.Count + input.AwayOverall.Count, acceptedRows = homeOverall.Count + awayOverall.Count },
@@ -487,6 +509,14 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
                 probabilityBeforeEmpiricalCalibration,
                 result = empiricalCalibration
             },
+            footballIntelligence = new
+            {
+                enabled = config.FootballIntelligence.Enabled,
+                config.FootballIntelligence.Version,
+                probabilityBeforeFootballIntelligence,
+                expectedValueBeforeFootballIntelligence,
+                result = footballIntelligence
+            },
             lineDistance = new { baseMargin, contextMargin, historicalStd, baseDistanceSigma, contextDistanceSigma },
             hitRates = new { homeHitRate, awayHitRate, combinedHitRate, leagueHitRate, lineSensitivity },
             trend = new { combined = trend, normalized = trend / historicalStd },
@@ -507,7 +537,12 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
                 ? $", calibración {empiricalCalibration.EvidenceTier} n_eff={empiricalCalibration.EffectiveSampleSize:0.0}, reliability {empiricalCalibration.Reliability:P0}"
                 : ", calibración empírica sin evidencia suficiente"
             : string.Empty;
-        var summary = $"{decision} por {decisionEngine}: {probabilityLabel} {finalProbability:P1}, mercado {marketReference:P1}, edge {finalEdge:P1}, EV {finalExpectedValue:P1}, contexto {contextExpected:0.00} vs línea {line:0.##}, hit rate {combinedHitRate:P1}, calidad {dataQuality:0.00}{strengthLabel}{calibrationLabel}.";
+        var intelligenceLabel = config.FootballIntelligence.Enabled
+            ? footballIntelligence.IsApplied
+                ? $", inteligencia pre-partido {footballIntelligence.ProbabilityAdjustment:+0.0%;-0.0%;0.0%}"
+                : ", inteligencia pre-partido neutral (sin evidencia utilizable)"
+            : string.Empty;
+        var summary = $"{decision} por {decisionEngine}: {probabilityLabel} {finalProbability:P1}, mercado {marketReference:P1}, edge {finalEdge:P1}, EV {finalExpectedValue:P1}, contexto {contextExpected:0.00} vs línea {line:0.##}, hit rate {combinedHitRate:P1}, calidad {dataQuality:0.00}{strengthLabel}{calibrationLabel}{intelligenceLabel}.";
 
         return new BotCPickDecision(
             decision, decisionEngine, selectedSide, selectedOdds, baseRawProbability,
@@ -533,6 +568,7 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
         {
             featureSchemaVersion = config.FeatureSchemaVersion,
             configurationVersion = config.ConfigurationVersion,
+            predictionTimestampUtc = EnsureUtc(input.PredictionTimestampUtc ?? input.OddsCapturedAtUtc),
             input.MarketType,
             input.Line,
             input.AsOfDateUtc,

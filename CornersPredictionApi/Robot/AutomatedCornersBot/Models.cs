@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotC;
+using CornersPrediction.Application.FootballIntelligence;
 
 namespace AutomatedCornersBot.Api;
 
@@ -90,7 +92,11 @@ public sealed record AutomatedRunResponse(
     IReadOnlyDictionary<string, int> BotCounts,
     IReadOnlyList<AutomatedSelectionResult> Selections,
     IReadOnlyList<SkippedMatchResult> Skipped,
-    IReadOnlyList<ErrorMatchResult> Errors);
+    IReadOnlyList<ErrorMatchResult> Errors,
+    int BotGCandidatesEvaluated = 0,
+    int BotGApprovedCandidates = 0,
+    int BotGRejectedCandidates = 0,
+    int BotGAbstainedCandidates = 0);
 
 public sealed record UpcomingOddsRecord
 {
@@ -113,6 +119,10 @@ public sealed record UpcomingOddsRecord
     public decimal? OverOdds { get; init; }
     public decimal? UnderOdds { get; init; }
     public DateTime UpdatedAtUtc { get; init; }
+    public long? OddsSnapshotId { get; init; }
+    public DateTime? OddsCapturedAtUtc { get; init; }
+    public decimal? SnapshotOverOdds { get; init; }
+    public decimal? SnapshotUnderOdds { get; init; }
 
     public string EffectiveLeague => string.IsNullOrWhiteSpace(StandardizedLeague) ? League : StandardizedLeague;
     public string EffectiveHomeTeam => string.IsNullOrWhiteSpace(StandardizedHomeTeam) ? HomeTeam : StandardizedHomeTeam;
@@ -303,6 +313,7 @@ public sealed class MarketPredictionDto
 
 public sealed class AutomatedSelectionCandidate
 {
+    public long? BotGCandidateId { get; init; }
     public required UpcomingOddsRecord Odds { get; init; }
     public required PredictionResultDto CornersPrediction { get; init; }
     public OverUnderPredictionResultDto? OverUnderPrediction { get; init; }
@@ -422,7 +433,16 @@ public sealed record BotVariantProfile(
     double? MinOddsExclusive,
     double MinProbabilityLiftOverImplied,
     decimal StakeMultiplier,
-    BotCStrategyConfiguration? SelectorConfiguration);
+    BotCStrategyConfiguration? SelectorConfiguration,
+    FootballIntelligenceAdjustmentConfiguration FootballIntelligence)
+{
+    public bool PublishEnabled { get; init; } = true;
+
+    public IReadOnlyList<RecommendationBotLeagueFilter> LeagueFilters { get; init; } = [];
+
+    public bool IsLeagueAllowed(string marketFamily, string league) =>
+        RecommendationBotLeaguePolicy.IsAllowed(LeagueFilters, marketFamily, league);
+}
 
 public sealed record PersistBotCEvaluationCommand(
     Guid RunId,
@@ -438,7 +458,9 @@ public sealed record PersistBotCEvaluationCommand(
 
 public sealed class PersistSelectionCommand
 {
+    public long? BotGCandidateId { get; init; }
     public Guid RunId { get; init; }
+    public required string BotKey { get; init; }
     public required string AutomationVersion { get; init; }
     public required UpcomingOddsRecord Odds { get; init; }
     public required string SelectedSide { get; init; }

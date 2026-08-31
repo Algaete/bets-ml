@@ -19,9 +19,14 @@
         <p class="text-muted mb-0">@T("Predictions.Description")</p>
     </div>
     <div class="prediction-status-panel">
-        <span class="badge text-bg-success">@T("Predictions.MainModelBadge")</span>
+        <span class="badge text-bg-secondary">Legacy · referencia histórica</span>
         <span id="historyStatusBadge" class="badge text-bg-secondary">@T("Predictions.WaitingForTeams")</span>
     </div>
+</div>
+
+<div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <span>Esta pantalla conserva el predictor anterior para comparación y depuración. Para predicciones con los 12 modelos entrenados en 2026 usa la pantalla nueva.</span>
+    <a class="btn btn-sm btn-primary" asp-controller="NewGenerationPrediction" asp-action="Index">Ir a Modelos 2026</a>
 </div>
 
 <section class="prediction-dashboard mb-4">
