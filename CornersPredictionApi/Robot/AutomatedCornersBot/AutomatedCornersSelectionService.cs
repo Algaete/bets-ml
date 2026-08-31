@@ -598,7 +598,7 @@ public sealed class AutomatedCornersSelectionService
                              ? Array.Empty<BotVariantProfile>()
                              : applicableLegacyProfiles)
                 {
-                    AutomatedSelectionCandidate? bestCandidate = null;
+                    var acceptedCandidates = new List<AutomatedSelectionCandidate>();
                     string? bestRejectedReason = null;
 
                     foreach (var predictionBundle in predictionBundles)
@@ -621,13 +621,18 @@ public sealed class AutomatedCornersSelectionService
                             continue;
                         }
 
-                        if (bestCandidate is null || candidateOrReason.candidate.SelectionScore > bestCandidate.SelectionScore)
-                        {
-                            bestCandidate = candidateOrReason.candidate;
-                        }
+                        acceptedCandidates.Add(candidateOrReason.candidate);
                     }
 
-                    if (bestCandidate is null)
+                    var candidateRanking = RankProductionCandidates(
+                        acceptedCandidates,
+                        enforceLiveProductionGate && botProfile.PublishEnabled,
+                        candidate => EvaluateProductionEligibility(
+                            productionScorecards,
+                            botProfile,
+                            candidate));
+                    var bestCandidate = candidateRanking.SelectedCandidate;
+                    if (candidateRanking.RawBestCandidate is null)
                     {
                         skipped.Add(new SkippedMatchResult(
                             league,
@@ -649,25 +654,15 @@ public sealed class AutomatedCornersSelectionService
                             $"{botProfile.Key}: candidato aprobado, pero PublishEnabled está deshabilitado."));
                         continue;
                     }
-                    decimal? maximumStakeUnits = null;
-                    if (enforceLiveProductionGate)
+                    if (bestCandidate is null)
                     {
-                        var eligibility = EvaluateProductionEligibility(
-                            productionScorecards,
-                            botProfile,
-                            bestCandidate);
-                        if (!eligibility.CanPublish)
-                        {
-                            skipped.Add(new SkippedMatchResult(
-                                league,
-                                homeTeam,
-                                awayTeam,
-                                representative.MatchDate,
-                                $"{botProfile.Key}: candidato aprobado y conservado en monitoreo; {eligibility.Reason}"));
-                            continue;
-                        }
-
-                        maximumStakeUnits = eligibility.MaxStakeUnits;
+                        skipped.Add(new SkippedMatchResult(
+                            league,
+                            homeTeam,
+                            awayTeam,
+                            representative.MatchDate,
+                            $"{botProfile.Key}: ningún candidato aprobado pasó el gate productivo; {candidateRanking.RawBestEligibility.Reason}"));
+                        continue;
                     }
                     var persisted = await PersistCandidateAsync(
                         runId,
@@ -675,7 +670,9 @@ public sealed class AutomatedCornersSelectionService
                         bestCandidate,
                         stake,
                         effectiveRequest.DryRun,
-                        maximumStakeUnits,
+                        enforceLiveProductionGate
+                            ? candidateRanking.SelectedEligibility.MaxStakeUnits
+                            : null,
                         cancellationToken);
                     if (persisted.RejectedByRobustLayer || persisted.Result is null)
                     {
@@ -730,8 +727,6 @@ public sealed class AutomatedCornersSelectionService
                             cancellationToken);
                         foreach (var newGenerationProfile in applicableNewGenerationProfiles)
                         {
-                            AutomatedSelectionCandidate? bestCandidate = null;
-                            BotCEvaluation? bestEvaluation = null;
                             string? bestRejectedReason = null;
                             var botCEvaluations = new List<BotCEvaluation>();
 
@@ -749,12 +744,25 @@ public sealed class AutomatedCornersSelectionService
                                     continue;
                                 }
 
-                                if (bestCandidate is null || evaluation.Candidate.SelectionScore > bestCandidate.SelectionScore)
-                                {
-                                    bestCandidate = evaluation.Candidate;
-                                    bestEvaluation = evaluation;
-                                }
                             }
+
+                            var candidateRanking = RankProductionCandidates(
+                                botCEvaluations
+                                    .Where(evaluation => evaluation.Candidate is not null)
+                                    .Select(evaluation => evaluation.Candidate!)
+                                    .ToArray(),
+                                enforceLiveProductionGate && newGenerationProfile.PublishEnabled,
+                                candidate => EvaluateProductionEligibility(
+                                    productionScorecards,
+                                    newGenerationProfile,
+                                    candidate));
+                            var bestCandidate = candidateRanking.SelectedCandidate;
+                            var bestEvaluation = bestCandidate is null
+                                ? null
+                                : botCEvaluations.First(evaluation =>
+                                    ReferenceEquals(evaluation.Candidate, bestCandidate));
+                            if (candidateRanking.RawBestCandidate is not null)
+                                matchHadSelection = true;
 
                             if (!effectiveRequest.DryRun)
                             {
@@ -768,11 +776,12 @@ public sealed class AutomatedCornersSelectionService
                                     bestEvaluation,
                                     publishedSelectionId: null,
                                     winnerOnly: false,
+                                    candidateRanking.EligibilityByCandidate,
                                     cancellationToken);
                             }
 
                             long? publishedSelectionId = null;
-                            if (bestCandidate is null)
+                            if (candidateRanking.RawBestCandidate is null)
                             {
                                 skipped.Add(new SkippedMatchResult(
                                     league,
@@ -781,18 +790,20 @@ public sealed class AutomatedCornersSelectionService
                                     representative.MatchDate,
                                     $"{newGenerationProfile.Key}: {bestRejectedReason ?? "No line passed the Models 2026 thresholds."}"));
                             }
+                            else if (bestCandidate is null)
+                            {
+                                skipped.Add(new SkippedMatchResult(
+                                    league,
+                                    homeTeam,
+                                    awayTeam,
+                                    representative.MatchDate,
+                                    $"{newGenerationProfile.Key}: ningún candidato aprobado pasó el gate productivo; {candidateRanking.RawBestEligibility.Reason}"));
+                            }
                             else
                             {
-                                matchHadSelection = true;
-                                var publishEligibility = !enforceLiveProductionGate
-                                    ? new AutomatedBotProductionEligibility(true, "Dry-run.")
-                                    : EvaluateProductionEligibility(
-                                        productionScorecards,
-                                        newGenerationProfile,
-                                        bestCandidate);
                                 if (effectiveRequest.DryRun
                                     || (newGenerationProfile.PublishEnabled
-                                        && (!enforceLiveProductionGate || publishEligibility.CanPublish)))
+                                        && (!enforceLiveProductionGate || candidateRanking.SelectedEligibility.CanPublish)))
                                 {
                                     var persisted = await PersistCandidateAsync(
                                         runId,
@@ -800,7 +811,9 @@ public sealed class AutomatedCornersSelectionService
                                         bestCandidate,
                                         stake,
                                         effectiveRequest.DryRun,
-                                        enforceLiveProductionGate ? publishEligibility.MaxStakeUnits : null,
+                                        enforceLiveProductionGate
+                                            ? candidateRanking.SelectedEligibility.MaxStakeUnits
+                                            : null,
                                         cancellationToken);
                                     if (persisted.RejectedByRobustLayer || persisted.Result is null)
                                     {
@@ -825,7 +838,7 @@ public sealed class AutomatedCornersSelectionService
                                 {
                                     var reason = !newGenerationProfile.PublishEnabled
                                         ? "publicación deshabilitada"
-                                        : publishEligibility.Reason;
+                                        : candidateRanking.SelectedEligibility.Reason;
                                     skipped.Add(new SkippedMatchResult(
                                         league,
                                         homeTeam,
@@ -844,6 +857,7 @@ public sealed class AutomatedCornersSelectionService
                                     bestEvaluation,
                                     publishedSelectionId,
                                     winnerOnly: true,
+                                    candidateRanking.EligibilityByCandidate,
                                     cancellationToken);
                             }
                         }
@@ -1057,8 +1071,6 @@ public sealed class AutomatedCornersSelectionService
 
         foreach (var profile in profiles)
         {
-            AutomatedSelectionCandidate? bestCandidate = null;
-            BotCEvaluation? bestEvaluation = null;
             var evaluations = new List<BotCEvaluation>();
             string? rejectedReason = null;
             foreach (var bundle in bundles)
@@ -1073,12 +1085,19 @@ public sealed class AutomatedCornersSelectionService
                 {
                     rejectedReason = evaluation.Decision.Summary;
                 }
-                else if (bestCandidate is null || evaluation.Candidate.SelectionScore > bestCandidate.SelectionScore)
-                {
-                    bestCandidate = evaluation.Candidate;
-                    bestEvaluation = evaluation;
-                }
             }
+
+            var candidateRanking = RankProductionCandidates(
+                evaluations
+                    .Where(evaluation => evaluation.Candidate is not null)
+                    .Select(evaluation => evaluation.Candidate!)
+                    .ToArray(),
+                enforceLiveProductionGate && profile.PublishEnabled,
+                candidate => EvaluateProductionEligibility(productionScorecards, profile, candidate));
+            var bestCandidate = candidateRanking.SelectedCandidate;
+            var bestEvaluation = bestCandidate is null
+                ? null
+                : evaluations.First(evaluation => ReferenceEquals(evaluation.Candidate, bestCandidate));
 
             if (!dryRun)
             {
@@ -1089,23 +1108,30 @@ public sealed class AutomatedCornersSelectionService
                     bestEvaluation,
                     publishedSelectionId: null,
                     winnerOnly: false,
+                    candidateRanking.EligibilityByCandidate,
                     cancellationToken);
             }
 
             long? publishedSelectionId = null;
-            if (bestCandidate is null)
+            if (candidateRanking.RawBestCandidate is null)
             {
                 skipped.Add(new SkippedMatchResult(league, homeTeam, awayTeam, matchDate,
                     $"{profile.Key}: {rejectedReason ?? "Ninguna línea superó el selector."}"));
             }
+            else if (bestCandidate is null)
+            {
+                skipped.Add(new SkippedMatchResult(
+                    league,
+                    homeTeam,
+                    awayTeam,
+                    matchDate,
+                    $"{profile.Key}: ningún candidato aprobado pasó el gate productivo; {candidateRanking.RawBestEligibility.Reason}"));
+            }
             else
             {
-                var publishEligibility = !enforceLiveProductionGate
-                    ? new AutomatedBotProductionEligibility(true, "Dry-run.")
-                    : EvaluateProductionEligibility(productionScorecards, profile, bestCandidate);
                 if (dryRun
                     || (profile.PublishEnabled
-                        && (!enforceLiveProductionGate || publishEligibility.CanPublish)))
+                        && (!enforceLiveProductionGate || candidateRanking.SelectedEligibility.CanPublish)))
                 {
                     var persisted = await PersistCandidateAsync(
                         runId,
@@ -1113,7 +1139,9 @@ public sealed class AutomatedCornersSelectionService
                         bestCandidate,
                         stake,
                         dryRun,
-                        enforceLiveProductionGate ? publishEligibility.MaxStakeUnits : null,
+                        enforceLiveProductionGate
+                            ? candidateRanking.SelectedEligibility.MaxStakeUnits
+                            : null,
                         cancellationToken);
                     if (persisted.RejectedByRobustLayer || persisted.Result is null)
                     {
@@ -1138,7 +1166,7 @@ public sealed class AutomatedCornersSelectionService
                 {
                     var reason = !profile.PublishEnabled
                         ? "publicación deshabilitada"
-                        : publishEligibility.Reason;
+                        : candidateRanking.SelectedEligibility.Reason;
                     skipped.Add(new SkippedMatchResult(
                         league,
                         homeTeam,
@@ -1157,6 +1185,7 @@ public sealed class AutomatedCornersSelectionService
                     bestEvaluation,
                     publishedSelectionId,
                     winnerOnly: true,
+                    candidateRanking.EligibilityByCandidate,
                     cancellationToken);
             }
         }
@@ -1171,6 +1200,7 @@ public sealed class AutomatedCornersSelectionService
         BotCEvaluation? winner,
         long? publishedSelectionId,
         bool winnerOnly,
+        IReadOnlyDictionary<AutomatedSelectionCandidate, AutomatedBotProductionEligibility> productionEligibilityByCandidate,
         CancellationToken cancellationToken)
     {
         foreach (var evaluation in evaluations)
@@ -1182,15 +1212,32 @@ public sealed class AutomatedCornersSelectionService
             var storedDecision = evaluation.Decision;
             if (storedDecision.Decision == "Approved" && !isWinner)
             {
-                storedDecision = storedDecision with
+                if (evaluation.Candidate is not null
+                    && productionEligibilityByCandidate.TryGetValue(evaluation.Candidate, out var eligibility)
+                    && !eligibility.CanPublish)
                 {
-                    Decision = "Rejected",
-                    DecisionReasons = storedDecision.DecisionReasons
-                        .Append("REJECTED_LOWER_RANKED_CANDIDATE")
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray(),
-                    Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
-                };
+                    storedDecision = storedDecision with
+                    {
+                        Decision = "Rejected",
+                        DecisionReasons = storedDecision.DecisionReasons
+                            .Append("REJECTED_PRODUCTION_GATE")
+                            .Distinct(StringComparer.Ordinal)
+                            .ToArray(),
+                        Summary = $"Rejected for production: {eligibility.Reason} Selector: {storedDecision.Summary}"
+                    };
+                }
+                else
+                {
+                    storedDecision = storedDecision with
+                    {
+                        Decision = "Rejected",
+                        DecisionReasons = storedDecision.DecisionReasons
+                            .Append("REJECTED_LOWER_RANKED_CANDIDATE")
+                            .Distinct(StringComparer.Ordinal)
+                            .ToArray(),
+                        Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
+                    };
+                }
             }
 
             await _repository.UpsertBotCEvaluationAsync(
@@ -2501,7 +2548,7 @@ public sealed class AutomatedCornersSelectionService
         CancellationToken cancellationToken)
     {
         var features = _featureBuilder.Build(odds, predictionContext, teamInfo);
-        var normalCacheKey = $"normal|{LegacyPredictionGroup(odds.MarketType)}";
+        var normalCacheKey = BuildLegacyPredictionCacheKey(swapTeams: false, odds);
         if (!predictionCache.TryGetValue(normalCacheKey, out var cachedNormalPrediction))
         {
             cachedNormalPrediction = await PredictMarketAsync(odds, features, cancellationToken);
@@ -2525,7 +2572,7 @@ public sealed class AutomatedCornersSelectionService
 
         var swappedOdds = SwapMatchSides(odds);
         var swappedFeatures = _featureBuilder.Build(swappedOdds, swappedPredictionContext, teamInfo);
-        var swappedCacheKey = $"swapped|{LegacyPredictionGroup(swappedOdds.MarketType)}";
+        var swappedCacheKey = BuildLegacyPredictionCacheKey(swapTeams: true, swappedOdds);
         if (!predictionCache.TryGetValue(swappedCacheKey, out var cachedSwappedPrediction))
         {
             cachedSwappedPrediction = await PredictMarketAsync(swappedOdds, swappedFeatures, cancellationToken);
@@ -2646,13 +2693,12 @@ public sealed class AutomatedCornersSelectionService
         _ => prediction.PredictedTotalCorners
     };
 
-    private static string LegacyPredictionGroup(string marketType) => marketType switch
-    {
-        "CornersTotal" or "CornersHomeTeam" or "CornersAwayTeam" => "CORNERS",
-        "GoalsTotal" or "GoalsHomeTeam" or "GoalsAwayTeam" => "GOALS",
-        "ShotsTotal" or "ShotsHomeTeam" or "ShotsAwayTeam" => "SHOTS",
-        _ => "SOG"
-    };
+    private static string BuildLegacyPredictionCacheKey(bool swapTeams, UpcomingOddsRecord odds) =>
+        string.Join(
+            "|",
+            swapTeams ? "SWAPPED" : "NORMAL",
+            odds.MarketType.Trim().ToUpperInvariant(),
+            odds.LineValue.ToString("G29", System.Globalization.CultureInfo.InvariantCulture));
 
     private static (double Mae, double Rmse, string Version) LegacyModelMetrics(string marketType) => marketType switch
     {
@@ -3382,6 +3428,73 @@ public sealed class AutomatedCornersSelectionService
                 && candidate.Odds.SnapshotOverOdds is > 1m
                 && candidate.Odds.SnapshotUnderOdds is > 1m);
 
+    private static ProductionCandidateRanking RankProductionCandidates(
+        IReadOnlyCollection<AutomatedSelectionCandidate> candidates,
+        bool enforceLiveProductionGate,
+        Func<AutomatedSelectionCandidate, AutomatedBotProductionEligibility> evaluateEligibility)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(evaluateEligibility);
+
+        var gateNotEnforced = new AutomatedBotProductionEligibility(
+            true,
+            "El gate productivo no aplica a esta ejecución.");
+        AutomatedSelectionCandidate? rawBest = null;
+        foreach (var candidate in candidates)
+        {
+            if (rawBest is null || candidate.SelectionScore > rawBest.SelectionScore)
+                rawBest = candidate;
+        }
+
+        if (rawBest is null)
+        {
+            return new ProductionCandidateRanking(
+                null,
+                null,
+                gateNotEnforced,
+                gateNotEnforced,
+                new Dictionary<AutomatedSelectionCandidate, AutomatedBotProductionEligibility>());
+        }
+
+        // Dry-runs, historical executions and shadow-only profiles must retain the
+        // original raw-score ranking and must not depend on live scorecards.
+        if (!enforceLiveProductionGate)
+        {
+            return new ProductionCandidateRanking(
+                rawBest,
+                rawBest,
+                gateNotEnforced,
+                gateNotEnforced,
+                new Dictionary<AutomatedSelectionCandidate, AutomatedBotProductionEligibility>());
+        }
+
+        var eligibilityByCandidate = new Dictionary<
+            AutomatedSelectionCandidate,
+            AutomatedBotProductionEligibility>();
+        AutomatedSelectionCandidate? bestEligible = null;
+        foreach (var candidate in candidates)
+        {
+            var eligibility = evaluateEligibility(candidate);
+            eligibilityByCandidate[candidate] = eligibility;
+            if (eligibility.CanPublish
+                && (bestEligible is null || candidate.SelectionScore > bestEligible.SelectionScore))
+            {
+                bestEligible = candidate;
+            }
+        }
+
+        var rawBestEligibility = eligibilityByCandidate[rawBest];
+        var selectedEligibility = bestEligible is null
+            ? rawBestEligibility
+            : eligibilityByCandidate[bestEligible];
+        return new ProductionCandidateRanking(
+            rawBest,
+            bestEligible,
+            rawBestEligibility,
+            selectedEligibility,
+            eligibilityByCandidate);
+    }
+
     private static DateTime EnsureUtc(DateTime value) => value.Kind switch
     {
         DateTimeKind.Utc => value,
@@ -4023,6 +4136,13 @@ public sealed class AutomatedCornersSelectionService
         PredictionBundle Bundle,
         BotCPickDecision Decision,
         AutomatedSelectionCandidate? Candidate);
+
+    private sealed record ProductionCandidateRanking(
+        AutomatedSelectionCandidate? RawBestCandidate,
+        AutomatedSelectionCandidate? SelectedCandidate,
+        AutomatedBotProductionEligibility RawBestEligibility,
+        AutomatedBotProductionEligibility SelectedEligibility,
+        IReadOnlyDictionary<AutomatedSelectionCandidate, AutomatedBotProductionEligibility> EligibilityByCandidate);
 
     private sealed record PersistCandidateResult(
         AutomatedSelectionResult? Result,

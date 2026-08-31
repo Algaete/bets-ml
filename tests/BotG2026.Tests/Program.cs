@@ -1,14 +1,19 @@
 using System.Reflection;
+using System.Globalization;
+using System.Text.Json;
 using AutomatedCornersBot.Api;
+using CornersPrediction.Application.AutomatedCorners;
 using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotG;
 using CornersPrediction.Domain.Automation.BotG;
+using CornersPredictionApi.RecommendationJobs;
 
 var AsOfUtc = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
 
 var tests = new (string Name, Action Run)[]
 {
     ("configuration defaults to isolated shadow mode", ConfigurationDefaults),
+    ("recurring jobs discover every enabled non-retired bot", RecurringJobBotDiscovery),
     ("configuration JSON round-trips and validates publish isolation", ConfigurationJson),
     ("bot league filters isolate market families and exclusion wins", BotLeagueFilters),
     ("bot league filter JSON normalizes and round-trips", BotLeagueFilterJson),
@@ -22,6 +27,8 @@ var tests = new (string Name, Action Run)[]
     ("probability line curves fail closed on monotonicity violations", ProbabilityMonotonicityGate),
     ("automation history mapping excludes same-day future and foreign-team rows", AutomationHistoryMapping),
     ("automation UTC and immutable-snapshot helpers preserve temporal meaning", AutomationTemporalHelpers),
+    ("legacy prediction cache isolates direction market and line", LegacyPredictionCacheIsolation),
+    ("live ranking falls back to the best production-eligible candidate", LiveRankingUsesBestEligibleCandidate),
     ("automation refuses to publish an abstained candidate", AutomationPublicationGuard),
     ("zero logit residual is exactly market neutral", MetaNeutrality),
     ("meta model reports missing feature and schema unavailability", MetaUnavailable),
@@ -83,6 +90,194 @@ void ConfigurationDefaults()
     Check.SequenceEqual(
         new[] { BotGMarketType.TotalGoals, BotGMarketType.HomeTeamGoals, BotGMarketType.AwayTeamGoals },
         config.SupportedMarkets);
+}
+
+void RecurringJobBotDiscovery()
+{
+    Check.Equal(0, new RecurringRecommendationJobOptions().BotKeys.Length,
+        "An empty recurring BotKeys list must opt into dynamic maintainer discovery.");
+
+    var resolve = typeof(RecommendationJobWorker).GetMethod(
+        "ResolveEnabledBotKeys",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Recurring enabled-bot resolver was not found.");
+    var now = DateTime.UtcNow;
+    RecommendationBotDefinitionDto Definition(string key, bool enabled) => new(
+        key,
+        $"Bot {key}",
+        "test",
+        RecommendationBotBaseStrategies.LegacyCurrent,
+        enabled,
+        true,
+        true,
+        ["GOALS"],
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1m,
+        null,
+        now,
+        now);
+
+    var resolved = (string[])resolve.Invoke(null,
+    [
+        new RecommendationBotDefinitionDto[]
+        {
+            Definition("G2026", true),
+            Definition("F2026", true),
+            Definition("B", true),
+            Definition("C2026", false),
+            Definition("A", true)
+        }
+    ])!;
+
+    Check.SequenceEqual(new[] { "A", "F2026", "G2026" }, resolved);
+
+    var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    Check.True(File.Exists(appSettingsPath), "API appsettings.json was not copied to the test output.");
+    using var document = JsonDocument.Parse(File.ReadAllText(appSettingsPath));
+    var configuredBotKeys = document.RootElement
+        .GetProperty("RecommendationJobs")
+        .GetProperty("Recurring")
+        .GetProperty("BotKeys");
+    Check.Equal(0, configuredBotKeys.GetArrayLength(),
+        "Recurring BotKeys must stay empty so newly enabled bots cannot be forgotten.");
+}
+
+void LegacyPredictionCacheIsolation()
+{
+    var buildKey = typeof(AutomatedCornersSelectionService).GetMethod(
+        "BuildLegacyPredictionCacheKey",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Legacy prediction cache-key helper was not found.");
+    var odds = new UpcomingOddsRecord
+    {
+        Source = "Betano",
+        MarketType = "GoalsAwayTeam",
+        LineValue = 1.5m
+    };
+
+    string Key(bool swapTeams, UpcomingOddsRecord value) =>
+        (string)buildKey.Invoke(null, [swapTeams, value])!;
+
+    var normal = Key(false, odds);
+    Check.Equal("NORMAL|GOALSAWAYTEAM|1.5", normal);
+    Check.True(normal != Key(true, odds),
+        "Normal and role-swapped features must never share a legacy prediction.");
+    Check.True(normal != Key(false, odds with { MarketType = "GoalsHomeTeam" }),
+        "Home and away markets in the same family must never share a legacy prediction.");
+    Check.True(normal != Key(false, odds with { LineValue = 2.5m }),
+        "Different betting-line features must never share a legacy prediction.");
+    Check.Equal(normal, Key(false, odds with { Source = "Pinnacle" }));
+
+    foreach (var (family, totalMarket, teamMarket) in new[]
+             {
+                 ("GOALS", "GoalsTotal", "GoalsAwayTeam"),
+                 ("SHOTS", "ShotsTotal", "ShotsAwayTeam"),
+                 ("SOG", "ShotsOnTargetTotal", "ShotsOnTargetAwayTeam")
+             })
+    {
+        var totalKey = Key(false, odds with { MarketType = totalMarket, LineValue = 2.5m });
+        var teamKey = Key(false, odds with { MarketType = teamMarket, LineValue = 2.5m });
+        Check.True(totalKey != teamKey,
+            $"{family} total and team markets must not collapse into one cache entry.");
+        Check.True(totalKey != Key(false, odds with { MarketType = totalMarket, LineValue = 3.5m }),
+            $"{family} lines must not collapse into one cache entry.");
+    }
+
+    var previousCulture = CultureInfo.CurrentCulture;
+    try
+    {
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("es-CL");
+        Check.Equal(normal, Key(false, odds));
+    }
+    finally
+    {
+        CultureInfo.CurrentCulture = previousCulture;
+    }
+}
+
+void LiveRankingUsesBestEligibleCandidate()
+{
+    var rank = typeof(AutomatedCornersSelectionService).GetMethod(
+        "RankProductionCandidates",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Production candidate ranking helper was not found.");
+
+    AutomatedSelectionCandidate Candidate(double score, decimal line) => new()
+    {
+        Odds = new UpcomingOddsRecord
+        {
+            Source = "Pinnacle",
+            MarketType = "GoalsAwayTeam",
+            LineValue = line
+        },
+        CornersPrediction = new PredictionResultDto(),
+        PredictionContext = new PredictionContextDto(
+            new PredictionComparisonDto(0d, null, "OVER"),
+            [],
+            [],
+            [],
+            []),
+        Features = new Dictionary<string, object?>(),
+        SelectedSide = "Over",
+        SelectedOdds = 1.91m,
+        ModelProbability = 0.60d,
+        ImpliedProbability = 0.52d,
+        ProbabilityEdge = 0.08d,
+        ExpectedValue = 0.14d,
+        KellyFraction = 0.10d,
+        DistanceToLine = 0.50d,
+        ContextDifference = 0.10d,
+        SelectionScore = score,
+        DecisionReason = "test",
+        SelectionStatus = "Pending"
+    };
+
+    var rawTop = Candidate(0.90d, 2.5m);
+    var eligibleFallback = Candidate(0.80d, 1.5m);
+    var evaluations = 0;
+    AutomatedBotProductionEligibility Gate(AutomatedSelectionCandidate candidate)
+    {
+        evaluations++;
+        return ReferenceEquals(candidate, rawTop)
+            ? new AutomatedBotProductionEligibility(false, "top blocked")
+            : new AutomatedBotProductionEligibility(
+                true,
+                "fallback allowed",
+                Tier: "ControlledTrial",
+                MaxStakeUnits: 0.5m);
+    }
+
+    object Rank(bool enforce, params AutomatedSelectionCandidate[] candidates) =>
+        rank.Invoke(null, [candidates, enforce,
+            (Func<AutomatedSelectionCandidate, AutomatedBotProductionEligibility>)Gate])
+        ?? throw new InvalidOperationException("Production candidate ranking returned null.");
+
+    static T? Property<T>(object value, string name) where T : class =>
+        value.GetType().GetProperty(name)?.GetValue(value) as T;
+
+    var live = Rank(true, rawTop, eligibleFallback);
+    Check.True(ReferenceEquals(rawTop, Property<AutomatedSelectionCandidate>(live, "RawBestCandidate")));
+    Check.True(ReferenceEquals(eligibleFallback, Property<AutomatedSelectionCandidate>(live, "SelectedCandidate")),
+        "The lower raw-score candidate must win when it is the best candidate allowed by the live gate.");
+    Check.Equal(2, evaluations, "Every accepted live candidate must be checked before ranking.");
+    var liveEligibility = Property<AutomatedBotProductionEligibility>(live, "SelectedEligibility")!;
+    Check.Equal(0.5m, liveEligibility.MaxStakeUnits);
+
+    evaluations = 0;
+    var dryRun = Rank(false, rawTop, eligibleFallback);
+    Check.True(ReferenceEquals(rawTop, Property<AutomatedSelectionCandidate>(dryRun, "SelectedCandidate")),
+        "A non-live run must preserve the historical raw-score winner.");
+    Check.Equal(0, evaluations, "Dry-run and historical ranking must not depend on live scorecards.");
+
+    var allBlocked = Rank(true, rawTop);
+    Check.True(Property<AutomatedSelectionCandidate>(allBlocked, "SelectedCandidate") is null,
+        "The live ranking must fail closed when every candidate is blocked.");
 }
 
 void CandidateAuditQueryIsLightweight()

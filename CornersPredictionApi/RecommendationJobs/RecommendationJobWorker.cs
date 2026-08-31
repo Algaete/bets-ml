@@ -303,6 +303,16 @@ public sealed class RecommendationJobWorker : BackgroundService
         var interval = TimeSpan.FromMinutes(Math.Clamp(recurring.IntervalMinutes, 5, 10080));
         var today = DateOnly.FromDateTime(GetChileNow());
         var useCase = services.GetRequiredService<IRecommendationJobsUseCase>();
+        var botKeys = await ResolveRecurringBotKeysAsync(services, recurring, cancellationToken);
+        if (botKeys.Length == 0)
+        {
+            _nextRecurringAtUtc = DateTime.UtcNow.Add(interval);
+            _logger.LogWarning(
+                "Recurring recommendation job was not enqueued because no enabled, non-retired bots were found. Next check at {NextRunUtc}.",
+                _nextRecurringAtUtc);
+            return;
+        }
+
         var expectedDateTo = today.AddDays(Math.Clamp(recurring.LookAheadDays, 0, 30));
         var scheduledName = $"Live automático {today:yyyy-MM-dd}";
         var latestEquivalent = (await useCase.ListAsync(200, cancellationToken))
@@ -310,7 +320,9 @@ public sealed class RecommendationJobWorker : BackgroundService
                 job.Name.Equals(scheduledName, StringComparison.OrdinalIgnoreCase) &&
                 job.Mode.Equals(RecommendationJobModes.Live, StringComparison.OrdinalIgnoreCase) &&
                 job.DateFrom == today &&
-                job.DateTo == expectedDateTo);
+                job.DateTo == expectedDateTo &&
+                HaveSameValues(job.BotKeys, botKeys) &&
+                HaveSameValues(job.MarketFamilies, recurring.MarketFamilies));
         if (latestEquivalent is not null && latestEquivalent.CreatedAtUtc.Add(interval) > DateTime.UtcNow)
         {
             _nextRecurringAtUtc = latestEquivalent.CreatedAtUtc.Add(interval);
@@ -327,7 +339,7 @@ public sealed class RecommendationJobWorker : BackgroundService
                 DateFrom: today,
                 DateTo: expectedDateTo,
                 Name: scheduledName,
-                BotKeys: recurring.BotKeys,
+                BotKeys: botKeys,
                 MarketFamilies: recurring.MarketFamilies,
                 Mode: RecommendationJobModes.Live,
                 BatchSize: recurring.BatchSize,
@@ -340,6 +352,45 @@ public sealed class RecommendationJobWorker : BackgroundService
             job.Status,
             _nextRecurringAtUtc);
     }
+
+    private static async Task<string[]> ResolveRecurringBotKeysAsync(
+        IServiceProvider services,
+        RecurringRecommendationJobOptions recurring,
+        CancellationToken cancellationToken)
+    {
+        var configuredBotKeys = recurring.BotKeys
+            .Where(botKey => !string.IsNullOrWhiteSpace(botKey))
+            .Select(RecommendationBotDefinitionsUseCase.NormalizeBotKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (configuredBotKeys.Length > 0)
+        {
+            return configuredBotKeys;
+        }
+
+        var definitions = await services
+            .GetRequiredService<IRecommendationBotDefinitionRepository>()
+            .GetAllAsync(cancellationToken);
+        return ResolveEnabledBotKeys(definitions);
+    }
+
+    internal static string[] ResolveEnabledBotKeys(
+        IReadOnlyCollection<RecommendationBotDefinitionDto> definitions) =>
+        definitions
+            .Where(definition =>
+                definition.IsEnabled &&
+                !RecommendationBotLifecycle.IsRetired(definition.BotKey))
+            .Select(definition => RecommendationBotDefinitionsUseCase.NormalizeBotKey(definition.BotKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static bool HaveSameValues(
+        IReadOnlyCollection<string> left,
+        IReadOnlyCollection<string> right) =>
+        left.Count == right.Count &&
+        left.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(right);
 
     private async Task RefreshRecurringOddsBestEffortAsync(
         IServiceProvider services,

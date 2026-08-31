@@ -21,6 +21,8 @@ public sealed class RecurringRecommendationJobOptions
     public int LookAheadDays { get; set; } = 7;
     public int BatchSize { get; set; } = 10;
     public int MaxAttempts { get; set; } = 3;
-    public string[] BotKeys { get; set; } = ["C2026"];
+    // Empty means: discover every enabled, non-retired bot from the maintainer
+    // when each recurring job is created. A non-empty value is an explicit override.
+    public string[] BotKeys { get; set; } = [];
     public string[] MarketFamilies { get; set; } = ["CORNERS", "GOALS", "SHOTS", "SOG"];
 }
