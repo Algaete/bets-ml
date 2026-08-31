@@ -23,7 +23,10 @@ public sealed record BotGArtifactStatus(
     string? ModelVersion = null,
     string? ConfigurationVersion = null,
     string? FeatureSchemaVersion = null,
-    DateTime? TrainedThroughUtc = null);
+    DateTime? TrainedThroughUtc = null,
+    string ExpectedConfigurationVersion = BotGConfiguration.DefaultConfigurationVersion,
+    string ExpectedTrainingContractVersion = BotGConfiguration.DefaultTrainingContractVersion,
+    string PublicationMode = "SHADOW_ONLY");
 
 /// <summary>
 /// Loads one immutable Bot G artifact for the lifetime of the process. A missing or invalid
@@ -80,7 +83,10 @@ public sealed class BotGArtifactRuntime : IBotGMetaModelService, IBotGArtifactEv
                 artifact.ModelVersion,
                 artifact.ConfigurationVersion,
                 artifact.FeatureSchemaVersion,
-                artifact.TrainedThroughUtc);
+                artifact.TrainedThroughUtc,
+                BotGConfiguration.DefaultConfigurationVersion,
+                artifact.TrainingContractVersion,
+                "SHADOW_ONLY");
             logger.LogInformation(
                 "Bot G artifact loaded. Path={ArtifactPath}, Sha256={ArtifactSha256}, ModelVersion={ModelVersion}, FeatureSchemaVersion={FeatureSchemaVersion}, TrainedThroughUtc={TrainedThroughUtc}",
                 path,

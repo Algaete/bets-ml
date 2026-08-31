@@ -25,6 +25,7 @@ from bot_g.evaluation import paired_f_comparison, promotion_scorecard  # noqa: E
 from bot_g.features import FeatureEncoder, engineer_features, market_logit  # noqa: E402
 from bot_g.modeling import LogitResidualModel  # noqa: E402
 from bot_g.ood import OodFeatureProfile, ood_score  # noqa: E402
+from bot_g.preflight import build_preflight_report  # noqa: E402
 from bot_g.settlement import settle  # noqa: E402
 from bot_g.splits import assert_oof_fixture_integrity, expanding_folds, final_holdout  # noqa: E402
 from bot_g.synthetic import synthetic_candidate_frame, write_synthetic_candidates  # noqa: E402
@@ -91,6 +92,7 @@ class BotGOfflineContractTests(unittest.TestCase):
             "Bookmaker": ["book"],
             "MarketType": ["TotalGoals"],
             "Selection": ["Over"],
+            "FootballIntelligenceEvidenceUsable": [True],
         })
         decisions = apply_decisions(
             rows,
@@ -127,6 +129,7 @@ class BotGOfflineContractTests(unittest.TestCase):
             "PredictionTimestampUtc": pd.to_datetime([
                 "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"
             ]),
+            "FootballIntelligenceEvidenceUsable": [True, True],
         })
         decisions = apply_decisions(
             rows,
@@ -196,6 +199,49 @@ class BotGOfflineContractTests(unittest.TestCase):
             dataset = load_candidate_dataset(path, BotGConfig())
         self.assertEqual(240, len(dataset.rows))
         self.assertTrue(dataset.metadata["declaredSynthetic"])
+        self.assertEqual(
+            "bot-g-training-export-1.1.0", dataset.metadata["trainingContractVersion"]
+        )
+
+    def test_v10_rows_cannot_be_relabelled_as_live_v11(self) -> None:
+        frame = synthetic_candidate_frame(120)
+        frame["ConfigurationVersion"] = "bot-g-goals-market-1.0.0"
+        with self.assertRaisesRegex(ValueError, "contract mismatch"):
+            validate_candidate_frame(frame, BotGConfig())
+
+    def test_intelligence_missing_is_fail_closed_and_future_cutoff_is_rejected(self) -> None:
+        frame = synthetic_candidate_frame(120)
+        quote = frame.loc[0, "QuoteId"]
+        mask = frame["QuoteId"].eq(quote)
+        frame.loc[mask, "FootballIntelligenceHomeEvidenceStatus"] = "Missing"
+        frame.loc[mask, "FootballIntelligenceAwayEvidenceStatus"] = "Missing"
+        frame.loc[mask, "FootballIntelligenceProbabilityAdjustment"] = 0.0
+        frame.loc[mask, "FootballIntelligenceHomeCutoffUtc"] = None
+        frame.loc[mask, "FootballIntelligenceAwayCutoffUtc"] = None
+        validated = validate_candidate_frame(frame, BotGConfig())
+        self.assertFalse(validated.loc[validated["QuoteId"].eq(quote),
+                                       "FootballIntelligenceEvidenceUsable"].any())
+
+        leaked = synthetic_candidate_frame(120)
+        leaked_quote = leaked.loc[0, "QuoteId"]
+        leaked_mask = leaked["QuoteId"].eq(leaked_quote)
+        leaked.loc[leaked_mask, "FootballIntelligenceHomeCutoffUtc"] = (
+            pd.to_datetime(leaked.loc[leaked_mask, "PredictionTimestampUtc"], utc=True)
+            + pd.Timedelta(seconds=1)
+        ).to_numpy()
+        with self.assertRaisesRegex(ValueError, "cutoff leaks"):
+            validate_candidate_frame(leaked, BotGConfig())
+
+    def test_preflight_is_reproducible_and_publication_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="bot-g-unit-") as temporary:
+            path = write_synthetic_candidates(Path(temporary) / "input.csv", 120)
+            dataset = load_candidate_dataset(path, BotGConfig(minimum_training_rows=100))
+            first = build_preflight_report(dataset, BotGConfig(minimum_training_rows=100))
+            second = build_preflight_report(dataset, BotGConfig(minimum_training_rows=100))
+        self.assertEqual(first, second)
+        self.assertTrue(first["trainingReady"])
+        self.assertFalse(first["publicationEnabled"])
+        self.assertFalse(first["automaticActivationEnabled"])
 
     def test_quarter_line_settlement(self) -> None:
         self.assertEqual(settle("Over", 2.25, 2, 2.0).state, "HalfLoss")

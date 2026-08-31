@@ -225,6 +225,46 @@ END;
 
 GO
 
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.MatchHistory')
+      AND name = N'IX_MatchHistory_BotH_ApiFixture'
+)
+BEGIN
+    -- The normal lineage path is an exact API-Football identity.  Without this
+    -- seek, every H scorecard re-scans MatchHistory once per shadow row.
+    CREATE INDEX IX_MatchHistory_BotH_ApiFixture
+        ON dbo.MatchHistory(ApiFootballFixtureId, MatchDate, Id)
+        INCLUDE
+        (
+            FixtureStatus, ApiFootballCornersAvailable, ApiFootballUpdatedAtUtc,
+            HomeCorners, AwayCorners, HomeTeam, AwayTeam,
+            StandardizedHomeTeam, StandardizedAwayTeam
+        )
+        WHERE ApiFootballFixtureId IS NOT NULL;
+END;
+
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.MatchHistory')
+      AND name = N'IX_MatchHistory_BotH_CanonicalDate'
+)
+BEGIN
+    -- Only evidence lacking an API id is allowed onto this canonical fallback.
+    CREATE INDEX IX_MatchHistory_BotH_CanonicalDate
+        ON dbo.MatchHistory(MatchDate, Id)
+        INCLUDE
+        (
+            ApiFootballFixtureId, FixtureStatus, ApiFootballCornersAvailable,
+            ApiFootballUpdatedAtUtc, HomeCorners, AwayCorners, HomeTeam, AwayTeam,
+            StandardizedHomeTeam, StandardizedAwayTeam
+        );
+END;
+
+GO
+
 /*
     Internal capture procedure.  Strict mode is used by the live trigger and rolls
     back the source audit upsert if temporal or immutable quote lineage is missing.
@@ -685,9 +725,12 @@ GO
       * ApiFootballUpdatedAtUtc proves the outcome appeared after prediction and no
         later than the caller's AsOfUtc.
 */
-CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLab
+CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindow
 (
-    @AsOfUtc DATETIME2(3)
+    @AsOfUtc DATETIME2(3),
+    @FixtureFromUtc DATETIME2(3),
+    @FixtureToUtc DATETIME2(3),
+    @ConfigurationVersion NVARCHAR(80)
 )
 RETURNS TABLE
 AS
@@ -717,6 +760,9 @@ RETURN
         LEFT JOIN dbo.CornerOddsSnapshots AS snapshot
           ON snapshot.CornerOddsSnapshotId = shadow.OddsSnapshotId
         WHERE shadow.PredictionTimestampUtc <= @AsOfUtc
+          AND (@FixtureFromUtc IS NULL OR shadow.FixtureDateUtc >= @FixtureFromUtc)
+          AND (@FixtureToUtc IS NULL OR shadow.FixtureDateUtc <= @FixtureToUtc)
+          AND (@ConfigurationVersion IS NULL OR shadow.ConfigurationVersion = @ConfigurationVersion)
     ),
     IdentityCandidates AS
     (
@@ -949,6 +995,23 @@ RETURN
 
 GO
 
+-- Compatibility projection for the paged audit endpoint.  Scorecards and
+-- threshold experiments call the bounded function directly so identity matching
+-- starts only after the relevant fixture/configuration rows have been selected.
+CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLab
+(
+    @AsOfUtc DATETIME2(3)
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    SELECT *
+    FROM dbo.fn_BotH2026ShadowLabWindow(@AsOfUtc, NULL, NULL, NULL)
+);
+
+GO
+
 CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ShadowEvaluations
     @PredictionFromUtc DATETIME2(3) = NULL,
     @PredictionToUtc DATETIME2(3) = NULL,
@@ -1078,12 +1141,41 @@ BEGIN
     DECLARE @Windows TABLE(WindowDays INT NOT NULL PRIMARY KEY);
     INSERT INTO @Windows(WindowDays) VALUES (7), (30), (90);
 
-    SELECT * INTO #BotHLab
-    FROM dbo.fn_BotH2026ShadowLab(@AsOfUtc) AS lab
-    WHERE lab.FixtureDateUtc >= DATEADD(DAY, -90, @AsOfUtc)
-      AND lab.FixtureDateUtc <= @AsOfUtc
-      AND (@ConfigurationVersion IS NULL OR lab.ConfigurationVersion = @ConfigurationVersion)
+    SELECT
+        lab.ShadowEvaluationId,
+        lab.PredictionTimestampUtc,
+        lab.FixtureDateUtc,
+        lab.ApiFootballFixtureId,
+        lab.Source,
+        lab.SourceMatchId,
+        lab.SourceMatchDate,
+        lab.HomeTeam,
+        lab.AwayTeam,
+        lab.ConfigurationVersion,
+        lab.MarketType,
+        lab.Selection,
+        lab.Decision,
+        lab.VirtualStakeUnits,
+        lab.FinalProbability,
+        lab.MarketNoVigProbability,
+        lab.FinalEdge,
+        lab.FinalExpectedValue,
+        lab.SettlementState,
+        lab.Result,
+        lab.ProfitLoss,
+        lab.EconomicOutcome
+    INTO #BotHLab
+    FROM dbo.fn_BotH2026ShadowLabWindow
+    (
+        @AsOfUtc,
+        DATEADD(DAY, -90, @AsOfUtc),
+        @AsOfUtc,
+        @ConfigurationVersion
+    ) AS lab
     OPTION (RECOMPILE);
+
+    CREATE CLUSTERED INDEX CX_BotHLab_Scorecard
+        ON #BotHLab(ConfigurationVersion, FixtureDateUtc, PredictionTimestampUtc, ShadowEvaluationId);
 
     DECLARE @Scorecards TABLE
     (
@@ -1287,6 +1379,287 @@ BEGIN
     FROM @Scorecards
     ORDER BY WindowDays, CASE Dimension WHEN N'Overall' THEN 0 WHEN N'Configuration' THEN 1
         WHEN N'MarketType' THEN 2 ELSE 3 END, Segment;
+END;
+
+GO
+
+/*
+    Versioned, read-only threshold replay.  It deliberately consumes only rows
+    whose outcome is safely available at @AsOfUtc.  Threshold eligibility is
+    evaluated from immutable decision-time columns, then a deterministic first
+    eligible row is retained per fixture before the chronological split.
+*/
+CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ThresholdAnalysis
+    @AsOfUtc DATETIME2(3) = NULL,
+    @ConfigurationVersion NVARCHAR(80) = NULL,
+    @MarketType NVARCHAR(50) = NULL,
+    @Selection NVARCHAR(10) = NULL,
+    @AnalysisVersion NVARCHAR(80) = N'bot-h-threshold-what-if-1.0.0',
+    @MinimumFinalProbability DECIMAL(9,6) = 0.560000,
+    @MinimumFinalEdge DECIMAL(9,6) = 0.040000,
+    @MinimumFinalExpectedValue DECIMAL(9,6) = 0.030000,
+    @MinimumDataQualityScore DECIMAL(9,6) = 0.700000,
+    @MinimumContextAgreementScore DECIMAL(9,6) = 0.700000,
+    @MinimumOdds DECIMAL(18,6) = 1.600000,
+    @MaximumOdds DECIMAL(18,6) = 2.200000,
+    @DevelopmentFraction DECIMAL(5,4) = 0.7000
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET @AsOfUtc = COALESCE(@AsOfUtc, SYSUTCDATETIME());
+
+    IF @AsOfUtc > DATEADD(MINUTE, 1, SYSUTCDATETIME())
+        THROW 52131, 'AsOfUtc cannot be in the future.', 1;
+    IF @AnalysisVersion <> N'bot-h-threshold-what-if-1.0.0'
+        THROW 52132, 'Unsupported Bot H threshold-analysis version.', 1;
+    IF @MarketType IS NOT NULL
+       AND @MarketType NOT IN (N'TotalCorners', N'HomeTeamCorners', N'AwayTeamCorners')
+        THROW 52134, 'Invalid Bot H threshold-analysis market.', 1;
+    IF @Selection IS NOT NULL AND @Selection NOT IN (N'Over', N'Under')
+        THROW 52135, 'Invalid Bot H threshold-analysis selection.', 1;
+    IF @MinimumFinalProbability NOT BETWEEN 0 AND 1
+       OR @MinimumFinalEdge NOT BETWEEN 0 AND 1
+       OR @MinimumFinalExpectedValue NOT BETWEEN 0 AND 10
+       OR @MinimumDataQualityScore NOT BETWEEN 0 AND 1
+       OR @MinimumContextAgreementScore NOT BETWEEN 0 AND 1
+       OR @MinimumOdds NOT BETWEEN 1.01 AND 10
+       OR @MaximumOdds NOT BETWEEN 1.01 AND 10
+       OR @MaximumOdds < @MinimumOdds
+       OR @DevelopmentFraction NOT BETWEEN 0.5000 AND 0.9000
+        THROW 52133, 'Invalid Bot H threshold-analysis parameters.', 1;
+
+    DECLARE @FixtureFromUtc DATETIME2(3) =
+    (
+        SELECT MIN(FixtureDateUtc)
+        FROM dbo.BotH2026ShadowEvaluations
+        WHERE PredictionTimestampUtc <= @AsOfUtc
+          AND FixtureDateUtc <= @AsOfUtc
+          AND (@ConfigurationVersion IS NULL OR ConfigurationVersion = @ConfigurationVersion)
+    );
+
+    SELECT
+        lab.ShadowEvaluationId,
+        lab.PredictionTimestampUtc,
+        lab.FixtureDateUtc,
+        lab.ApiFootballFixtureId,
+        lab.Source,
+        lab.SourceMatchId,
+        lab.SourceMatchDate,
+        lab.HomeTeam,
+        lab.AwayTeam,
+        lab.ConfigurationVersion,
+        lab.MarketType,
+        lab.Selection,
+        lab.SelectedOdds,
+        lab.VirtualStakeUnits,
+        lab.FinalProbability,
+        lab.MarketNoVigProbability,
+        lab.FinalEdge,
+        lab.FinalExpectedValue,
+        lab.SelectionScore,
+        lab.ContextAgreementScore,
+        lab.DataQualityScore,
+        lab.SettlementState,
+        lab.Result,
+        lab.ProfitLoss,
+        lab.EconomicOutcome,
+        FixtureKey = CONVERT(BINARY(32), HASHBYTES(N'SHA2_256',
+            CASE WHEN lab.ApiFootballFixtureId IS NOT NULL
+                THEN CONCAT(N'AF|', CONVERT(NVARCHAR(30), lab.ApiFootballFixtureId))
+                ELSE CONCAT(N'SRC|', lab.Source, N'|', COALESCE(lab.SourceMatchId, N''), N'|',
+                    CONVERT(NVARCHAR(19), lab.SourceMatchDate, 126), N'|', lab.HomeTeam, N'|', lab.AwayTeam)
+            END))
+    INTO #SettledEvidence
+    FROM dbo.fn_BotH2026ShadowLabWindow
+    (
+        @AsOfUtc,
+        @FixtureFromUtc,
+        @AsOfUtc,
+        @ConfigurationVersion
+    ) AS lab
+    WHERE lab.SettlementState = N'Settled'
+    OPTION (RECOMPILE);
+
+    CREATE CLUSTERED INDEX CX_BotHThreshold_Settled
+        ON #SettledEvidence(FixtureDateUtc, FixtureKey, PredictionTimestampUtc, ShadowEvaluationId);
+
+    DECLARE @AvailableSettledEvaluations BIGINT =
+        (SELECT COUNT_BIG(*) FROM #SettledEvidence);
+
+    ;WITH Eligible AS
+    (
+        SELECT
+            evidence.*,
+            EligibilitySequence = ROW_NUMBER() OVER
+            (
+                PARTITION BY evidence.FixtureKey
+                ORDER BY
+                    evidence.PredictionTimestampUtc,
+                    evidence.FinalExpectedValue DESC,
+                    evidence.FinalEdge DESC,
+                    evidence.SelectionScore DESC,
+                    evidence.ShadowEvaluationId
+            )
+        FROM #SettledEvidence AS evidence
+        WHERE
+          (
+              (@MarketType IS NULL AND evidence.MarketType IN (N'HomeTeamCorners', N'AwayTeamCorners'))
+              OR evidence.MarketType = @MarketType
+          )
+          AND (@Selection IS NULL OR evidence.Selection = @Selection)
+          AND evidence.FinalProbability >= @MinimumFinalProbability
+          AND evidence.FinalEdge >= @MinimumFinalEdge
+          AND evidence.FinalExpectedValue >= @MinimumFinalExpectedValue
+          AND evidence.DataQualityScore >= @MinimumDataQualityScore
+          AND evidence.ContextAgreementScore >= @MinimumContextAgreementScore
+          AND evidence.SelectedOdds BETWEEN @MinimumOdds AND @MaximumOdds
+    )
+    SELECT *
+    INTO #Eligible
+    FROM Eligible;
+
+    DECLARE @EligibleEvaluations BIGINT = (SELECT COUNT_BIG(*) FROM #Eligible);
+
+    SELECT
+        ShadowEvaluationId,
+        PredictionTimestampUtc,
+        FixtureDateUtc,
+        FixtureKey,
+        SelectedOdds,
+        VirtualStakeUnits,
+        FinalProbability,
+        MarketNoVigProbability,
+        FinalEdge,
+        FinalExpectedValue,
+        Result,
+        ProfitLoss,
+        EconomicOutcome
+    INTO #Selected
+    FROM #Eligible
+    WHERE EligibilitySequence = 1;
+
+    CREATE UNIQUE CLUSTERED INDEX CX_BotHThreshold_Selected
+        ON #Selected(FixtureKey);
+
+    DECLARE @DateBuckets INT =
+        (SELECT COUNT(*) FROM (SELECT DISTINCT FixtureDateUtc FROM #Selected) AS dates);
+    DECLARE @DevelopmentBuckets INT = CASE
+        WHEN @DateBuckets <= 1 THEN @DateBuckets
+        ELSE FLOOR(@DateBuckets * @DevelopmentFraction)
+    END;
+    IF @DateBuckets >= 2
+        SET @DevelopmentBuckets = CASE
+            WHEN @DevelopmentBuckets < 1 THEN 1
+            WHEN @DevelopmentBuckets >= @DateBuckets THEN @DateBuckets - 1
+            ELSE @DevelopmentBuckets
+        END;
+
+    DECLARE @SplitBoundaryUtc DATETIME2(3) =
+    (
+        SELECT MIN(ranked.FixtureDateUtc)
+        FROM
+        (
+            SELECT
+                dates.FixtureDateUtc,
+                DateSequence = DENSE_RANK() OVER (ORDER BY dates.FixtureDateUtc)
+            FROM (SELECT DISTINCT FixtureDateUtc FROM #Selected) AS dates
+        ) AS ranked
+        WHERE ranked.DateSequence > @DevelopmentBuckets
+    );
+
+    DECLARE @Splits TABLE
+    (
+        SortOrder INT NOT NULL PRIMARY KEY,
+        Split NVARCHAR(20) NOT NULL UNIQUE
+    );
+    INSERT INTO @Splits(SortOrder, Split)
+    VALUES (0, N'Overall'), (1, N'Development'), (2, N'Holdout');
+
+    ;WITH Expanded AS
+    (
+        SELECT split.SortOrder, split.Split, selected.*
+        FROM @Splits AS split
+        INNER JOIN #Selected AS selected
+          ON split.Split = N'Overall'
+          OR (split.Split = N'Development'
+              AND (@SplitBoundaryUtc IS NULL OR selected.FixtureDateUtc < @SplitBoundaryUtc))
+          OR (split.Split = N'Holdout'
+              AND @SplitBoundaryUtc IS NOT NULL AND selected.FixtureDateUtc >= @SplitBoundaryUtc)
+    ),
+    Aggregated AS
+    (
+        SELECT
+            expanded.SortOrder,
+            expanded.Split,
+            SelectedPicks = COUNT_BIG(*),
+            Fixtures = COUNT_BIG(DISTINCT expanded.FixtureKey),
+            Won = SUM(CONVERT(BIGINT, CASE WHEN expanded.Result = N'Win' THEN 1 ELSE 0 END)),
+            HalfWon = SUM(CONVERT(BIGINT, CASE WHEN expanded.Result = N'HalfWin' THEN 1 ELSE 0 END)),
+            Pushes = SUM(CONVERT(BIGINT, CASE WHEN expanded.Result = N'Push' THEN 1 ELSE 0 END)),
+            HalfLost = SUM(CONVERT(BIGINT, CASE WHEN expanded.Result = N'HalfLoss' THEN 1 ELSE 0 END)),
+            Lost = SUM(CONVERT(BIGINT, CASE WHEN expanded.Result = N'Loss' THEN 1 ELSE 0 END)),
+            Stake = SUM(CONVERT(FLOAT, expanded.VirtualStakeUnits)),
+            ProfitLoss = SUM(CONVERT(FLOAT, expanded.ProfitLoss)),
+            AverageOdds = AVG(CONVERT(FLOAT, expanded.SelectedOdds)),
+            AverageModelProbability = AVG(CONVERT(FLOAT, expanded.FinalProbability)),
+            AverageMarketProbability = AVG(CONVERT(FLOAT, expanded.MarketNoVigProbability)),
+            AverageEdge = AVG(CONVERT(FLOAT, expanded.FinalEdge)),
+            AverageExpectedValue = AVG(CONVERT(FLOAT, expanded.FinalExpectedValue)),
+            ObservedEconomicOutcome = AVG(CONVERT(FLOAT, expanded.EconomicOutcome)),
+            Brier = AVG(POWER(CONVERT(FLOAT, expanded.FinalProbability)
+                - CONVERT(FLOAT, expanded.EconomicOutcome), 2)),
+            MarketBrier = AVG(CASE WHEN expanded.MarketNoVigProbability IS NOT NULL
+                THEN POWER(CONVERT(FLOAT, expanded.MarketNoVigProbability)
+                    - CONVERT(FLOAT, expanded.EconomicOutcome), 2) END)
+        FROM Expanded AS expanded
+        GROUP BY expanded.SortOrder, expanded.Split
+    )
+    SELECT
+        AnalysisVersion = @AnalysisVersion,
+        AsOfUtc = @AsOfUtc,
+        ConfigurationVersion = @ConfigurationVersion,
+        MarketType = @MarketType,
+        Selection = @Selection,
+        MinimumFinalProbability = @MinimumFinalProbability,
+        MinimumFinalEdge = @MinimumFinalEdge,
+        MinimumFinalExpectedValue = @MinimumFinalExpectedValue,
+        MinimumDataQualityScore = @MinimumDataQualityScore,
+        MinimumContextAgreementScore = @MinimumContextAgreementScore,
+        MinimumOdds = @MinimumOdds,
+        MaximumOdds = @MaximumOdds,
+        DevelopmentFraction = @DevelopmentFraction,
+        SplitBoundaryUtc = @SplitBoundaryUtc,
+        split.Split,
+        AvailableSettledEvaluations = @AvailableSettledEvaluations,
+        EligibleEvaluations = @EligibleEvaluations,
+        SelectedPicks = COALESCE(aggregated.SelectedPicks, 0),
+        Fixtures = COALESCE(aggregated.Fixtures, 0),
+        Won = COALESCE(aggregated.Won, 0),
+        HalfWon = COALESCE(aggregated.HalfWon, 0),
+        Pushes = COALESCE(aggregated.Pushes, 0),
+        HalfLost = COALESCE(aggregated.HalfLost, 0),
+        Lost = COALESCE(aggregated.Lost, 0),
+        aggregated.Stake,
+        aggregated.ProfitLoss,
+        Yield = aggregated.ProfitLoss / NULLIF(aggregated.Stake, 0),
+        aggregated.AverageOdds,
+        aggregated.AverageModelProbability,
+        aggregated.AverageMarketProbability,
+        aggregated.AverageEdge,
+        aggregated.AverageExpectedValue,
+        aggregated.ObservedEconomicOutcome,
+        CalibrationGap = aggregated.AverageModelProbability - aggregated.ObservedEconomicOutcome,
+        aggregated.Brier,
+        aggregated.MarketBrier,
+        DeltaBrier = aggregated.Brier - aggregated.MarketBrier,
+        ReadOnly = CONVERT(BIT, 1),
+        Deployable = CONVERT(BIT, 0),
+        PromotionState = N'SHADOW_ONLY',
+        UnitOfAnalysis = N'FIRST_ELIGIBLE_PER_FIXTURE'
+    FROM @Splits AS split
+    LEFT JOIN Aggregated AS aggregated
+      ON aggregated.SortOrder = split.SortOrder
+    ORDER BY split.SortOrder;
 END;
 
 GO

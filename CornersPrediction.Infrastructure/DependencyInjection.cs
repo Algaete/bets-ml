@@ -5,6 +5,7 @@ using CornersPrediction.Application.AutomatedCorners;
 using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotG;
 using CornersPrediction.Application.Automation.BotH;
+using CornersPrediction.Application.Automation.BotI;
 using CornersPrediction.Infrastructure.Automation;
 using CornersPrediction.Application.Betting;
 using CornersPrediction.Application.UpcomingMatches;
@@ -73,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<IBotGCandidateReadRepository>(provider =>
             provider.GetRequiredService<SqlServerBotGRepository>());
         services.AddScoped<IBotHShadowLabReadRepository, SqlServerBotHShadowLabRepository>();
+        services.AddScoped<IBotIShadowRepository, SqlServerBotIShadowRepository>();
         services.AddSingleton<IRobustPickEvaluationRepository, SqlServerRobustPickEvaluationRepository>();
         services.AddScoped<IUserAdminRepository, SqlServerUserAdminRepository>();
         services.AddScoped<ITeamInfoRepository, TeamInfoRepository>();

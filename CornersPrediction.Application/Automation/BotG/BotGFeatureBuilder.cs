@@ -8,7 +8,7 @@ public sealed class BotGFeatureBuilder : IBotGFeatureBuilder
     {
         var config = BotGConfiguration.Validate(configuration);
         ValidateQuote(input.Quote, config);
-        ValidatePredictions(input.Predictions, input.Quote.PredictionTimestampUtc);
+        ValidatePredictions(input.Predictions, input.Quote.MarketType, input.Quote.PredictionTimestampUtc);
         if (!input.MarketProbability.IsAvailable)
             throw new ArgumentException("A strict two-sided no-vig probability is required to build Bot G features.");
 
@@ -135,7 +135,10 @@ public sealed class BotGFeatureBuilder : IBotGFeatureBuilder
             throw new ArgumentException("Both selected and opposite odds are required for Bot G.");
     }
 
-    private static void ValidatePredictions(BotGBasePredictions value, DateTime asOfUtc)
+    private static void ValidatePredictions(
+        BotGBasePredictions value,
+        BotGMarketType marketType,
+        DateTime asOfUtc)
     {
         var predictions = new[]
         {
@@ -144,10 +147,12 @@ public sealed class BotGFeatureBuilder : IBotGFeatureBuilder
         };
         if (predictions.Any(prediction => !double.IsFinite(prediction) || prediction < 0d))
             throw new ArgumentException("All Bot G base predictions must be finite and non-negative.");
-        if (string.IsNullOrWhiteSpace(value.LegacyModelVersion) || string.IsNullOrWhiteSpace(value.Model2026Version))
+        var lineage = value.LineageFor(marketType);
+        if (string.IsNullOrWhiteSpace(lineage.LegacyModelVersion)
+            || string.IsNullOrWhiteSpace(lineage.Model2026Version))
             throw new ArgumentException("Both Bot G base-model versions are required.");
-        ValidateModelTimestamp(value.LegacyTrainedThroughUtc, asOfUtc, "legacy");
-        ValidateModelTimestamp(value.Model2026TrainedThroughUtc, asOfUtc, "2026");
+        ValidateModelTimestamp(lineage.LegacyTrainedThroughUtc, asOfUtc, "legacy");
+        ValidateModelTimestamp(lineage.Model2026TrainedThroughUtc, asOfUtc, "2026");
     }
 
     private static void ValidateModelTimestamp(DateTime? trainedThroughUtc, DateTime asOfUtc, string label)

@@ -7,8 +7,11 @@ public sealed record BotGConfiguration
 {
     public const string DefaultBotKey = "G2026";
     public const string DefaultBaseStrategy = "GOALS_MARKET_ANCHORED";
-    public const string DefaultConfigurationVersion = "bot-g-goals-market-1.0.0";
+    public const string LegacyConfigurationVersion = "bot-g-goals-market-1.0.0";
+    public const string DefaultConfigurationVersion = "bot-g-goals-market-intelligence-1.1.0";
     public const string DefaultFeatureSchemaVersion = "bot-g-goals-features-1.0.0";
+    public const string DefaultTrainingContractVersion = "bot-g-training-export-1.1.0";
+    public const string DefaultMetaModelVersion = "bot-g-market-meta-1.1.0";
 
     public string BotKey { get; init; } = DefaultBotKey;
     public string Name { get; init; } = "Bot G Goals Specialist";
@@ -16,13 +19,14 @@ public sealed record BotGConfiguration
     public string ConfigurationVersion { get; init; } = DefaultConfigurationVersion;
     public string FeatureSchemaVersion { get; init; } = DefaultFeatureSchemaVersion;
     public string LegacyModelVersion { get; init; } = "goals_v1";
-    public string Model2026Version { get; init; } = "goals_deep_tuned_v2";
+    public string Model2026Version { get; init; } = "per-market-model-lineage";
     public bool Enabled { get; init; } = true;
     public bool PublishEnabled { get; init; }
     public bool ShadowMode { get; init; } = true;
     public decimal Stake { get; init; } = 1m;
     public IReadOnlyList<BotGMarketType> SupportedMarkets { get; init; } =
         [BotGMarketType.TotalGoals, BotGMarketType.HomeTeamGoals, BotGMarketType.AwayTeamGoals];
+    public BotGModelLineageConfiguration ModelLineages { get; init; } = new();
     public BotGFeatureConfiguration Features { get; init; } = new();
     public BotGMetaModelConfiguration MetaModel { get; init; } = new();
     public BotGCalibrationConfiguration Calibration { get; init; } = new();
@@ -75,11 +79,12 @@ public sealed record BotGConfiguration
             || value.SupportedMarkets.Any(market => !Enum.IsDefined(market)))
             throw new ArgumentException("SupportedMarkets must contain unique supported Goals markets.");
 
-        if (value.Features is null || value.MetaModel is null || value.Calibration is null
+        if (value.ModelLineages is null || value.Features is null || value.MetaModel is null || value.Calibration is null
             || value.Uncertainty is null || value.OutOfDistribution is null
             || value.Thresholds is null || value.Ranking is null || value.FootballIntelligence is null)
             throw new ArgumentException("Bot G configuration sections cannot be null.");
 
+        ValidateModelLineages(value.ModelLineages);
         ValidateFeatures(value.Features);
         ValidateMetaModel(value.MetaModel);
         ValidateCalibration(value.Calibration);
@@ -102,6 +107,30 @@ public sealed record BotGConfiguration
             throw new ArgumentException("Bot G history thresholds must be between 1 and 100.");
         if (value.Windows is null || value.Windows.Count != 3 || !value.Windows.SequenceEqual([5, 10, 20]))
             throw new ArgumentException("Bot G v1 requires the temporal windows 5, 10 and 20.");
+    }
+
+    private static void ValidateModelLineages(BotGModelLineageConfiguration value)
+    {
+        ValidateMarketLineage(value.TotalGoals, nameof(value.TotalGoals));
+        ValidateMarketLineage(value.HomeTeamGoals, nameof(value.HomeTeamGoals));
+        ValidateMarketLineage(value.AwayTeamGoals, nameof(value.AwayTeamGoals));
+    }
+
+    private static void ValidateMarketLineage(BotGBaseModelLineageConfiguration value, string name)
+    {
+        if (value is null)
+            throw new ArgumentException($"Bot G model lineage '{name}' is required.");
+        ValidateVersionSet(value.LegacyModelVersions, $"{name}.LegacyModelVersions");
+        ValidateVersionSet(value.Model2026Versions, $"{name}.Model2026Versions");
+    }
+
+    private static void ValidateVersionSet(IReadOnlyList<string> values, string name)
+    {
+        if (values is null || values.Count == 0 || values.Any(string.IsNullOrWhiteSpace)
+            || values.Select(item => item.Trim()).Distinct(StringComparer.Ordinal).Count() != values.Count)
+        {
+            throw new ArgumentException($"{name} must contain unique, non-empty model versions.");
+        }
     }
 
     private static void ValidateMetaModel(BotGMetaModelConfiguration value)
@@ -222,7 +251,7 @@ public sealed record BotGConfiguration
 
 public sealed record BotGFootballIntelligenceConfiguration
 {
-    public bool Enabled { get; init; }
+    public bool Enabled { get; init; } = true;
     public string Version { get; init; } = "football-intelligence-adjustment-1.0.0";
     public double Weight { get; init; } = 0.35d;
     public double MaximumProbabilityAdjustment { get; init; } = 0.04d;
@@ -234,6 +263,58 @@ public sealed record BotGFootballIntelligenceConfiguration
     public double DefenceWeight { get; init; } = 0.25d;
     public double WidthWeight { get; init; } = 0.20d;
     public double SetPieceWeight { get; init; } = 0.20d;
+}
+
+public sealed record BotGBaseModelLineageConfiguration
+{
+    public IReadOnlyList<string> LegacyModelVersions { get; init; } = ["goals_v1"];
+    public IReadOnlyList<string> Model2026Versions { get; init; } = [];
+
+    public bool AllowsLegacy(string lineage) => Allows(lineage, LegacyModelVersions);
+
+    public bool AllowsModel2026(string lineage) => Allows(lineage, Model2026Versions);
+
+    private static bool Allows(string lineage, IReadOnlyList<string> allowedComponents)
+    {
+        if (string.IsNullOrWhiteSpace(lineage)) return false;
+        var components = lineage.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return components.Length > 0
+            && components.Distinct(StringComparer.Ordinal).Count() == components.Length
+            && components.All(component => allowedComponents.Contains(component, StringComparer.Ordinal));
+    }
+}
+
+public sealed record BotGModelLineageConfiguration
+{
+    private const string HomeGoals2026 = "targethomegoals-2026-08-09-trial-15";
+    private const string AwayGoals2026 = "targetawaygoals-2026-08-09-trial-48";
+    private const string TotalGoals2026 = "targettotalgoals-2026-08-09-trial-53";
+
+    public BotGBaseModelLineageConfiguration TotalGoals { get; init; } = new()
+    {
+        Model2026Versions = [TotalGoals2026]
+    };
+
+    // Neutral-venue evaluation averages the normal and swapped team models, so both
+    // component versions are explicitly allowed. The persisted lineage still records
+    // the exact ordered, de-duplicated signature that was actually used.
+    public BotGBaseModelLineageConfiguration HomeTeamGoals { get; init; } = new()
+    {
+        Model2026Versions = [HomeGoals2026, AwayGoals2026]
+    };
+
+    public BotGBaseModelLineageConfiguration AwayTeamGoals { get; init; } = new()
+    {
+        Model2026Versions = [AwayGoals2026, HomeGoals2026]
+    };
+
+    public BotGBaseModelLineageConfiguration For(BotGMarketType marketType) => marketType switch
+    {
+        BotGMarketType.TotalGoals => TotalGoals,
+        BotGMarketType.HomeTeamGoals => HomeTeamGoals,
+        BotGMarketType.AwayTeamGoals => AwayTeamGoals,
+        _ => throw new ArgumentOutOfRangeException(nameof(marketType), marketType, "Unsupported Bot G market.")
+    };
 }
 
 public sealed record BotGFeatureConfiguration
@@ -251,7 +332,7 @@ public sealed record BotGFeatureConfiguration
 public sealed record BotGMetaModelConfiguration
 {
     public bool Required { get; init; } = true;
-    public string ModelVersion { get; init; } = "bot-g-market-meta-1.0.0";
+    public string ModelVersion { get; init; } = BotGConfiguration.DefaultMetaModelVersion;
     public string FeatureSchemaVersion { get; init; } = BotGConfiguration.DefaultFeatureSchemaVersion;
     public double MaximumAbsoluteResidualLogit { get; init; } = 4d;
 }

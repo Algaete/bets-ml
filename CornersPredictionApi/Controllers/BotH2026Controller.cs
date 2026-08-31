@@ -116,4 +116,58 @@ public sealed class BotH2026Controller : ControllerBase
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
+
+    [HttpGet("threshold-analysis")]
+    [HttpGet("what-if")]
+    [ProducesResponseType(typeof(IReadOnlyList<BotHThresholdAnalysisDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetThresholdAnalysis(
+        [FromQuery] DateTime? asOfUtc,
+        [FromQuery] string? configurationVersion,
+        [FromQuery] string? marketType,
+        [FromQuery] string? selection,
+        [FromQuery] string analysisVersion = BotHShadowLab.ThresholdAnalysisVersion,
+        [FromQuery] decimal minimumFinalProbability = 0.56m,
+        [FromQuery] decimal minimumFinalEdge = 0.04m,
+        [FromQuery] decimal minimumFinalExpectedValue = 0.03m,
+        [FromQuery] decimal minimumDataQualityScore = 0.70m,
+        [FromQuery] decimal minimumContextAgreementScore = 0.70m,
+        [FromQuery] decimal minimumOdds = 1.60m,
+        [FromQuery] decimal maximumOdds = 2.20m,
+        [FromQuery] decimal developmentFraction = 0.70m,
+        CancellationToken cancellationToken = default)
+    {
+        var filter = new BotHThresholdAnalysisFilter(
+            asOfUtc,
+            configurationVersion,
+            marketType,
+            selection,
+            analysisVersion,
+            minimumFinalProbability,
+            minimumFinalEdge,
+            minimumFinalExpectedValue,
+            minimumDataQualityScore,
+            minimumContextAgreementScore,
+            minimumOdds,
+            maximumOdds,
+            developmentFraction);
+
+        try
+        {
+            BotHShadowLab.Validate(filter, DateTime.UtcNow);
+            return Ok(await _repository.GetThresholdAnalysisAsync(filter, cancellationToken));
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load Bot H2026 threshold analysis");
+            return Problem(
+                title: "Could not load Bot H2026 threshold analysis",
+                detail: "The versioned, read-only threshold replay failed.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
 }

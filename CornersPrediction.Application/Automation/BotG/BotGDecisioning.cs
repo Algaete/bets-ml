@@ -30,6 +30,9 @@ public sealed class BotGAbstentionService : IBotGAbstentionService
 
         if (!input.MetaPrediction.IsAvailable)
             abstain.Add(MetaUnavailableReason(input.MetaPrediction.UnavailableReason));
+        if (input.FootballIntelligenceEvidenceRequired
+            && !input.FootballIntelligenceEvidenceUsable)
+            abstain.Add(BotGDecisionReason.FootballIntelligenceUnavailable);
         if (lineSupported
             && BotGAsianSettlementCalculator.RequiresFiveStateDistribution(input.Quote.Line)
             && !input.SettlementDistributionAvailable)

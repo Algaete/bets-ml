@@ -33,7 +33,7 @@
         var activeSection = activeController switch
         {
             "UpcomingMatches" or "MatchHistory" => language == UiText.Spanish ? "Operación y datos" : "Operations and data",
-            "Predictions" or "NewGenerationPrediction" or "BotPicks" or "BotG2026" or "BotH2026" => language == UiText.Spanish ? "Análisis y modelos" : "Analysis and models",
+            "Predictions" or "NewGenerationPrediction" or "BotPicks" or "BotG2026" or "BotH2026" or "BotI2026" => language == UiText.Spanish ? "Análisis y modelos" : "Analysis and models",
             "Betting" => language == UiText.Spanish ? "Banca y apuestas" : "Bankroll and betting",
             "RobotPanel" or "BotAutomation" or "UserAdmin" => language == UiText.Spanish ? "Administración" : "Administration",
             _ => UiText.T(language, "App.Name")
@@ -93,6 +93,10 @@
                     <a class="sidebar-link @(activeController == "BotH2026" ? "active" : "")" asp-area="" asp-controller="BotH2026" asp-action="Index">
                         <span class="sidebar-icon" aria-hidden="true">H</span>
                         <span><span class="sidebar-link-title">H2026</span><span class="sidebar-link-meta">Shadow · sólo lectura</span></span>
+                    </a>
+                    <a class="sidebar-link @(activeController == "BotI2026" ? "active" : "")" asp-area="" asp-controller="BotI2026" asp-action="Index">
+                        <span class="sidebar-icon" aria-hidden="true">I</span>
+                        <span><span class="sidebar-link-title">I2026</span><span class="sidebar-link-meta">Shadow · movimiento</span></span>
                     </a>
                 }
                 @if (isAuthenticated)

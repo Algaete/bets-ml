@@ -14,6 +14,7 @@ from .contracts import load_candidate_dataset, validate_candidate_frame
 from .features import FeatureEncoder, engineer_features, market_logit
 from .modeling import LogitResidualModel
 from .pipeline import train_bot_g, write_training_outputs
+from .preflight import build_preflight_report
 from .settlement import expected_profit, settle
 from .splits import assert_oof_fixture_integrity, expanding_folds, final_holdout
 from .synthetic import synthetic_candidate_frame, write_synthetic_candidates
@@ -87,6 +88,10 @@ def run_self_test(fixtures: int = 480, seed: int = 20260819) -> dict[str, object
         root = Path(temporary)
         input_path = write_synthetic_candidates(root / "synthetic-candidates.csv", fixtures, seed)
         dataset = load_candidate_dataset(input_path, config)
+        preflight = build_preflight_report(dataset, config)
+        assert preflight["trainingReady"] is True
+        assert preflight["publicationEnabled"] is False
+        assert preflight["automaticActivationEnabled"] is False
         _assert_neutrality(dataset.rows)
 
         engineered = engineer_features(dataset.rows)
@@ -125,6 +130,11 @@ def run_self_test(fixtures: int = 480, seed: int = 20260819) -> dict[str, object
         assert tuple(artifact["supportedMarkets"]) == config.supported_markets
         assert artifact["modelVersion"] == config.model_version
         assert artifact["featureSchemaVersion"] == config.feature_schema_version
+        assert artifact["trainingContractVersion"] == config.training_contract_version
+        assert artifact["footballIntelligence"]["enabled"] is True
+        assert artifact["footballIntelligence"]["version"] == (
+            config.football_intelligence.version
+        )
         assert artifact["runtimeSettings"] == {
             "maximumAbsoluteResidualLogit": 4.0,
             "minimumSettlementEffectiveSampleSize": (
@@ -151,6 +161,7 @@ def run_self_test(fixtures: int = 480, seed: int = 20260819) -> dict[str, object
         assert artifact["ood"]["severeRobustZScore"] == config.ood_severe_robust_z_score
         assert artifact["training"]["legacyModelVersions"]
         assert artifact["training"]["model2026Versions"]
+        assert len(artifact["training"]["marketLineages"]) == 3
         assert artifact["calibration"] and artifact["oodFeatureStats"]
         assert all(member.get("name") for member in artifact["ensemble"])
         runtime_names = {item["name"] for item in artifact["model"]["features"]}
@@ -163,7 +174,7 @@ def run_self_test(fixtures: int = 480, seed: int = 20260819) -> dict[str, object
         try:
             write_training_outputs(trained, output, config, activate=True)
         except ValueError as exc:
-            assert "Synthetic" in str(exc)
+            assert "Automatic Bot G activation is disabled" in str(exc)
         else:
             raise AssertionError("Synthetic artifact activation was not rejected.")
         assert not (output / "active.json").exists()

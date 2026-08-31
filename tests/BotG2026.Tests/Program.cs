@@ -27,6 +27,7 @@ var tests = new (string Name, Action Run)[]
     ("meta model reports missing feature and schema unavailability", MetaUnavailable),
     ("meta model rejects synthetic and non-deployable artifacts", MetaDeploymentGate),
     ("meta model fails closed on artifact/runtime identity mismatch", MetaCompatibilityGate),
+    ("meta model rejects v1.0 relabeling and intelligence drift", MetaV11IdentityGate),
     ("meta model rejects malformed artifact evidence at load time", MetaMalformedEvidence),
     ("meta model blocks trained-through leakage and exposes dispersion", MetaTemporalAndEnsemble),
     ("hierarchical calibration reaches exact bookmaker leaf", CalibrationHierarchy),
@@ -39,10 +40,12 @@ var tests = new (string Name, Action Run)[]
     ("OOD is unavailable when required evidence is missing", OodUnavailable),
     ("abstention approves a complete safe candidate", AbstentionApproved),
     ("abstention distinguishes unsafe evidence from rejected value", AbstentionAndRejection),
+    ("abstention requires usable Football Intelligence in live v1.1", IntelligenceFailClosed),
     ("selector ranks and emits at most one approved pick per fixture", RankingOnePerFixture),
     ("Asian quarter-goal settlement is exact for Total Home and Away", AsianSettlementMatrix),
     ("candidate audit list pages keys before loading wide snapshots", CandidateAuditQueryIsLightweight),
     ("scorecard aggregates a narrow date-indexed candidate set without fivefold expansion", ScorecardQueryIsLightweight),
+    ("training export and seed are pinned to the v1.1 lineage contract", TrainingExportV11Contract),
     ("Bot G SQL endpoints wait for schema readiness", BotGEndpointsWaitForSchema)
 };
 
@@ -73,6 +76,9 @@ void ConfigurationDefaults()
     Check.True(config.Enabled);
     Check.True(config.ShadowMode);
     Check.False(config.PublishEnabled);
+    Check.Equal("bot-g-goals-market-intelligence-1.1.0", config.ConfigurationVersion);
+    Check.Equal("bot-g-market-meta-1.1.0", config.MetaModel.ModelVersion);
+    Check.True(config.FootballIntelligence.Enabled);
     Check.SequenceEqual(new[] { 5, 10, 20 }, config.Features.Windows);
     Check.SequenceEqual(
         new[] { BotGMarketType.TotalGoals, BotGMarketType.HomeTeamGoals, BotGMarketType.AwayTeamGoals },
@@ -169,6 +175,48 @@ void ScorecardQueryIsLightweight()
     Check.True(migration.Contains(
         "IX_AutomatedBotPickEvaluations_G2026ScorecardV2",
         StringComparison.Ordinal));
+}
+
+void TrainingExportV11Contract()
+{
+    var current = new DirectoryInfo(AppContext.BaseDirectory);
+    string? apiSqlRoot = null;
+    while (current is not null)
+    {
+        var candidate = Path.Combine(current.FullName, "CornersPredictionApi", "sql");
+        if (Directory.Exists(candidate))
+        {
+            apiSqlRoot = candidate;
+            break;
+        }
+        current = current.Parent;
+    }
+    Check.True(apiSqlRoot is not null, "API SQL directory was not found.");
+    var migration = File.ReadAllText(Path.Combine(apiSqlRoot!, "20260819_bot_g2026.sql"));
+    var start = migration.IndexOf(
+        "CREATE OR ALTER PROCEDURE dbo.sp_GetBotG2026TrainingExport", StringComparison.Ordinal);
+    var end = migration.IndexOf(
+        "CREATE OR ALTER PROCEDURE dbo.sp_SettleBotG2026Candidate", start, StringComparison.Ordinal);
+    Check.True(start >= 0 && end > start, "Bot G training export procedure was not found.");
+    var procedure = migration[start..end];
+    foreach (var required in new[]
+    {
+        "lineage.TrainingContractVersion",
+        "FootballIntelligenceProbabilityAdjustment",
+        "FootballIntelligenceHomeEvidenceStatus",
+        "FootballIntelligenceAwayEvidenceStatus",
+        "bot-g-training-export-1.1.0",
+        "targettotalgoals-2026-08-09-trial-53"
+    })
+        Check.True(procedure.Contains(required, StringComparison.Ordinal), $"Missing export guard {required}.");
+
+    foreach (var file in new[] { "automated_corners_bot.sql", "20260819_bot_g2026.sql" })
+    {
+        var sql = File.ReadAllText(Path.Combine(apiSqlRoot!, file));
+        Check.True(sql.Contains("\"modelVersion\":\"bot-g-market-meta-1.1.0\"", StringComparison.Ordinal));
+        Check.True(sql.Contains("\"modelLineages\"", StringComparison.Ordinal));
+        Check.True(sql.Contains("PublishEnabled = 0", StringComparison.Ordinal));
+    }
 }
 
 void BotGEndpointsWaitForSchema()
@@ -677,15 +725,21 @@ void MetaCompatibilityGate()
 
     var legacyMismatch = service.Predict(input with { LegacyModelVersion = "wrong-legacy" });
     Check.False(legacyMismatch.IsAvailable);
-    Check.Contains("Legacy base-model version", legacyMismatch.UnavailableReason);
+    Check.Contains("base-model lineage", legacyMismatch.UnavailableReason);
 
     var baseMismatch = service.Predict(input with { Model2026Version = "wrong-2026" });
     Check.False(baseMismatch.IsAvailable);
-    Check.Contains("Models 2026 version", baseMismatch.UnavailableReason);
+    Check.Contains("base-model lineage", baseMismatch.UnavailableReason);
 
     var lineageArtifact = artifact with
     {
-        Training = artifact.Training with { Model2026Versions = ["other-trained-version"] }
+        Training = artifact.Training with
+        {
+            MarketLineages = artifact.Training.MarketLineages.Select(value =>
+                value.MarketType == BotGMarketType.TotalGoals
+                    ? value with { Model2026Lineages = ["other-trained-version"] }
+                    : value).ToArray()
+        }
     };
     var lineageMismatch = new InMemoryBotGMetaModelService(lineageArtifact).Predict(input);
     Check.False(lineageMismatch.IsAvailable);
@@ -726,6 +780,34 @@ void MetaCompatibilityGate()
     });
     Check.False(calibrationMismatch.IsAvailable);
     Check.Contains("calibration identity", calibrationMismatch.UnavailableReason);
+}
+
+void MetaV11IdentityGate()
+{
+    var artifact = Artifact(new BotGLogitResidualLogisticModel());
+    Check.Throws<ArgumentException>(() => new InMemoryBotGMetaModelService(artifact with
+    {
+        ConfigurationVersion = BotGConfiguration.LegacyConfigurationVersion
+    }));
+    Check.Throws<ArgumentException>(() => new InMemoryBotGMetaModelService(artifact with
+    {
+        TrainingContractVersion = "bot-g-training-export-1.0.0"
+    }));
+
+    var service = new InMemoryBotGMetaModelService(artifact);
+    var input = MetaInput(0.5d, new Dictionary<string, double>());
+    var mismatch = service.Predict(input with
+    {
+        RuntimeConfiguration = input.RuntimeConfiguration with
+        {
+            FootballIntelligence = input.RuntimeConfiguration.FootballIntelligence with
+            {
+                MaximumProbabilityAdjustment = 0.05d
+            }
+        }
+    });
+    Check.False(mismatch.IsAvailable);
+    Check.Contains("Football Intelligence", mismatch.UnavailableReason);
 }
 
 void MetaMalformedEvidence()
@@ -977,6 +1059,15 @@ void AbstentionAndRejection()
     Check.True(lowValue.Reasons.Contains(BotGDecisionReason.LowConservativeExpectedValue));
 }
 
+void IntelligenceFailClosed()
+{
+    var decision = new BotGAbstentionService().Decide(
+        SafeDecisionInput() with { FootballIntelligenceEvidenceUsable = false },
+        new BotGConfiguration());
+    Check.Equal(BotGDecisionStatus.Abstain, decision.Status);
+    Check.True(decision.Reasons.Contains(BotGDecisionReason.FootballIntelligenceUnavailable));
+}
+
 void RankingOnePerFixture()
 {
     var selector = new BotGSelector();
@@ -1077,6 +1168,7 @@ BotGFeatureBuildInput FeatureInput(BotGMarketQuote quote)
         Model2026Total = 2.7d,
         Model2026Home = 1.55d,
         Model2026Away = 1.15d,
+        Model2026Version = "2026-test",
         LegacyTrainedThroughUtc = AsOfUtc.AddDays(-30),
         Model2026TrainedThroughUtc = AsOfUtc.AddDays(-20)
     };
@@ -1098,6 +1190,7 @@ BotGFeatureBuildInput FeatureInput(BotGMarketQuote quote)
 BotGModelArtifact Artifact(BotGLogitResidualLogisticModel model) => new()
 {
     ConfigurationVersion = BotGConfiguration.DefaultConfigurationVersion,
+    TrainingContractVersion = BotGConfiguration.DefaultTrainingContractVersion,
     Family = "GOALS",
     SupportedMarkets =
     [
@@ -1134,10 +1227,46 @@ BotGModelArtifact Artifact(BotGLogitResidualLogisticModel model) => new()
         RobustZScoreThreshold = 3.5d,
         SevereRobustZScore = 8d
     },
+    FootballIntelligence = new BotGArtifactFootballIntelligenceSettings
+    {
+        Enabled = true,
+        Version = "football-intelligence-adjustment-1.0.0",
+        Weight = 0.35d,
+        MaximumProbabilityAdjustment = 0.04d,
+        MinimumTeamConfidence = 0.60d,
+        MaximumSnapshotAgeMinutes = 4_320,
+        MinimumActionableFacts = 1,
+        MinimumIndependentSources = 1,
+        AttackWeight = 0.35d,
+        DefenceWeight = 0.25d,
+        WidthWeight = 0.20d,
+        SetPieceWeight = 0.20d
+    },
     Training = new BotGArtifactTrainingMetadata
     {
         LegacyModelVersions = ["legacy-test"],
-        Model2026Versions = ["2026-test"]
+        Model2026Versions = ["2026-test"],
+        MarketLineages =
+        [
+            new BotGArtifactMarketModelLineage
+            {
+                MarketType = BotGMarketType.TotalGoals,
+                LegacyModelLineages = ["legacy-test"],
+                Model2026Lineages = ["2026-test"]
+            },
+            new BotGArtifactMarketModelLineage
+            {
+                MarketType = BotGMarketType.HomeTeamGoals,
+                LegacyModelLineages = ["legacy-test"],
+                Model2026Lineages = ["2026-test"]
+            },
+            new BotGArtifactMarketModelLineage
+            {
+                MarketType = BotGMarketType.AwayTeamGoals,
+                LegacyModelLineages = ["legacy-test"],
+                Model2026Lineages = ["2026-test"]
+            }
+        ]
     },
     Model = model,
     Calibration =
@@ -1165,7 +1294,25 @@ BotGMetaModelInput MetaInput(double market, IReadOnlyDictionary<string, double> 
     {
         LegacyModelVersion = "legacy-test",
         Model2026Version = "2026-test",
-        MetaModel = new BotGMetaModelConfiguration { ModelVersion = "model-test" }
+        MetaModel = new BotGMetaModelConfiguration { ModelVersion = "model-test" },
+        ModelLineages = new BotGModelLineageConfiguration
+        {
+            TotalGoals = new BotGBaseModelLineageConfiguration
+            {
+                LegacyModelVersions = ["legacy-test"],
+                Model2026Versions = ["2026-test"]
+            },
+            HomeTeamGoals = new BotGBaseModelLineageConfiguration
+            {
+                LegacyModelVersions = ["legacy-test"],
+                Model2026Versions = ["2026-test"]
+            },
+            AwayTeamGoals = new BotGBaseModelLineageConfiguration
+            {
+                LegacyModelVersions = ["legacy-test"],
+                Model2026Versions = ["2026-test"]
+            }
+        }
     },
     "legacy-test",
     "2026-test",
@@ -1231,7 +1378,9 @@ BotGDecisionInput SafeDecisionInput()
         DataQualityScore = 0.90d,
         ContextAgreementScore = 0.90d,
         ModelDisagreement = 0.20d,
-        HistoricalMatches = 20
+        HistoricalMatches = 20,
+        FootballIntelligenceEvidenceRequired = true,
+        FootballIntelligenceEvidenceUsable = true
     };
 }
 

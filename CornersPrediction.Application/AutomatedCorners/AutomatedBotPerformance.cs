@@ -141,7 +141,12 @@ public static class AutomatedBotProductionEligibilityPolicy
                 family);
         }
 
-        if (IsControlledTrialGoalsMarket(marketFamily, marketType)
+        if (IsControlledTrialGoalsSignal(
+                botKey,
+                marketFamily,
+                marketType,
+                selectedSide,
+                bookmaker)
             && market.PredictiveFixtures >= MinimumControlledTrialFixtures
             && market.Yield is > 0m
             && market.CalibrationGap is not null
@@ -179,10 +184,17 @@ public static class AutomatedBotProductionEligibilityPolicy
         AutomatedBotPerformanceScorecard? market = null,
         AutomatedBotPerformanceScorecard? family = null) => new(false, reason, market, family);
 
-    private static bool IsControlledTrialGoalsMarket(string marketFamily, string marketType) =>
-        marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
-        && (marketType.Equals("HomeTeamGoals", StringComparison.OrdinalIgnoreCase)
-            || marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase));
+    private static bool IsControlledTrialGoalsSignal(
+        string botKey,
+        string marketFamily,
+        string marketType,
+        string selectedSide,
+        string bookmaker) =>
+        botKey.Equals("C2026", StringComparison.OrdinalIgnoreCase)
+        && marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
+        && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
+        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
+        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHalfLine(decimal line)
     {

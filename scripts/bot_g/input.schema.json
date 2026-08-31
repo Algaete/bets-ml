@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://local.corners/bot-g/candidate-universe-1.0.0.schema.json",
+  "$id": "https://local.corners/bot-g/candidate-universe-1.1.0.schema.json",
   "title": "Bot G2026 immutable candidate universe row",
   "type": "object",
   "additionalProperties": true,
@@ -10,7 +10,11 @@
     "AwayTeam", "Bookmaker", "MarketType", "Selection", "Line", "OverOdds", "UnderOdds",
     "SelectedOdds", "LegacyPrediction", "LegacyModelVersion", "LegacyModelTrainedThroughUtc",
     "Prediction2026", "Model2026Version", "Model2026TrainedThroughUtc", "ContextPrediction",
-    "HistoricalMean", "HistoricalStd", "HistoryCount", "DataQualityScore", "ActualValue"
+    "HistoricalMean", "HistoricalStd", "HistoryCount", "DataQualityScore", "ActualValue",
+    "ConfigurationVersion", "FeatureSchemaVersion", "TrainingContractVersion",
+    "FootballIntelligenceEnabled", "FootballIntelligenceVersion",
+    "FootballIntelligenceProbabilityAdjustment",
+    "FootballIntelligenceHomeEvidenceStatus", "FootballIntelligenceAwayEvidenceStatus"
   ],
   "properties": {
     "CandidateId": {"type": ["string", "integer"]},
@@ -43,6 +47,22 @@
     "HistoryCount": {"type": "integer", "minimum": 0},
     "DataQualityScore": {"type": "number", "minimum": 0, "maximum": 1},
     "ActualValue": {"type": "number", "minimum": 0},
+    "ConfigurationVersion": {"const": "bot-g-goals-market-intelligence-1.1.0"},
+    "FeatureSchemaVersion": {"const": "bot-g-goals-features-1.0.0"},
+    "TrainingContractVersion": {"const": "bot-g-training-export-1.1.0"},
+    "FootballIntelligenceEnabled": {"const": true},
+    "FootballIntelligenceVersion": {"const": "football-intelligence-adjustment-1.0.0"},
+    "FootballIntelligenceProbabilityAdjustment": {
+      "type": "number", "minimum": -0.04, "maximum": 0.04
+    },
+    "FootballIntelligenceHomeEvidenceStatus": {
+      "enum": ["Missing", "NoActionableFacts", "LowConfidence", "Stale", "FutureCutoff", "Available"]
+    },
+    "FootballIntelligenceAwayEvidenceStatus": {
+      "enum": ["Missing", "NoActionableFacts", "LowConfidence", "Stale", "FutureCutoff", "Available"]
+    },
+    "FootballIntelligenceHomeCutoffUtc": {"type": ["string", "null"], "format": "date-time"},
+    "FootballIntelligenceAwayCutoffUtc": {"type": ["string", "null"], "format": "date-time"},
     "FPublished": {"type": "boolean"},
     "FProbability": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
     "FEdge": {"type": ["number", "null"]},

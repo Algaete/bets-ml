@@ -211,22 +211,21 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(input.LegacyModelVersion)
-            || !string.Equals(input.LegacyModelVersion, configuration.LegacyModelVersion, StringComparison.Ordinal))
+        var configuredLineage = configuration.ModelLineages.For(input.MarketType);
+        if (!configuredLineage.AllowsLegacy(input.LegacyModelVersion)
+            || !configuredLineage.AllowsModel2026(input.Model2026Version))
         {
-            error = $"Legacy base-model version mismatch: runtime '{input.LegacyModelVersion}', configured '{configuration.LegacyModelVersion}'.";
+            error = $"Runtime base-model lineage is not allowed for {input.MarketType}: "
+                + $"legacy='{input.LegacyModelVersion}', model2026='{input.Model2026Version}'.";
             return false;
         }
-        if (string.IsNullOrWhiteSpace(input.Model2026Version)
-            || !string.Equals(input.Model2026Version, configuration.Model2026Version, StringComparison.Ordinal))
+        var trainedLineage = _artifact.Training.MarketLineages.SingleOrDefault(
+            value => value.MarketType == input.MarketType);
+        if (trainedLineage is null
+            || !trainedLineage.LegacyModelLineages.Contains(input.LegacyModelVersion, StringComparer.Ordinal)
+            || !trainedLineage.Model2026Lineages.Contains(input.Model2026Version, StringComparer.Ordinal))
         {
-            error = $"Models 2026 version mismatch: runtime '{input.Model2026Version}', configured '{configuration.Model2026Version}'.";
-            return false;
-        }
-        if (!_artifact.Training.LegacyModelVersions.Contains(input.LegacyModelVersion, StringComparer.Ordinal)
-            || !_artifact.Training.Model2026Versions.Contains(input.Model2026Version, StringComparer.Ordinal))
-        {
-            error = "Runtime base-model lineage is absent from the artifact training lineage.";
+            error = $"Runtime base-model lineage for {input.MarketType} is absent from the artifact training lineage.";
             return false;
         }
 
@@ -271,6 +270,11 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
             error = "Runtime calibration identity does not match the artifact profiles.";
             return false;
         }
+        if (!SameFootballIntelligence(_artifact.FootballIntelligence, configuration.FootballIntelligence))
+        {
+            error = "Runtime Football Intelligence settings do not match the artifact contract.";
+            return false;
+        }
         return true;
     }
 
@@ -283,6 +287,12 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
                 StringComparison.Ordinal))
             throw new ArgumentException(
                 $"Bot G only accepts configurationVersion '{BotGConfiguration.DefaultConfigurationVersion}'.");
+        if (!string.Equals(
+                artifact.TrainingContractVersion,
+                BotGConfiguration.DefaultTrainingContractVersion,
+                StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Bot G only accepts trainingContractVersion '{BotGConfiguration.DefaultTrainingContractVersion}'.");
         if (!string.Equals(artifact.Family, BotGMarketQuote.MarketFamily, StringComparison.Ordinal))
             throw new ArgumentException("Bot G artifact family must be exactly GOALS.");
         if (!SameMarkets(artifact.SupportedMarkets, SupportedGoalMarkets))
@@ -295,8 +305,9 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
         if (artifact.Synthetic)
             throw new ArgumentException("Synthetic Bot G artifacts cannot be loaded by the production runtime.");
         if (artifact.Model is null || artifact.RuntimeSettings is null
-            || artifact.Uncertainty is null || artifact.Ood is null || artifact.Training is null)
-            throw new ArgumentException("The Bot G artifact requires model, runtime, uncertainty, OOD and training sections.");
+            || artifact.Uncertainty is null || artifact.Ood is null
+            || artifact.FootballIntelligence is null || artifact.Training is null)
+            throw new ArgumentException("The Bot G artifact requires model, runtime, uncertainty, OOD, Football Intelligence and training sections.");
         if (!double.IsFinite(artifact.RuntimeSettings.MaximumAbsoluteResidualLogit)
             || artifact.RuntimeSettings.MaximumAbsoluteResidualLogit <= 0d
             || !double.IsFinite(artifact.RuntimeSettings.MinimumSettlementEffectiveSampleSize)
@@ -331,6 +342,8 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
         var model2026Versions = NormalizeVersions(
             artifact.Training.Model2026Versions,
             "Models 2026");
+        var marketLineages = NormalizeMarketLineages(artifact.Training.MarketLineages);
+        ValidateFootballIntelligence(artifact.FootballIntelligence);
         if (!string.Equals(artifact.Model.Type, "LogitResidualLogistic", StringComparison.Ordinal))
             throw new ArgumentException("Bot G only accepts a LogitResidualLogistic model artifact.");
         if (!double.IsFinite(artifact.Model.Intercept))
@@ -403,7 +416,8 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
             Training = artifact.Training with
             {
                 LegacyModelVersions = legacyModelVersions,
-                Model2026Versions = model2026Versions
+                Model2026Versions = model2026Versions,
+                MarketLineages = marketLineages
             },
             Calibration = calibration,
             OodFeatureStats = oodFeatureStats,
@@ -420,6 +434,66 @@ public sealed class InMemoryBotGMetaModelService : IBotGMetaModelService, IBotGA
             throw new ArgumentException($"The Bot G artifact contains duplicate {label} training versions.");
         return normalized;
     }
+
+    private static BotGArtifactMarketModelLineage[] NormalizeMarketLineages(
+        IReadOnlyList<BotGArtifactMarketModelLineage>? values)
+    {
+        if (values is null || values.Count != SupportedGoalMarkets.Length
+            || values.Any(value => value is null)
+            || values.Select(value => value.MarketType).Distinct().Count() != SupportedGoalMarkets.Length
+            || !values.Select(value => value.MarketType).Order().SequenceEqual(SupportedGoalMarkets.Order()))
+        {
+            throw new ArgumentException("Bot G artifact training must declare one lineage for every GOALS market.");
+        }
+
+        return values.Select(value => value with
+        {
+            LegacyModelLineages = NormalizeVersions(
+                value.LegacyModelLineages,
+                $"{value.MarketType} legacy lineage"),
+            Model2026Lineages = NormalizeVersions(
+                value.Model2026Lineages,
+                $"{value.MarketType} Models 2026 lineage")
+        }).ToArray();
+    }
+
+    private static void ValidateFootballIntelligence(BotGArtifactFootballIntelligenceSettings value)
+    {
+        if (!value.Enabled || string.IsNullOrWhiteSpace(value.Version)
+            || !FiniteRange(value.Weight, 0d, 1d)
+            || !FiniteRange(value.MaximumProbabilityAdjustment, 0d, 0.25d)
+            || !FiniteRange(value.MinimumTeamConfidence, 0d, 1d)
+            || value.MaximumSnapshotAgeMinutes < 1
+            || value.MinimumActionableFacts < 1
+            || value.MinimumIndependentSources < 1
+            || !FiniteRange(value.AttackWeight, 0d, 1d)
+            || !FiniteRange(value.DefenceWeight, 0d, 1d)
+            || !FiniteRange(value.WidthWeight, 0d, 1d)
+            || !FiniteRange(value.SetPieceWeight, 0d, 1d)
+            || Math.Abs(value.AttackWeight + value.DefenceWeight + value.WidthWeight + value.SetPieceWeight - 1d) > 0.0001d)
+        {
+            throw new ArgumentException("The Bot G artifact Football Intelligence contract is invalid or disabled.");
+        }
+    }
+
+    private static bool SameFootballIntelligence(
+        BotGArtifactFootballIntelligenceSettings artifact,
+        BotGFootballIntelligenceConfiguration runtime) =>
+        artifact.Enabled == runtime.Enabled
+        && string.Equals(artifact.Version, runtime.Version, StringComparison.Ordinal)
+        && NearlyEqual(artifact.Weight, runtime.Weight)
+        && NearlyEqual(artifact.MaximumProbabilityAdjustment, runtime.MaximumProbabilityAdjustment)
+        && NearlyEqual(artifact.MinimumTeamConfidence, runtime.MinimumTeamConfidence)
+        && artifact.MaximumSnapshotAgeMinutes == runtime.MaximumSnapshotAgeMinutes
+        && artifact.MinimumActionableFacts == runtime.MinimumActionableFacts
+        && artifact.MinimumIndependentSources == runtime.MinimumIndependentSources
+        && NearlyEqual(artifact.AttackWeight, runtime.AttackWeight)
+        && NearlyEqual(artifact.DefenceWeight, runtime.DefenceWeight)
+        && NearlyEqual(artifact.WidthWeight, runtime.WidthWeight)
+        && NearlyEqual(artifact.SetPieceWeight, runtime.SetPieceWeight);
+
+    private static bool FiniteRange(double value, double minimum, double maximum) =>
+        double.IsFinite(value) && value >= minimum && value <= maximum;
 
     private static bool SameMarkets(
         IReadOnlyList<BotGMarketType>? left,

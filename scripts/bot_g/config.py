@@ -43,10 +43,44 @@ class RankingConfig:
 
 
 @dataclass(frozen=True)
+class FootballIntelligenceConfig:
+    enabled: bool = True
+    version: str = "football-intelligence-adjustment-1.0.0"
+    weight: float = 0.35
+    maximum_probability_adjustment: float = 0.04
+    minimum_team_confidence: float = 0.60
+    maximum_snapshot_age_minutes: int = 4_320
+    minimum_actionable_facts: int = 1
+    minimum_independent_sources: int = 1
+    attack_weight: float = 0.35
+    defence_weight: float = 0.25
+    width_weight: float = 0.20
+    set_piece_weight: float = 0.20
+
+
+@dataclass(frozen=True)
+class BaseModelLineageConfig:
+    legacy_model_versions: tuple[str, ...] = ("goals_v1",)
+    model2026_versions: tuple[str, ...] = ()
+
+
+def _default_market_lineages() -> dict[str, BaseModelLineageConfig]:
+    home = "targethomegoals-2026-08-09-trial-15"
+    away = "targetawaygoals-2026-08-09-trial-48"
+    total = "targettotalgoals-2026-08-09-trial-53"
+    return {
+        "TotalGoals": BaseModelLineageConfig(model2026_versions=(total,)),
+        "HomeTeamGoals": BaseModelLineageConfig(model2026_versions=(home, away)),
+        "AwayTeamGoals": BaseModelLineageConfig(model2026_versions=(away, home)),
+    }
+
+
+@dataclass(frozen=True)
 class BotGConfig:
-    configuration_version: str = "bot-g-goals-market-1.0.0"
+    configuration_version: str = "bot-g-goals-market-intelligence-1.1.0"
     feature_schema_version: str = "bot-g-goals-features-1.0.0"
-    model_version: str = "bot-g-market-meta-1.0.0"
+    training_contract_version: str = "bot-g-training-export-1.1.0"
+    model_version: str = "bot-g-market-meta-1.1.0"
     calibration_version: str = "bot-g-calibration-1.0.0"
     uncertainty_version: str = "bot-g-uncertainty-1.0.0"
     ood_version: str = "bot-g-ood-1.0.0"
@@ -78,9 +112,64 @@ class BotGConfig:
         "AwayTeamGoals",
     )
     supported_sides: tuple[str, ...] = ("Over", "Under")
+    market_lineages: dict[str, BaseModelLineageConfig] = field(
+        default_factory=_default_market_lineages
+    )
+    football_intelligence: FootballIntelligenceConfig = field(
+        default_factory=FootballIntelligenceConfig
+    )
     thresholds: Thresholds = field(default_factory=Thresholds)
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     ranking: RankingConfig = field(default_factory=RankingConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def validate(self) -> "BotGConfig":
+        if self.configuration_version != "bot-g-goals-market-intelligence-1.1.0":
+            raise ValueError("Bot G trainer only accepts the live v1.1 configuration identity.")
+        if self.feature_schema_version != "bot-g-goals-features-1.0.0":
+            raise ValueError("Bot G v1.1 requires the unchanged 1.0 feature-vector schema.")
+        if self.training_contract_version != "bot-g-training-export-1.1.0":
+            raise ValueError("Bot G v1.1 requires training export contract 1.1.0.")
+        if self.model_version != "bot-g-market-meta-1.1.0":
+            raise ValueError("Bot G v1.1 trainer must emit the 1.1 meta-model identity.")
+        if set(self.market_lineages) != set(self.supported_markets):
+            raise ValueError("Bot G must declare exactly one lineage policy per supported market.")
+        for market, lineage in self.market_lineages.items():
+            for label, values in (
+                ("legacy", lineage.legacy_model_versions),
+                ("Models 2026", lineage.model2026_versions),
+            ):
+                normalized = tuple(value.strip() for value in values if value and value.strip())
+                if not normalized or len(set(normalized)) != len(values):
+                    raise ValueError(f"{market} {label} lineage must be non-empty and unique.")
+        intelligence = self.football_intelligence
+        if not intelligence.enabled:
+            raise ValueError("Bot G live v1.1 requires Football Intelligence enabled.")
+        if not intelligence.version.strip():
+            raise ValueError("Football Intelligence version is required.")
+        bounded = (
+            ("weight", intelligence.weight, 0.0, 1.0),
+            ("maximum_probability_adjustment", intelligence.maximum_probability_adjustment, 0.0, 0.25),
+            ("minimum_team_confidence", intelligence.minimum_team_confidence, 0.0, 1.0),
+            ("attack_weight", intelligence.attack_weight, 0.0, 1.0),
+            ("defence_weight", intelligence.defence_weight, 0.0, 1.0),
+            ("width_weight", intelligence.width_weight, 0.0, 1.0),
+            ("set_piece_weight", intelligence.set_piece_weight, 0.0, 1.0),
+        )
+        for name, value, minimum, maximum in bounded:
+            if not minimum <= value <= maximum:
+                raise ValueError(f"Football Intelligence {name} is outside [{minimum}, {maximum}].")
+        if abs(
+            intelligence.attack_weight + intelligence.defence_weight
+            + intelligence.width_weight + intelligence.set_piece_weight - 1.0
+        ) > 1e-6:
+            raise ValueError("Football Intelligence market weights must add up to 1.0.")
+        if (
+            intelligence.maximum_snapshot_age_minutes < 1
+            or intelligence.minimum_actionable_facts < 1
+            or intelligence.minimum_independent_sources < 1
+        ):
+            raise ValueError("Football Intelligence evidence thresholds must be positive.")
+        return self

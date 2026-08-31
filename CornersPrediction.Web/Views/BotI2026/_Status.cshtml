@@ -1,0 +1,45 @@
+@model CornersPrediction.Web.Models.BotPicks.BotI2026IndexViewModel
+@{
+    var safe = Model.Status.SchemaReady
+        && Model.Status.ShadowOnly
+        && Model.Status.PublicationBlocked
+        && Model.Status.UnsafeRows == 0;
+}
+<section class="i-card">
+    <div class="i-card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div><h2 class="h5 mb-1">Estado y barreras</h2><p class="small text-secondary mb-0">Verificación independiente del aislamiento productivo.</p></div>
+        @if (Model.StatusAvailable)
+        {
+            <span class="i-status @(safe ? "i-status-safe" : "i-status-danger")">@(safe ? "Aislado correctamente" : "Revisar aislamiento")</span>
+        }
+    </div>
+    <div class="i-card-body">
+        @if (!Model.StatusAvailable)
+        {
+            <div class="alert alert-warning mb-0" role="alert">@Model.StatusErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-i-retry">Reintentar</button></div>
+        }
+        else
+        {
+            <div class="i-metrics mb-3">
+                <div class="i-metric"><span class="i-metric-label">Evaluaciones</span><span class="i-metric-value">@Model.Status.Evaluations.ToString("N0")</span></div>
+                <div class="i-metric"><span class="i-metric-label">Aprobadas shadow</span><span class="i-metric-value">@Model.Status.Approved.ToString("N0")</span></div>
+                <div class="i-metric"><span class="i-metric-label">Rechazadas</span><span class="i-metric-value">@Model.Status.Rejected.ToString("N0")</span></div>
+                <div class="i-metric"><span class="i-metric-label">Abstenciones</span><span class="i-metric-value">@Model.Status.Abstained.ToString("N0")</span></div>
+                <div class="i-metric"><span class="i-metric-label">Filas inseguras</span><span class="i-metric-value @(Model.Status.UnsafeRows == 0 ? "text-success" : "text-danger")">@Model.Status.UnsafeRows.ToString("N0")</span></div>
+            </div>
+            <div class="row g-3">
+                <div class="col-12 col-lg-8">
+                    <div class="i-guard small">
+                        <strong>@(Model.Status.PublicationBlocked ? "Publicación bloqueada." : "Advertencia: publicación no bloqueada.")</strong>
+                        I2026 sólo agrega auditorías append-only. Incluso una decisión <em>Approved</em> no tiene stake y no entra a Bot Picks.
+                    </div>
+                </div>
+                <div class="col-12 col-lg-4 small text-secondary">
+                    <div>Estado: <strong class="text-body">@Model.Status.State</strong></div>
+                    <div>Configuración: <strong class="text-body">@Model.Status.ConfigurationVersion</strong></div>
+                    <div>Última observación: <strong class="text-body">@(Model.Status.LastPredictionTimestampUtc?.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "—")</strong></div>
+                </div>
+            </div>
+        }
+    </div>
+</section>

@@ -46,7 +46,8 @@ public sealed class SqlAutomationRepository
             {
                 Path.Combine(_environment.ContentRootPath, "sql", "automated_corners_bot.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260819_bot_g2026.sql"),
-                Path.Combine(_environment.ContentRootPath, "sql", "20260827_bot_h_shadow_lab.sql")
+                Path.Combine(_environment.ContentRootPath, "sql", "20260827_bot_h_shadow_lab.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260831_bot_i_shadow_market_movement.sql")
             };
 
             foreach (var scriptPath in scriptPaths)
@@ -190,6 +191,14 @@ public sealed class SqlAutomationRepository
                 AND OBJECT_ID(N'dbo.sp_GetBotH2026ShadowScorecards', N'P') IS NOT NULL
                 AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.BotH2026ShadowEvaluations') AND name = N'IX_BotH2026ShadowEvaluations_SourceEvaluation')
                 AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.BotH2026ShadowEvaluations') AND name = N'IX_BotH2026ShadowEvaluations_ScorecardWindow')
+                """,
+            "20260831_bot_i_shadow_market_movement.sql" => """
+                OBJECT_ID(N'dbo.BotI2026ShadowEvaluations', N'U') IS NOT NULL
+                AND OBJECT_ID(N'dbo.sp_AppendBotI2026ShadowEvaluation', N'P') IS NOT NULL
+                AND OBJECT_ID(N'dbo.sp_GetBotI2026ShadowScorecards', N'P') IS NOT NULL
+                AND OBJECT_ID(N'dbo.trg_AutomatedCornerBetSelections_BlockI2026', N'TR') IS NOT NULL
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.CornerOddsSnapshots') AND name = N'IX_CornerOddsSnapshots_BotIWindow')
+                AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.BotI2026ShadowEvaluations') AND name = N'UX_BotI2026ShadowEvaluations_CurrentSnapshot')
                 """,
             _ => "1 = 0"
         };

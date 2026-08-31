@@ -60,6 +60,8 @@ def synthetic_candidate_frame(fixtures: int = 480, seed: int = 20260819) -> pd.D
         quote_id = f"synthetic-q-{fixture_index:05d}"
         fixture_id = f"synthetic-f-{fixture_index:05d}"
         f_side = "Over" if fair_over >= 0.5 else "Under"
+        over_intelligence_adjustment = float(0.012 * np.sin(fixture_index / 13.0))
+        intelligence_cutoff = prediction_time - pd.Timedelta(hours=2)
         for side, selected_odds in (("Over", over_odds), ("Under", under_odds)):
             records.append({
                 "CandidateId": f"{quote_id}-{side.lower()}",
@@ -92,6 +94,19 @@ def synthetic_candidate_frame(fixtures: int = 480, seed: int = 20260819) -> pd.D
                 "HistoryCount": 12 + fixture_index % 19,
                 "DataQualityScore": 0.78 + 0.20 * ((fixture_index % 11) / 10.0),
                 "ActualValue": actual,
+                "ConfigurationVersion": "bot-g-goals-market-intelligence-1.1.0",
+                "FeatureSchemaVersion": "bot-g-goals-features-1.0.0",
+                "TrainingContractVersion": "bot-g-training-export-1.1.0",
+                "FootballIntelligenceEnabled": True,
+                "FootballIntelligenceVersion": "football-intelligence-adjustment-1.0.0",
+                "FootballIntelligenceProbabilityAdjustment": (
+                    over_intelligence_adjustment if side == "Over"
+                    else -over_intelligence_adjustment
+                ),
+                "FootballIntelligenceHomeEvidenceStatus": "Available",
+                "FootballIntelligenceAwayEvidenceStatus": "Available",
+                "FootballIntelligenceHomeCutoffUtc": intelligence_cutoff.isoformat(),
+                "FootballIntelligenceAwayCutoffUtc": intelligence_cutoff.isoformat(),
                 "FPublished": side == f_side and fixture_index % 3 == 0,
                 "IsSynthetic": True,
             })

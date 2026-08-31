@@ -1,0 +1,159 @@
+@using System.Globalization
+@model CornersPrediction.Web.Models.BotPicks.BotH2026IndexViewModel
+@{
+    var filters = Model.ThresholdFilters;
+    var rowsBySplit = Model.ThresholdAnalysis
+        .GroupBy(row => row.Split, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+    var splitLabels = new (string Key, string Label, string Help)[]
+    {
+        ("Overall", "Todo el período", "Sirve como resumen, pero no reemplaza la prueba fuera de muestra."),
+        ("Development", "Desarrollo", "Primer tramo cronológico usado para explorar los umbrales."),
+        ("Holdout", "Fuera de muestra", "Último tramo cronológico: es la comprobación más importante.")
+    };
+    string Dec(decimal value, string format = "0.00") => value.ToString(format, CultureInfo.InvariantCulture);
+    string Pct(double? value) => value.HasValue ? value.Value.ToString("P2", CultureInfo.CurrentCulture) : "—";
+    string Num(double? value, string format = "N3") => value.HasValue ? value.Value.ToString(format, CultureInfo.CurrentCulture) : "—";
+    string Units(double? value) => value.HasValue ? $"{value.Value:+0.00;-0.00;0.00}u" : "—";
+}
+
+<section class="h-card h-what-if" data-threshold-state="@(Model.ThresholdAnalysisAvailable ? "ready" : "error")">
+    <div class="h-card-header">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+                <h2 class="h5 mb-1">Laboratorio de umbrales · ¿qué habría pasado?</h2>
+                <p class="small text-secondary mb-0">Repite las reglas sobre evidencia histórica guardada; no cambia decisiones, no liquida y no crea apuestas.</p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <span class="badge text-bg-secondary">SHADOW_ONLY</span>
+                <span class="badge text-bg-info">Sólo lectura</span>
+            </div>
+        </div>
+    </div>
+    <div class="h-card-body">
+        <form method="get" action="@Url.Action("ThresholdAnalysis", "BotH2026")" class="js-h-threshold-form">
+            <input type="hidden" name="AnalysisVersion" value="@filters.AnalysisVersion" />
+            @if (filters.AsOfUtc.HasValue)
+            {
+                <input type="hidden" name="AsOfUtc" value="@filters.AsOfUtc.Value.ToString("O", CultureInfo.InvariantCulture)" />
+            }
+            <div class="h-what-if-grid">
+                <div>
+                    <label class="form-label small" for="HWhatIfMarketType">Mercado</label>
+                    <select class="form-select form-select-sm" id="HWhatIfMarketType" name="MarketType">
+                        <option value="">Todos</option>
+                        <option value="TotalCorners" selected="@(filters.MarketType == "TotalCorners")">Córners totales</option>
+                        <option value="HomeTeamCorners" selected="@(filters.MarketType == "HomeTeamCorners")">Córners local</option>
+                        <option value="AwayTeamCorners" selected="@(filters.MarketType == "AwayTeamCorners")">Córners visita</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfSelection">Selección</label>
+                    <select class="form-select form-select-sm" id="HWhatIfSelection" name="Selection"><option value="">Ambas</option><option value="Over" selected="@(filters.Selection == "Over")">Over</option><option value="Under" selected="@(filters.Selection == "Under")">Under</option></select>
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfProbability">Probabilidad mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfProbability" name="MinimumFinalProbability" type="number" min="0" max="1" step="0.01" value="@Dec(filters.MinimumFinalProbability)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfEdge">Edge mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfEdge" name="MinimumFinalEdge" type="number" min="0" max="1" step="0.01" value="@Dec(filters.MinimumFinalEdge)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfEv">EV mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfEv" name="MinimumFinalExpectedValue" type="number" min="0" max="10" step="0.01" value="@Dec(filters.MinimumFinalExpectedValue)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfQuality">Calidad mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfQuality" name="MinimumDataQualityScore" type="number" min="0" max="1" step="0.05" value="@Dec(filters.MinimumDataQualityScore)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfContext">Contexto mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfContext" name="MinimumContextAgreementScore" type="number" min="0" max="1" step="0.05" value="@Dec(filters.MinimumContextAgreementScore)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfMinOdds">Cuota mín.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfMinOdds" name="MinimumOdds" type="number" min="1.01" max="10" step="0.01" value="@Dec(filters.MinimumOdds)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfMaxOdds">Cuota máx.</label>
+                    <input class="form-control form-control-sm" id="HWhatIfMaxOdds" name="MaximumOdds" type="number" min="1.01" max="10" step="0.01" value="@Dec(filters.MaximumOdds)" />
+                </div>
+                <div>
+                    <label class="form-label small" for="HWhatIfDevelopment">Parte desarrollo</label>
+                    <input class="form-control form-control-sm" id="HWhatIfDevelopment" name="DevelopmentFraction" type="number" min="0.50" max="0.90" step="0.05" value="@Dec(filters.DevelopmentFraction)" />
+                </div>
+                <div class="h-what-if-config">
+                    <label class="form-label small" for="HWhatIfConfiguration">Configuración exacta (opcional)</label>
+                    <input class="form-control form-control-sm" id="HWhatIfConfiguration" name="ConfigurationVersion" maxlength="80" value="@filters.ConfigurationVersion" placeholder="Todas las versiones" />
+                </div>
+                <div class="h-what-if-action">
+                    <button class="btn btn-sm btn-primary js-run-h-threshold" type="submit">Evaluar sin publicar</button>
+                </div>
+            </div>
+            <div class="small text-secondary mt-2">Los porcentajes se ingresan como decimal: 0.56 significa 56%. El corte desarrollo/holdout siempre respeta el orden cronológico.</div>
+            <div class="js-h-threshold-feedback mt-3" aria-live="polite"></div>
+        </form>
+
+        @if (!Model.ThresholdAnalysisAvailable)
+        {
+            <div class="alert alert-warning mt-3 mb-0" role="alert">@Model.ThresholdAnalysisErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-h-threshold">Reintentar</button></div>
+        }
+        else if (!Model.ThresholdAnalysisRequested)
+        {
+            <div class="h-shadow-note small mt-3">Ajusta los filtros y presiona <strong>Evaluar sin publicar</strong>. La tabla y los scorecards seguirán cargando por separado.</div>
+        }
+        else if (Model.ThresholdAnalysis.Count == 0)
+        {
+            <div class="h-shadow-note small mt-3">No hay evidencia liquidada que cumpla estos filtros y umbrales. Esto no significa que debamos relajar las reglas automáticamente.</div>
+        }
+        else
+        {
+            var unsafeRow = Model.ThresholdAnalysis.Any(row => !row.ReadOnly || row.Deployable || row.PromotionState != "SHADOW_ONLY");
+            @if (unsafeRow)
+            {
+                <div class="alert alert-danger mt-3 mb-0"><strong>Resultado rechazado por seguridad.</strong> El análisis dejó de identificarse como sólo lectura/SHADOW_ONLY.</div>
+            }
+            else
+            {
+                <div class="h-split-grid mt-3">
+                    @foreach (var split in splitLabels)
+                    {
+                        rowsBySplit.TryGetValue(split.Key, out var row);
+                        <article class="h-split-card">
+                            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                <div><span class="h-metric-label">@split.Key</span><h3 class="h6 mb-0">@split.Label</h3></div>
+                                <span class="badge text-bg-secondary">SHADOW</span>
+                            </div>
+                            @if (row is null)
+                            {
+                                <p class="small text-secondary mb-0">Sin fila calculada para este tramo.</p>
+                            }
+                            else
+                            {
+                                <div class="h-split-metrics">
+                                    <div><span>Picks</span><strong>@row.SelectedPicks.ToString("N0")</strong></div>
+                                    <div><span>Partidos</span><strong>@row.Fixtures.ToString("N0")</strong></div>
+                                    <div><span>Yield</span><strong>@Pct(row.Yield)</strong></div>
+                                    <div><span>P/L virtual</span><strong>@Units(row.ProfitLoss)</strong></div>
+                                    <div><span>Brecha calibración</span><strong>@Pct(row.CalibrationGap)</strong></div>
+                                    <div><span>Δ Brier</span><strong>@Num(row.DeltaBrier)</strong></div>
+                                    <div><span>Brier H / mercado</span><strong>@Num(row.Brier) / @Num(row.MarketBrier)</strong></div>
+                                    <div><span>Cuota media</span><strong>@Num(row.AverageOdds, "N2")</strong></div>
+                                </div>
+                                <div class="small text-secondary mt-2">@row.Won W · @row.HalfWon HW · @row.Pushes P · @row.HalfLost HL · @row.Lost L</div>
+                            }
+                            <p class="small text-secondary mt-2 mb-0">@split.Help</p>
+                        </article>
+                    }
+                </div>
+                var overall = rowsBySplit.GetValueOrDefault("Overall");
+                <div class="small text-secondary mt-3">
+                    Versión: <strong class="text-body">@(overall?.AnalysisVersion ?? filters.AnalysisVersion)</strong>
+                    · unidad: <strong class="text-body">@(overall?.UnitOfAnalysis ?? "FIRST_ELIGIBLE_PER_FIXTURE")</strong>
+                    · corte temporal: <strong class="text-body">@(overall?.SplitBoundaryUtc?.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "—")</strong>
+                </div>
+            }
+        }
+    </div>
+</section>

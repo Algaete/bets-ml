@@ -3,9 +3,7 @@ from __future__ import annotations
 import importlib.metadata
 import hashlib
 import json
-import os
 import platform
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -44,6 +42,7 @@ from .modeling import (
 )
 from .ood import artifact as ood_artifact
 from .ood import fit_ood_profiles, ood_score
+from .preflight import build_preflight_report, require_training_ready
 from .settlement_profiles import SettlementProfile, fit_settlement_profiles
 from .splits import assert_oof_fixture_integrity, expanding_folds, final_holdout
 
@@ -243,13 +242,17 @@ def _predict_deployment(
     effective_n = np.maximum(
         calibration_effective_sample_size(rows, calibration_profiles), 1.0
     )
-    sampling_error = np.sqrt(central_calibrated * (1.0 - central_calibrated) / effective_n)
+    probability_before_intelligence = central_calibrated
+    intelligence_adjustment = rows[
+        "FootballIntelligenceProbabilityAdjustment"
+    ].to_numpy(dtype=float)
+    final_probability = np.clip(probability_before_intelligence + intelligence_adjustment, 0.0, 1.0)
+    sampling_error = np.sqrt(final_probability * (1.0 - final_probability) / effective_n)
     uncertainty = np.clip(
         np.sqrt(ensemble_dispersion ** 2 + sampling_error ** 2),
         config.minimum_uncertainty,
         config.maximum_uncertainty,
     )
-    final_probability = central_calibrated
     lower = np.clip(
         final_probability - config.uncertainty_confidence_z * uncertainty,
         0.0,
@@ -292,6 +295,8 @@ def _predict_deployment(
     )
     result["CentralRawProbability"] = central_raw
     result["CentralCalibratedProbability"] = central_calibrated
+    result["ProbabilityBeforeFootballIntelligence"] = probability_before_intelligence
+    result["FootballIntelligenceProbabilityAdjustment"] = intelligence_adjustment
     result["EnsembleDispersion"] = ensemble_dispersion
     return result
 
@@ -363,6 +368,7 @@ def _artifact(
         "modelVersion": config.model_version,
         "featureSchemaVersion": config.feature_schema_version,
         "configurationVersion": config.configuration_version,
+        "trainingContractVersion": config.training_contract_version,
         "trainedThroughUtc": trained_through.isoformat(),
         "family": "GOALS",
         "supportedMarkets": list(config.supported_markets),
@@ -374,6 +380,26 @@ def _artifact(
                 config.thresholds.minimum_settlement_effective_sample_size
             ),
             "settlementEvidenceLagHours": int(config.outcome_lag_hours),
+        },
+        "footballIntelligence": {
+            "enabled": config.football_intelligence.enabled,
+            "version": config.football_intelligence.version,
+            "weight": config.football_intelligence.weight,
+            "maximumProbabilityAdjustment": (
+                config.football_intelligence.maximum_probability_adjustment
+            ),
+            "minimumTeamConfidence": config.football_intelligence.minimum_team_confidence,
+            "maximumSnapshotAgeMinutes": (
+                config.football_intelligence.maximum_snapshot_age_minutes
+            ),
+            "minimumActionableFacts": config.football_intelligence.minimum_actionable_facts,
+            "minimumIndependentSources": (
+                config.football_intelligence.minimum_independent_sources
+            ),
+            "attackWeight": config.football_intelligence.attack_weight,
+            "defenceWeight": config.football_intelligence.defence_weight,
+            "widthWeight": config.football_intelligence.width_weight,
+            "setPieceWeight": config.football_intelligence.set_piece_weight,
         },
         "model": model_artifact,
         "ensemble": members,
@@ -411,6 +437,14 @@ def _artifact(
             "outcomeKnowledgeEndUtc": trained_through.isoformat(),
             "legacyModelVersions": sorted(trained_rows["LegacyModelVersion"].unique().tolist()),
             "model2026Versions": sorted(trained_rows["Model2026Version"].unique().tolist()),
+            "marketLineages": [
+                {
+                    "marketType": str(market),
+                    "legacyModelLineages": sorted(group["LegacyModelVersion"].unique().tolist()),
+                    "model2026Lineages": sorted(group["Model2026Version"].unique().tolist()),
+                }
+                for market, group in trained_rows.groupby("MarketType", sort=True)
+            ],
             "allCandidateSidesRequired": True,
             "quarterLinesRequireOrdinalEvidence": True,
         },
@@ -430,6 +464,8 @@ def train_bot_g(
     synthetic: bool = False,
     repository_root: Path | None = None,
 ) -> TrainingResult:
+    config.validate()
+    require_training_ready(build_preflight_report(dataset, config))
     synthetic = bool(synthetic or dataset.metadata.get("declaredSynthetic", False))
     rows = engineer_features(dataset.rows)
     split = final_holdout(rows, config.final_test_fraction, final_test_start)
@@ -717,10 +753,10 @@ def write_training_outputs(
     activate: bool,
 ) -> dict[str, str]:
     if activate:
-        if result.synthetic:
-            raise ValueError("Synthetic Bot G artifacts can never be activated.")
-        if not result.report.get("activationAllowed"):
-            raise ValueError("Activation requires a real evaluated final test and a PASS promotion scorecard.")
+        raise ValueError(
+            "Automatic Bot G activation is disabled. Review the immutable report, run the documented "
+            "promotion checklist, and promote the versioned artifact manually."
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = output_dir / f"{config.model_version}.json"
     report_path = output_dir / f"{config.model_version}.report.json"
@@ -754,10 +790,6 @@ def write_training_outputs(
         result.final_rows.to_csv(final_path, index=False)
     if not contract_path.exists():
         write_contract(contract_path)
-    if activate:
-        temporary = output_dir / ".active.json.tmp"
-        shutil.copyfile(artifact_path, temporary)
-        os.replace(temporary, output_dir / "active.json")
     return {
         "artifact": str(artifact_path),
         "report": str(report_path),

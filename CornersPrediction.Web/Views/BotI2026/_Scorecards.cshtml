@@ -1,0 +1,90 @@
+@model CornersPrediction.Web.Models.BotPicks.BotI2026IndexViewModel
+@{
+    var overallRows = Model.Scorecards
+        .Where(row => row.Dimension is "All" or "Overall")
+        .OrderBy(row => row.WindowDays)
+        .ToList();
+    string Pct(double? value) => value.HasValue ? value.Value.ToString("P2") : "—";
+    string Num(double? value, string format = "N3") => value.HasValue ? value.Value.ToString(format) : "—";
+    string Units(double? value) => value.HasValue ? $"{value.Value:+0.00;-0.00;0.00}u" : "—";
+    string Sort(double? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+}
+<section class="i-card">
+    <div class="i-card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div><h2 class="h5 mb-1">Scorecards outcome-aware 7 / 30 / 90</h2><p class="small text-secondary mb-0">Sólo resultados oficiales enlazados de forma segura; los pendientes no inventan rendimiento.</p></div>
+        <span class="badge text-bg-secondary">SHADOW_ONLY</span>
+    </div>
+    <div class="i-card-body">
+        @if (!Model.ScorecardsAvailable)
+        {
+            <div class="alert alert-warning mb-0" role="alert">@Model.ScorecardsErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-i-retry">Reintentar</button></div>
+        }
+        else if (Model.Scorecards.Count == 0)
+        {
+            <div class="i-guard small">Todavía no hay evidencia suficiente para scorecards. I2026 continúa recolectando sólo en shadow.</div>
+        }
+        else
+        {
+            <div class="row g-3 mb-3">
+                @foreach (var row in overallRows)
+                {
+                    <div class="col-12 col-lg-4">
+                        <div class="i-metric i-window h-100">
+                            <div class="d-flex justify-content-between align-items-center gap-2"><strong>@row.WindowDays días</strong><span class="badge text-bg-secondary">@row.PromotionState</span></div>
+                            <div class="row g-2 mt-1 small">
+                                <div class="col-6"><span class="text-secondary d-block">Partidos</span><strong>@row.FixturesEvaluated.ToString("N0")</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Resueltos</span><strong>@row.Settled.ToString("N0")</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Yield virtual</span><strong>@Pct(row.Yield)</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">P/L virtual</span><strong>@Units(row.ProfitLoss)</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Aprobación</span><strong>@Pct(row.ApprovalRate)</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Cruce books</span><strong>@Pct(row.CrossBookCoverageRate)</strong></div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="i-table-scroll" tabindex="0" aria-label="Scorecards desplazables I2026">
+                <table class="table table-sm table-hover align-middle i-table" data-sortable-table>
+                    <thead><tr>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="0">Ventana</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="1">Dimensión</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="2">Segmento</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="3">Evaluaciones</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="4">Partidos</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="5">Aprobadas</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="6">Resueltas</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="7">Yield virtual</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="8">P/L virtual</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="9">Score señal</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="10">Mov. prob.</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="11">Mov. línea</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="12">Edad cuota</button></th>
+                        <th>Estado</th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var row in Model.Scorecards.OrderBy(row => row.WindowDays).ThenBy(row => row.Dimension).ThenBy(row => row.Segment))
+                    {
+                        <tr>
+                            <td data-sort-value="@row.WindowDays">@row.WindowDays d</td>
+                            <td data-sort-value="@row.Dimension">@row.Dimension</td>
+                            <td data-sort-value="@row.Segment">@row.Segment</td>
+                            <td data-sort-value="@row.Evaluations">@row.Evaluations.ToString("N0")</td>
+                            <td data-sort-value="@row.FixturesEvaluated">@row.FixturesEvaluated.ToString("N0")</td>
+                            <td data-sort-value="@row.Approved">@row.Approved.ToString("N0")</td>
+                            <td data-sort-value="@row.Settled">@row.Settled.ToString("N0")</td>
+                            <td data-sort-value="@Sort(row.Yield)">@Pct(row.Yield)</td>
+                            <td data-sort-value="@Sort(row.ProfitLoss)">@Units(row.ProfitLoss)</td>
+                            <td data-sort-value="@Sort(row.AverageSignalScore)">@Pct(row.AverageSignalScore)</td>
+                            <td data-sort-value="@Sort(row.AverageAbsoluteProbabilityMovement)">@Pct(row.AverageAbsoluteProbabilityMovement)</td>
+                            <td data-sort-value="@Sort(row.AverageAbsoluteLineMovement)">@Num(row.AverageAbsoluteLineMovement)</td>
+                            <td data-sort-value="@Sort(row.AverageOddsAgeMinutes)">@Num(row.AverageOddsAgeMinutes, "N1") min</td>
+                            <td><span class="badge text-bg-secondary">@row.PromotionState</span><div class="small text-secondary">@(row.Deployable ? "revisar contrato" : "no desplegable")</div></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <p class="small text-secondary mt-2 mb-0">Tipo: <code>@Model.Scorecards.First().ScorecardType</code>. Todas las cifras económicas son virtuales.</p>
+        }
+    </div>
+</section>

@@ -18,6 +18,13 @@ values, duplicate candidates, unsupported markets/lines, future features/odds, b
 at or after prediction time, predictions at or after kickoff, and outcomes available at or before
 prediction time.
 
+The live identity is configuration `bot-g-goals-market-intelligence-1.1.0`, unchanged numeric
+feature schema `bot-g-goals-features-1.0.0`, training/export contract
+`bot-g-training-export-1.1.0`, and meta-model `bot-g-market-meta-1.1.0`. Every real row must carry
+the exact per-market base-model lineage and reproducible Football Intelligence version,
+selected-side adjustment, evidence statuses and immutable cutoffs. v1.0 rows are rejected rather
+than relabeled. Missing/unusable intelligence produces an abstention, never a favorable default.
+
 `FixtureId` is atomic in final holdout, expanding-window folds and bootstraps. Training rows must
 have `OutcomeAvailableUtc` strictly before each validation knowledge cutoff after embargo and
 outcome lag. The final test is excluded unless an explicit flag is supplied.
@@ -53,7 +60,24 @@ python -m pip install -r scripts/bot_g/requirements-optional.lock.txt
 python scripts/train_bot_g.py --self-test
 ```
 
-Train without touching the final test:
+Export and preflight without touching the final test:
+
+```bash
+BOT_G_SQL_CONNECTION_STRING='...' dotnet run \
+  --project tools/BotGTrainingExport/BotGTrainingExport.csproj -- \
+  --output /secure/path/goals-candidates.jsonl \
+  --as-of 2026-08-31T23:59:59Z
+
+python scripts/train_bot_g.py \
+  --input /secure/path/goals-candidates.jsonl \
+  --preflight-only
+```
+
+The standalone exporter calls the existing stored procedure with resolved outcomes only, writes
+an immutable JSONL plus SHA-256 manifest, accepts its connection only via environment variable,
+and never logs it. Preflight performs no training and writes no artifact.
+
+Train without touching the final test after preflight passes:
 
 ```bash
 python scripts/train_bot_g.py \
@@ -78,8 +102,9 @@ python scripts/backtest_bot_g.py \
   --output-dir models/bot-g
 ```
 
-`--activate` is intentionally separate. It can create `active.json` only for non-synthetic input,
-after explicit final-test evaluation and a PASS on every promotion gate. Backtests never activate.
+Automatic activation is intentionally disabled: `--activate` fails and never creates
+`active.json`. After an independent final-test review, an approved versioned artifact can only be
+promoted by a separate, human-reviewed deployment step. Backtests never activate.
 Versioned artifacts, reports, OOF exports and final-test exports are immutable. Re-running a
 version must fail; use new `model_version` and `configuration_version` values instead of
 overwriting experiment evidence.
@@ -102,7 +127,9 @@ an explicitly evaluated final block and at least two chronological OOS walk-forw
 
 The runtime JSON emits these canonical top-level fields:
 
-- `modelVersion`, `featureSchemaVersion`, `trainedThroughUtc`
+- `modelVersion`, `configurationVersion`, `featureSchemaVersion`,
+  `trainingContractVersion`, `trainedThroughUtc`
+- exact `training.marketLineages[]` and the full `footballIntelligence` runtime contract
 - `model` with `type=LogitResidualLogistic`, intercept and standardized coefficients
 - `ensemble[]` with a stable `name`, intercept and the same feature contract
 - `calibration[]`, `oodFeatureStats[]`, and line-specific `settlementProfiles[]`

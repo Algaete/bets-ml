@@ -44,10 +44,34 @@ public sealed record BotGArtifactOodSettings
     public double SevereRobustZScore { get; init; }
 }
 
+public sealed record BotGArtifactFootballIntelligenceSettings
+{
+    public bool Enabled { get; init; }
+    public required string Version { get; init; }
+    public double Weight { get; init; }
+    public double MaximumProbabilityAdjustment { get; init; }
+    public double MinimumTeamConfidence { get; init; }
+    public int MaximumSnapshotAgeMinutes { get; init; }
+    public int MinimumActionableFacts { get; init; }
+    public int MinimumIndependentSources { get; init; }
+    public double AttackWeight { get; init; }
+    public double DefenceWeight { get; init; }
+    public double WidthWeight { get; init; }
+    public double SetPieceWeight { get; init; }
+}
+
+public sealed record BotGArtifactMarketModelLineage
+{
+    public BotGMarketType MarketType { get; init; }
+    public IReadOnlyList<string> LegacyModelLineages { get; init; } = [];
+    public IReadOnlyList<string> Model2026Lineages { get; init; } = [];
+}
+
 public sealed record BotGArtifactTrainingMetadata
 {
     public IReadOnlyList<string> LegacyModelVersions { get; init; } = [];
     public IReadOnlyList<string> Model2026Versions { get; init; } = [];
+    public IReadOnlyList<BotGArtifactMarketModelLineage> MarketLineages { get; init; } = [];
 }
 
 public sealed record BotGEnsembleMember
@@ -76,6 +100,7 @@ public sealed record BotGSettlementDistributionProfile
 public sealed record BotGModelArtifact
 {
     public required string ConfigurationVersion { get; init; }
+    public required string TrainingContractVersion { get; init; }
     public required string Family { get; init; }
     public IReadOnlyList<BotGMarketType> SupportedMarkets { get; init; } = [];
     public required string ModelVersion { get; init; }
@@ -86,6 +111,7 @@ public sealed record BotGModelArtifact
     public required BotGArtifactRuntimeSettings RuntimeSettings { get; init; }
     public required BotGArtifactUncertaintySettings Uncertainty { get; init; }
     public required BotGArtifactOodSettings Ood { get; init; }
+    public required BotGArtifactFootballIntelligenceSettings FootballIntelligence { get; init; }
     public required BotGArtifactTrainingMetadata Training { get; init; }
     public required BotGLogitResidualLogisticModel Model { get; init; }
     public IReadOnlyList<BotGEnsembleMember> Ensemble { get; init; } = [];

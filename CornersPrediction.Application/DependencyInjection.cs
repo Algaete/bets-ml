@@ -8,6 +8,7 @@ using CornersPrediction.Application.AutomatedCorners;
 using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotC;
 using CornersPrediction.Application.Automation.BotG;
+using CornersPrediction.Application.Automation.BotI;
 using CornersPrediction.Application.FootballIntelligence;
 using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPrediction.Domain.RobustPickEvaluation;
@@ -62,6 +63,9 @@ public static class DependencyInjection
         services.AddSingleton<IBotGExpectedValueService, BotGExpectedValueService>();
         services.AddSingleton<IBotGAbstentionService, BotGAbstentionService>();
         services.AddSingleton<IBotGSelector, BotGSelector>();
+        services.AddSingleton(new BotIMarketMovementConfiguration());
+        services.AddSingleton<IBotIMarketMovementEvaluator, BotIMarketMovementEvaluator>();
+        services.AddScoped<IBotIShadowCollectorService, BotIShadowCollectorService>();
         services.AddScoped<ICreatePlatformUserUseCase, CreatePlatformUserUseCase>();
         services.AddScoped<IUpdatePlatformUserUseCase, UpdatePlatformUserUseCase>();
         services.AddScoped<IDeletePlatformUserUseCase, DeletePlatformUserUseCase>();

@@ -20,13 +20,17 @@ Identidad estable:
 - BotKey: `G2026`
 - Nombre: `Bot G Goals Specialist`
 - Estrategia: `GOALS_MARKET_ANCHORED`
-- Configuración: `bot-g-goals-market-1.0.0`
+- Configuración runtime/trainer: `bot-g-goals-market-intelligence-1.1.0`
 - Feature schema: `bot-g-goals-features-1.0.0`
+- Training/export contract: `bot-g-training-export-1.1.0`
+- Meta-model: `bot-g-market-meta-1.1.0`
 - Stake: `1u`
 - Estado inicial: `Enabled=true`, `PublishEnabled=false`, `ShadowMode=true`
 
-G no utiliza Football Intelligence, Team Strength ni los motores de decisión C–F.
-Los bots existentes conservan sus reglas y su historial.
+G aplica Football Intelligence reproducible después de calibración y antes de
+uncertainty/EV. Si no existe al menos un snapshot de equipo utilizable, se abstiene
+con `FootballIntelligenceUnavailable`; ausencia de evidencia nunca se interpreta
+como ajuste neutral favorable. G no utiliza Team Strength ni los motores C–F.
 
 ## Arquitectura
 
@@ -39,7 +43,8 @@ goals_v1 + modelos 2026 temporalmente válidos
         |
         v
 BotGFeatureBuilder -> no-vig estricto -> residual-logit artifact
-        -> calibración jerárquica -> uncertainty/OOD
+        -> calibración jerárquica -> Football Intelligence as-of
+        -> uncertainty/OOD
         -> distribución Win/HalfWin/Push/HalfLoss/Loss
         -> EV nominal/conservador -> abstention -> ranking
         |
@@ -70,34 +75,28 @@ monotonicidad y el ranking aunque `BatchSize` sea menor que el número de quotes
 
 ## Fuentes y linaje auditado
 
-La auditoría encontró tres linajes distintos:
+La auditoría encontró linajes distintos que no deben fusionarse ni relabelarse:
 
 - El legacy activo `goals_v1` está en `newModelsML/goals_v1/` dentro del
   repositorio.
   Sus binarios funcionan, pero no incluyen dataset hash, rango temporal ni un script
   capaz de reproducir exactamente esos archivos. El cutoff operativo conservador
   registrado es `2026-06-11T16:36:16Z`; no debe reinterpretarse como linaje probado.
-- Los cuatro artefactos `goals_deep_tuned_v2` del encargo existen en el workspace
-  externo de experimentos `MachineLearningExperiments/artifacts_football_v2_tuned/goals/`
-  y no forman parte de este repositorio.
-  Fueron entrenados desde `Resultadosparametros.csv`; el pipeline produjo OOF en
-  memoria pero no lo persistió. Los artefactos finales no sustituyen predicciones
-  OOF históricas.
-- La API usa actualmente otro linaje 2026: bundles CatBoost firmados bajo
-  `models/football`, con manifests/checksums y full refit hasta `2026-08-07`. Son
-  válidos para inferencia online sólo después de su cutoff, no para simular fechas
-  anteriores.
+- La API usa tres bundles 2026 reales y distintos: TotalGoals
+  `targettotalgoals-2026-08-09-trial-53`, HomeTeamGoals
+  `targethomegoals-2026-08-09-trial-15` y AwayTeamGoals
+  `targetawaygoals-2026-08-09-trial-48`. En cancha neutral Home/Away pueden incluir
+  la firma ordenada de ambos componentes porque el runtime promedia inferencia
+  normal e invertida. El snapshot guarda la firma exacta efectivamente usada.
 
 El runtime registra ambos nombres/versiones, cutoffs, quote/snapshot, timestamps,
 configuración y feature snapshot. Un artifact G ausente o inválido produce
 `ModelUnavailable`: no existe fallback basado en reglas.
 
-El loader además compara de forma fail-closed configuración, schema, mercados,
-versiones exactas de ambos modelos base, cutoffs, calibración, uncertainty, OOD y
-settings de settlement. La configuración v1 declara `goals_deep_tuned_v2`, mientras
-que el predictor 2026 hoy desplegado expone los bundles firmados distintos descritos
-arriba; no se pueden relabelar. Un futuro artifact debe entrenarse con el linaje que
-realmente figure en el export y la configuración debe versionarse para coincidir.
+El loader compara de forma fail-closed configuración, training contract, schema,
+mercado, firma exacta de ambos modelos base, cutoffs, Football Intelligence,
+calibración, uncertainty, OOD y settlement. Snapshots v1.0 quedan como auditoría y
+son rechazados por el export/trainer v1.1; no se reescribe su versión.
 
 ## Datos de entrenamiento
 
@@ -111,7 +110,8 @@ exactamente dos filas coherentes (Over y Under) y, como mínimo:
 - versión y `TrainedThroughUtc` de cada modelo base;
 - features/contexto materializados as-of;
 - `OutcomeAvailableUtc`, valor real del mercado y estado de settlement;
-- versión del feature schema y de configuración.
+- versión del feature schema, configuración y training contract;
+- versión, ajuste seleccionado, estados y cutoffs de Football Intelligence.
 
 El loader rechaza fixtures repartidos entre folds, quotes unilaterales, timestamps
 futuros, modelos entrenados hasta o después de la predicción, resultados conocidos
@@ -132,8 +132,8 @@ No existe un dataset histórico suficiente para entrenar honestamente G:
 - faltan outcome-availability timestamps fiables para reconstruir algunas épocas.
 
 Por eso esta entrega no crea `models/bot-g/active.json`, no declara métricas reales
-y mantiene G en abstención. El collector shadow creado ahora sí genera el universo
-prospectivo correcto para entrenamiento futuro.
+y mantiene publicación cerrada. Sólo snapshots generados con el contrato v1.1 son
+exportables; los anteriores no se completan por inferencia.
 
 ## Features
 
@@ -173,8 +173,9 @@ El pipeline de `scripts/bot_g/` implementa:
   si la predicción F no existe, sus métricas permanecen `NULL`.
 
 Los artefactos registran dataset SHA-256, Git state, seed, paquetes, rangos
-temporales, filas/fixtures, features, parámetros y límites de evidencia. Un dataset
-sintético queda marcado `deployable=false` y nunca puede escribir `active.json`.
+temporales, filas/fixtures, firma por mercado, contrato FI, features, parámetros y
+límites de evidencia. Un dataset sintético queda `deployable=false`. La creación
+automática de `active.json` está deshabilitada incluso para datos reales.
 
 ## Calibración, uncertainty y OOD
 
@@ -237,6 +238,8 @@ primero `automated_corners_bot.sql` y después esta migración. Los cambios:
   resultado y unicidad filtrada para fixture/publicación G;
 - crean view y procedimientos de candidatos, detalle, scorecard, dataset temporal,
   settlement y auditoría;
+- el export de entrenamiento exige contrato v1.1, los tres linajes reales y campos
+  FI as-of; no usa `COALESCE` para inventar esas identidades;
 - separan `FixtureIdentity` (hash canónico auditable, independiente del proveedor
   y estable cuando aparece un ID oficial) de `ApiFootballFixtureId` (sólo un ID
   oficial verificado, usado para settlement);
@@ -283,6 +286,23 @@ python -m pip install -r scripts/bot_g/requirements-optional.lock.txt
 
 ### Entrenar sin tocar el test final
 
+Primero exportar con una credencial SQL de sólo lectura (la conexión nunca se pasa
+por argumento ni se imprime) y ejecutar el preflight sin entrenar:
+
+```bash
+BOT_G_SQL_CONNECTION_STRING='...' dotnet run \
+  --project tools/BotGTrainingExport/BotGTrainingExport.csproj -- \
+  --output /secure/path/goals-candidates.jsonl \
+  --as-of 2026-08-31T23:59:59Z
+
+python scripts/train_bot_g.py \
+  --input /secure/path/goals-candidates.jsonl \
+  --preflight-only
+```
+
+El export es JSONL inmutable y agrega un manifest SHA-256. Un preflight `PASS`
+autoriza sólo a entrenar; no habilita publicación ni promoción.
+
 ```bash
 python scripts/train_bot_g.py \
   --input /absolute/path/goals-candidates.jsonl \
@@ -298,8 +318,8 @@ python scripts/train_bot_g.py \
   --evaluate-final-test
 ```
 
-`--activate` está separado y sólo puede escribir `active.json` con input real,
-evaluación final explícita y todos los gates de promoción aprobados.
+`--activate` falla intencionalmente: v1.1 no escribe `active.json` de forma
+automática. La promoción requiere revisión humana y despliegue manual separado.
 Los outputs versionados (`artifact`, report, OOF y final-test) son inmutables: un
 reentrenamiento exige incrementar `model_version` y `configuration_version`; el
 pipeline se niega a sobrescribirlos.

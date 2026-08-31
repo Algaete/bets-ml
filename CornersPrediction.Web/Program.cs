@@ -190,6 +190,15 @@ builder.Services.AddHttpClient<BotH2026ApiClient>((services, client) =>
 })
 .AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
 
+builder.Services.AddHttpClient<BotI2026ApiClient>((services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    // Collection and the three independent dashboard blocks own stricter timeouts.
+    client.Timeout = TimeSpan.FromMinutes(3);
+})
+.AddHttpMessageHandler<InternalApiKeyHeaderHandler>();
+
 builder.Services.AddHttpClient<RecommendationAutomationApiClient>((services, client) =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;

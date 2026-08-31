@@ -37,6 +37,7 @@ public enum BotGDecisionReason
     ModelSchemaMismatch,
     ModelTemporalLeakage,
     FeatureTemporalLeakage,
+    FootballIntelligenceUnavailable,
     HighUncertainty,
     OutOfDistribution,
     LowDataQuality,

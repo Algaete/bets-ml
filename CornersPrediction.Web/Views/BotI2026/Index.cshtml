@@ -1,0 +1,186 @@
+@model CornersPrediction.Web.Models.BotPicks.BotI2026IndexViewModel
+@{
+    ViewData["Title"] = "Bot I2026 · Market Movement Shadow";
+}
+
+<style>
+    .i-shell { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 100%; min-width: 0; gap: 1rem; }
+    .i-shell > *, .i-async-host { width: 100%; max-width: 100%; min-width: 0; }
+    .i-hero { border: 1px solid var(--bs-border-color); border-radius: 1rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(111, 66, 193, .15), rgba(13, 202, 240, .08)); }
+    .i-card { border: 1px solid var(--bs-border-color); border-radius: 1rem; background: var(--bs-body-bg); overflow: hidden; max-width: 100%; min-width: 0; }
+    .i-card-header { padding: 1rem 1.1rem; border-bottom: 1px solid var(--bs-border-color); }
+    .i-card-body { padding: 1rem 1.1rem; max-width: 100%; min-width: 0; }
+    .i-status { display: inline-flex; align-items: center; gap: .45rem; border-radius: 999px; padding: .32rem .72rem; font-size: .82rem; font-weight: 750; }
+    .i-status::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 .2rem color-mix(in srgb, currentColor 18%, transparent); }
+    .i-status-safe { color: var(--bs-info); border: 1px solid rgba(13, 202, 240, .55); background: rgba(13, 202, 240, .1); }
+    .i-status-danger { color: var(--bs-danger); border: 1px solid rgba(220, 53, 69, .55); background: rgba(220, 53, 69, .1); }
+    .i-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .7rem; }
+    .i-metric { min-width: 0; border: 1px solid var(--bs-border-color); border-radius: .8rem; padding: .85rem; background: var(--bs-body-bg); }
+    .i-metric-label { display: block; color: var(--bs-secondary-color); font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; }
+    .i-metric-value { display: block; margin-top: .18rem; overflow-wrap: anywhere; font-size: 1.25rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+    .i-guard { border-left: .28rem solid var(--bs-info); border-radius: .25rem .8rem .8rem .25rem; padding: .85rem 1rem; background: rgba(13, 202, 240, .08); }
+    .i-collect-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; align-items: end; }
+    .i-collect-grid > * { min-width: 0; }
+    .i-table-scroll { max-width: 100%; max-height: min(68vh, 760px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .i-table { min-width: max-content; margin-bottom: 0; white-space: nowrap; }
+    .i-table th { color: var(--bs-secondary-color); font-size: .72rem; letter-spacing: .03em; text-transform: uppercase; }
+    .i-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bs-body-bg); box-shadow: inset 0 -1px var(--bs-border-color); }
+    .i-match { min-width: 230px; max-width: 310px; white-space: normal; }
+    .i-explanation { min-width: 220px; max-width: 340px; white-space: normal; }
+    .i-sort { padding: 0; border: 0; color: inherit; background: none; font: inherit; text-transform: inherit; letter-spacing: inherit; }
+    .i-sort::after { content: " ↕"; opacity: .55; }
+    .i-sort[data-direction="asc"]::after { content: " ↑"; opacity: 1; }
+    .i-sort[data-direction="desc"]::after { content: " ↓"; opacity: 1; }
+    .i-window { border-left: .24rem solid rgba(111, 66, 193, .65); }
+    @@media (max-width: 991.98px) { .i-collect-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @@media (max-width: 575.98px) { .i-collect-grid { grid-template-columns: minmax(0, 1fr); } .i-collect-action .btn { width: 100%; } }
+</style>
+
+<div class="i-shell">
+    <section class="i-hero">
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+            <div>
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <span class="i-status i-status-safe">SHADOW ONLY</span>
+                    <span class="badge text-bg-secondary">Movimiento de mercado</span>
+                    <span class="badge text-bg-info">Publicación bloqueada</span>
+                </div>
+                <h1 class="h3 mb-2">Bot I2026 · laboratorio de movimiento</h1>
+                <p class="text-secondary mb-0">
+                    I compara cómo cambian las líneas y probabilidades entre snapshots de Pinnacle y Betano.
+                    Sus “aprobados” son hipótesis para estudiar: nunca se convierten en picks ni apuestas reales.
+                </p>
+            </div>
+            <div class="small text-secondary text-end"><strong class="text-body">I2026</strong><div>Goles y córners · líneas .5 · cuotas bilaterales</div></div>
+        </div>
+    </section>
+
+    @if (!ViewData.ModelState.IsValid)
+    {
+        <div class="alert alert-warning mb-0" asp-validation-summary="All"></div>
+    }
+
+    <section class="i-card">
+        <div class="i-card-header">
+            <h2 class="h5 mb-1">Recolectar evidencia shadow</h2>
+            <p class="small text-secondary mb-0">Acción idempotente: repetirla no duplica evidencia y jamás publica una apuesta.</p>
+        </div>
+        <div class="i-card-body">
+            <form id="ICollectForm" asp-controller="BotI2026" asp-action="Collect" method="post">
+                @Html.AntiForgeryToken()
+                <div class="i-collect-grid">
+                    <div><label class="form-label small" for="ICollectDateFrom">Desde</label><input class="form-control form-control-sm" id="ICollectDateFrom" name="DateFrom" type="date" value="@Model.Collection.DateFrom.ToString("yyyy-MM-dd")" required /></div>
+                    <div><label class="form-label small" for="ICollectDateTo">Hasta</label><input class="form-control form-control-sm" id="ICollectDateTo" name="DateTo" type="date" value="@Model.Collection.DateTo.ToString("yyyy-MM-dd")" required /></div>
+                    <div><label class="form-label small" for="IMaximumFixtures">Máximo partidos</label><input class="form-control form-control-sm" id="IMaximumFixtures" name="MaximumFixtures" type="number" min="1" max="1000" value="@Model.Collection.MaximumFixtures" required /></div>
+                    <div class="i-collect-action"><button type="submit" class="btn btn-sm btn-primary w-100 js-i-collect"><span class="js-i-collect-label">Recolectar shadow</span></button></div>
+                </div>
+            </form>
+            <div id="ICollectFeedback" class="mt-3" role="status" aria-live="polite">
+                <div class="i-guard small"><strong>No productivo.</strong> Este botón sólo guarda observaciones de mercado; no crea stakes, recomendaciones ni filas en Bot Picks.</div>
+            </div>
+        </div>
+    </section>
+
+    <div id="IStatusHost" class="i-async-host" data-url="@Url.Action("Status", "BotI2026")">
+        <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Estado y barreras</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Comprobando que I2026 siga aislado…</strong></div></div></section>
+    </div>
+
+    <div id="IScorecardsHost" class="i-async-host" data-url="@Url.Action("Scorecards", "BotI2026", new { AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
+        <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Scorecards outcome-aware 7 / 30 / 90</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Cargando rendimiento shadow sin bloquear la tabla…</strong></div></div></section>
+    </div>
+
+    <div id="IEvaluationsHost" class="i-async-host" data-url="@Url.Action("Evaluations", "BotI2026", new { PredictionFromUtc = Model.Filters.PredictionFromUtc?.ToString("O"), PredictionToUtc = Model.Filters.PredictionToUtc?.ToString("O"), AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), Decision = Model.Filters.Decision, MarketType = Model.Filters.MarketType, Selection = Model.Filters.Selection, Source = Model.Filters.Source, ConfigurationVersion = Model.Filters.ConfigurationVersion, Page = Model.Filters.Page, PageSize = Model.Filters.PageSize })">
+        <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Auditoría de señales</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Cargando una página de evaluaciones…</strong></div></div></section>
+    </div>
+</div>
+
+<script>
+(() => {
+    const statusHost = document.getElementById('IStatusHost');
+    const scorecardsHost = document.getElementById('IScorecardsHost');
+    const evaluationsHost = document.getElementById('IEvaluationsHost');
+    const collectForm = document.getElementById('ICollectForm');
+    const feedback = document.getElementById('ICollectFeedback');
+
+    function escapeHtml(value) {
+        const element = document.createElement('span');
+        element.textContent = String(value ?? '');
+        return element.innerHTML;
+    }
+
+    async function loadBlock(host, fallbackTitle) {
+        if (!host) return;
+        host.setAttribute('aria-busy', 'true');
+        try {
+            const response = await fetch(host.dataset.url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            host.innerHTML = await response.text();
+        } catch (error) {
+            host.innerHTML = `<section class="i-card"><div class="i-card-header"><h2 class="h5 mb-1">${fallbackTitle}</h2></div><div class="i-card-body"><div class="alert alert-warning mb-0">Este bloque no respondió. Los demás siguen disponibles. <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-i-retry">Reintentar</button></div></div></section>`;
+        } finally {
+            host.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    statusHost?.addEventListener('click', event => { if (event.target.closest('.js-i-retry')) loadBlock(statusHost, 'Estado y barreras'); });
+    scorecardsHost?.addEventListener('click', event => { if (event.target.closest('.js-i-retry')) loadBlock(scorecardsHost, 'Scorecards outcome-aware 7 / 30 / 90'); });
+    evaluationsHost?.addEventListener('click', event => { if (event.target.closest('.js-i-retry')) loadBlock(evaluationsHost, 'Auditoría de señales'); });
+
+    collectForm?.addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = collectForm.querySelector('.js-i-collect');
+        const label = collectForm.querySelector('.js-i-collect-label');
+        button.disabled = true;
+        label.textContent = 'Recolectando sólo shadow…';
+        feedback.innerHTML = `<div class="d-flex align-items-center gap-2 small"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Guardando evidencia sin publicar picks…</strong></div>`;
+        try {
+            const response = await fetch(collectForm.action, {
+                method: 'POST',
+                body: new FormData(collectForm),
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(payload?.message || `HTTP ${response.status}`);
+            feedback.innerHTML = `<div class="alert alert-success mb-0"><strong>Recolección terminada.</strong> ${escapeHtml(payload.message)}</div>`;
+            await Promise.all([
+                loadBlock(statusHost, 'Estado y barreras'),
+                loadBlock(scorecardsHost, 'Scorecards outcome-aware 7 / 30 / 90'),
+                loadBlock(evaluationsHost, 'Auditoría de señales')
+            ]);
+        } catch (error) {
+            feedback.innerHTML = `<div class="alert alert-warning mb-0"><strong>No se publicó nada.</strong> ${escapeHtml(error.message)}</div>`;
+        } finally {
+            button.disabled = false;
+            label.textContent = 'Recolectar shadow';
+        }
+    });
+
+    document.addEventListener('click', event => {
+        const button = event.target.closest('.js-i-sort');
+        if (!button) return;
+        const table = button.closest('table');
+        const body = table?.tBodies?.[0];
+        if (!body) return;
+        const column = Number(button.dataset.column);
+        const direction = button.dataset.direction === 'asc' ? 'desc' : 'asc';
+        table.querySelectorAll('.js-i-sort').forEach(item => item.removeAttribute('data-direction'));
+        button.dataset.direction = direction;
+        const multiplier = direction === 'asc' ? 1 : -1;
+        const rows = Array.from(body.rows);
+        rows.sort((left, right) => {
+            const a = left.cells[column]?.dataset.sortValue ?? left.cells[column]?.textContent?.trim() ?? '';
+            const b = right.cells[column]?.dataset.sortValue ?? right.cells[column]?.textContent?.trim() ?? '';
+            const an = Number(a);
+            const bn = Number(b);
+            return Number.isFinite(an) && Number.isFinite(bn)
+                ? (an - bn) * multiplier
+                : a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }) * multiplier;
+        });
+        rows.forEach(row => body.appendChild(row));
+    });
+
+    loadBlock(statusHost, 'Estado y barreras');
+    loadBlock(scorecardsHost, 'Scorecards outcome-aware 7 / 30 / 90');
+    loadBlock(evaluationsHost, 'Auditoría de señales');
+})();
+</script>

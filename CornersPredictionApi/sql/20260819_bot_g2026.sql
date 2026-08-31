@@ -318,7 +318,7 @@ END;
 
 GO
 
-/* Seed G only once. Re-running schema setup must not undo a later manual promotion. */
+/* Seed G once; the v1.1 alignment below intentionally keeps publication closed. */
 IF OBJECT_ID(N'dbo.AutomatedBotDefinitions', N'U') IS NOT NULL
 BEGIN
     MERGE dbo.AutomatedBotDefinitions WITH (HOLDLOCK) AS target
@@ -333,7 +333,7 @@ BEGIN
             CONVERT(BIT, 0) AS PublishEnabled,
             N'GOALS' AS MarketFamilies,
             CONVERT(DECIMAL(9,4), 1.0000) AS StakeMultiplier,
-            N'{"botKey":"G2026","name":"Bot G Goals Specialist","baseStrategy":"GOALS_MARKET_ANCHORED","configurationVersion":"bot-g-goals-market-1.0.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","legacyModelVersion":"goals_v1","model2026Version":"goals_deep_tuned_v2","enabled":true,"publishEnabled":false,"shadowMode":true,"stake":1.0,"supportedMarkets":["totalGoals","homeTeamGoals","awayTeamGoals"],"features":{"windows":[5,10,20],"decayFactor":0.85,"requiredVenueMatches":8,"minimumHistoricalMatches":8,"minimumStandardDeviation":0.25,"lineHistoryPriorStrength":20.0,"lineHitRatePriorMean":0.5,"pushRatePriorMean":0.08},"metaModel":{"required":true,"modelVersion":"bot-g-market-meta-1.0.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","maximumAbsoluteResidualLogit":4.0},"calibration":{"version":"bot-g-calibration-1.0.0","method":"BetaCalibration","minimumEffectiveSampleSize":20,"outcomeAvailabilityLagHours":8,"globalPriorStrength":80.0,"marketPriorStrength":60.0,"selectionPriorStrength":40.0,"bookmakerPriorStrength":40.0},"uncertainty":{"version":"bot-g-uncertainty-1.0.0","confidenceZScore":1.645,"conservativeLambda":1.0,"minimumUncertainty":0.005,"maximumUncertainty":0.25,"useLowerBound":true},"outOfDistribution":{"version":"bot-g-ood-1.0.0","minimumReferenceSampleSize":30,"robustZScoreThreshold":3.5,"severeRobustZScore":8.0},"thresholds":{"minimumOdds":1.6,"maximumOdds":2.2,"minimumFinalProbability":0.54,"minimumConservativeEdge":0.02,"minimumConservativeExpectedValue":0.015,"minimumDataQuality":0.65,"minimumCalibrationReliability":0.3,"maximumProbabilityUncertainty":0.08,"maximumOodScore":0.7,"maximumModelDisagreement":1.5,"minimumHistoricalMatches":8,"minimumSettlementEffectiveSampleSize":40,"maximumOddsAgeMinutes":120},"ranking":{"conservativeExpectedValueWeight":0.35,"conservativeEdgeWeight":0.25,"calibrationReliabilityWeight":0.15,"dataQualityWeight":0.1,"inverseUncertaintyWeight":0.1,"contextAgreementWeight":0.05}}' AS StrategyConfigurationJson
+            N'{"botKey":"G2026","name":"Bot G Goals Specialist","baseStrategy":"GOALS_MARKET_ANCHORED","configurationVersion":"bot-g-goals-market-intelligence-1.1.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","legacyModelVersion":"goals_v1","model2026Version":"per-market-model-lineage","enabled":true,"publishEnabled":false,"shadowMode":true,"stake":1.0,"supportedMarkets":["totalGoals","homeTeamGoals","awayTeamGoals"],"modelLineages":{"totalGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targettotalgoals-2026-08-09-trial-53"]},"homeTeamGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targethomegoals-2026-08-09-trial-15","targetawaygoals-2026-08-09-trial-48"]},"awayTeamGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targetawaygoals-2026-08-09-trial-48","targethomegoals-2026-08-09-trial-15"]}},"features":{"windows":[5,10,20],"decayFactor":0.85,"requiredVenueMatches":8,"minimumHistoricalMatches":8,"minimumStandardDeviation":0.25,"lineHistoryPriorStrength":20.0,"lineHitRatePriorMean":0.5,"pushRatePriorMean":0.08},"metaModel":{"required":true,"modelVersion":"bot-g-market-meta-1.1.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","maximumAbsoluteResidualLogit":4.0},"calibration":{"version":"bot-g-calibration-1.0.0","method":"BetaCalibration","minimumEffectiveSampleSize":20,"outcomeAvailabilityLagHours":8,"globalPriorStrength":80.0,"marketPriorStrength":60.0,"selectionPriorStrength":40.0,"bookmakerPriorStrength":40.0},"uncertainty":{"version":"bot-g-uncertainty-1.0.0","confidenceZScore":1.645,"conservativeLambda":1.0,"minimumUncertainty":0.005,"maximumUncertainty":0.25,"useLowerBound":true},"outOfDistribution":{"version":"bot-g-ood-1.0.0","minimumReferenceSampleSize":30,"robustZScoreThreshold":3.5,"severeRobustZScore":8.0},"thresholds":{"minimumOdds":1.6,"maximumOdds":2.2,"minimumFinalProbability":0.54,"minimumConservativeEdge":0.02,"minimumConservativeExpectedValue":0.015,"minimumDataQuality":0.65,"minimumCalibrationReliability":0.3,"maximumProbabilityUncertainty":0.08,"maximumOodScore":0.7,"maximumModelDisagreement":1.5,"minimumHistoricalMatches":8,"minimumSettlementEffectiveSampleSize":40,"maximumOddsAgeMinutes":120},"ranking":{"conservativeExpectedValueWeight":0.35,"conservativeEdgeWeight":0.25,"calibrationReliabilityWeight":0.15,"dataQualityWeight":0.1,"inverseUncertaintyWeight":0.1,"contextAgreementWeight":0.05},"footballIntelligence":{"enabled":true,"version":"football-intelligence-adjustment-1.0.0","weight":0.35,"maximumProbabilityAdjustment":0.04,"minimumTeamConfidence":0.60,"maximumSnapshotAgeMinutes":4320,"minimumActionableFacts":1,"minimumIndependentSources":1,"attackWeight":0.35,"defenceWeight":0.25,"widthWeight":0.20,"setPieceWeight":0.20}}' AS StrategyConfigurationJson
     ) AS source
        ON target.BotKey = source.BotKey
     WHEN NOT MATCHED THEN INSERT
@@ -350,6 +350,40 @@ BEGIN
         source.StrategyConfigurationJson
     );
 END;
+
+-- Keep the live definition and offline trainer on the same immutable v1.1
+-- contract. Historical v1.0 snapshots remain untouched and are not relabeled.
+DECLARE @BotGModelLineagesV11 NVARCHAR(MAX) =
+    N'{"totalGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targettotalgoals-2026-08-09-trial-53"]},"homeTeamGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targethomegoals-2026-08-09-trial-15","targetawaygoals-2026-08-09-trial-48"]},"awayTeamGoals":{"legacyModelVersions":["goals_v1"],"model2026Versions":["targetawaygoals-2026-08-09-trial-48","targethomegoals-2026-08-09-trial-15"]}}';
+DECLARE @BotGMetaModelV11 NVARCHAR(MAX) =
+    N'{"required":true,"modelVersion":"bot-g-market-meta-1.1.0","featureSchemaVersion":"bot-g-goals-features-1.0.0","maximumAbsoluteResidualLogit":4.0}';
+DECLARE @BotGFootballIntelligenceV11 NVARCHAR(MAX) =
+    N'{"enabled":true,"version":"football-intelligence-adjustment-1.0.0","weight":0.35,"maximumProbabilityAdjustment":0.04,"minimumTeamConfidence":0.60,"maximumSnapshotAgeMinutes":4320,"minimumActionableFacts":1,"minimumIndependentSources":1,"attackWeight":0.35,"defenceWeight":0.25,"widthWeight":0.20,"setPieceWeight":0.20}';
+
+UPDATE definition
+SET StrategyConfigurationJson = aligned.IntelligenceJson,
+    PublishEnabled = 0,
+    UpdatedAtUtc = SYSUTCDATETIME()
+FROM dbo.AutomatedBotDefinitions AS definition
+CROSS APPLY
+(
+    SELECT BaseJson = CASE
+        WHEN ISJSON(definition.StrategyConfigurationJson) = 1
+         AND LEFT(LTRIM(definition.StrategyConfigurationJson), 1) = N'{'
+            THEN definition.StrategyConfigurationJson
+        ELSE N'{}'
+    END
+) AS source
+CROSS APPLY (SELECT Value = JSON_MODIFY(source.BaseJson, '$.configurationVersion', N'bot-g-goals-market-intelligence-1.1.0')) AS versioned
+CROSS APPLY (SELECT Value = JSON_MODIFY(versioned.Value, '$.featureSchemaVersion', N'bot-g-goals-features-1.0.0')) AS schemaVersioned
+CROSS APPLY (SELECT Value = JSON_MODIFY(schemaVersioned.Value, '$.model2026Version', N'per-market-model-lineage')) AS modelVersioned
+CROSS APPLY (SELECT Value = JSON_MODIFY(modelVersioned.Value, '$.publishEnabled', CONVERT(BIT, 0))) AS unpublished
+CROSS APPLY (SELECT Value = JSON_MODIFY(unpublished.Value, '$.shadowMode', CONVERT(BIT, 1))) AS shadowed
+CROSS APPLY (SELECT Value = JSON_MODIFY(shadowed.Value, '$.modelLineages', JSON_QUERY(@BotGModelLineagesV11))) AS lineaged
+CROSS APPLY (SELECT Value = JSON_MODIFY(lineaged.Value, '$.metaModel', JSON_QUERY(@BotGMetaModelV11))) AS metaModelled
+CROSS APPLY (SELECT IntelligenceJson = JSON_MODIFY(metaModelled.Value, '$.footballIntelligence', JSON_QUERY(@BotGFootballIntelligenceV11))) AS aligned
+WHERE definition.BotKey = N'G2026'
+  AND definition.IsBuiltIn = 1;
 
 GO
 
@@ -1245,6 +1279,14 @@ BEGIN
         candidate.ActualValue,
         candidate.ConfigurationVersion,
         candidate.FeatureSchemaVersion,
+        lineage.TrainingContractVersion,
+        intelligence.FootballIntelligenceEnabled,
+        intelligence.FootballIntelligenceVersion,
+        intelligence.FootballIntelligenceProbabilityAdjustment,
+        intelligence.FootballIntelligenceHomeEvidenceStatus,
+        intelligence.FootballIntelligenceAwayEvidenceStatus,
+        intelligence.FootballIntelligenceHomeCutoffUtc,
+        intelligence.FootballIntelligenceAwayCutoffUtc,
         candidate.Decision,
         candidate.Result,
         candidate.SettlementFactor,
@@ -1315,12 +1357,41 @@ BEGIN
                     127
                 )
             ),
+            TrainingContractVersion = NULLIF
+            (
+                JSON_VALUE(featureDocument.SafeJson, N'$.lineage.trainingContractVersion'),
+                N''
+            ),
             HistoryCount = TRY_CONVERT
             (
                 INT,
                 JSON_VALUE(featureDocument.SafeJson, N'$.features.historyCount')
             )
     ) AS lineage
+    CROSS APPLY
+    (
+        SELECT
+            FootballIntelligenceEnabled = CASE LOWER(JSON_VALUE(
+                featureDocument.SafeJson, N'$.footballIntelligence.enabled'))
+                WHEN N'true' THEN CONVERT(BIT, 1)
+                WHEN N'false' THEN CONVERT(BIT, 0)
+                ELSE NULL
+            END,
+            FootballIntelligenceVersion = NULLIF(JSON_VALUE(
+                featureDocument.SafeJson, N'$.footballIntelligence.version'), N''),
+            FootballIntelligenceProbabilityAdjustment = TRY_CONVERT(FLOAT, JSON_VALUE(
+                featureDocument.SafeJson, N'$.footballIntelligence.result.probabilityAdjustment')),
+            FootballIntelligenceHomeEvidenceStatus = NULLIF(JSON_VALUE(
+                featureDocument.SafeJson, N'$.footballIntelligence.result.homeEvidenceStatus'), N''),
+            FootballIntelligenceAwayEvidenceStatus = NULLIF(JSON_VALUE(
+                featureDocument.SafeJson, N'$.footballIntelligence.result.awayEvidenceStatus'), N''),
+            FootballIntelligenceHomeCutoffUtc = CONVERT(DATETIME2(3), TRY_CONVERT(
+                DATETIMEOFFSET(3), JSON_VALUE(
+                    featureDocument.SafeJson, N'$.footballIntelligence.homeCutoffAtUtc'), 127)),
+            FootballIntelligenceAwayCutoffUtc = CONVERT(DATETIME2(3), TRY_CONVERT(
+                DATETIMEOFFSET(3), JSON_VALUE(
+                    featureDocument.SafeJson, N'$.footballIntelligence.awayCutoffAtUtc'), 127))
+    ) AS intelligence
     OUTER APPLY
     (
         SELECT TOP (1)
@@ -1353,6 +1424,56 @@ BEGIN
       AND lineage.Model2026Version IS NOT NULL
       AND lineage.Model2026TrainedThroughUtc < candidate.PredictionTimestampUtc
       AND lineage.HistoryCount IS NOT NULL
+      AND candidate.ConfigurationVersion = N'bot-g-goals-market-intelligence-1.1.0'
+      AND candidate.FeatureSchemaVersion = N'bot-g-goals-features-1.0.0'
+      AND lineage.TrainingContractVersion = N'bot-g-training-export-1.1.0'
+      AND lineage.LegacyModelVersion = N'goals_v1'
+      AND
+      (
+          (candidate.MarketType = N'TotalGoals'
+           AND lineage.Model2026Version = N'targettotalgoals-2026-08-09-trial-53')
+          OR
+          (candidate.MarketType = N'HomeTeamGoals'
+           AND lineage.Model2026Version IN
+               (N'targethomegoals-2026-08-09-trial-15',
+                N'targetawaygoals-2026-08-09-trial-48+targethomegoals-2026-08-09-trial-15'))
+          OR
+          (candidate.MarketType = N'AwayTeamGoals'
+           AND lineage.Model2026Version IN
+               (N'targetawaygoals-2026-08-09-trial-48',
+                N'targetawaygoals-2026-08-09-trial-48+targethomegoals-2026-08-09-trial-15'))
+      )
+      AND intelligence.FootballIntelligenceEnabled = 1
+      AND intelligence.FootballIntelligenceVersion = N'football-intelligence-adjustment-1.0.0'
+      AND intelligence.FootballIntelligenceProbabilityAdjustment BETWEEN -0.04 AND 0.04
+      AND intelligence.FootballIntelligenceHomeEvidenceStatus IN
+          (N'Missing', N'NoActionableFacts', N'LowConfidence', N'Stale', N'FutureCutoff', N'Available')
+      AND intelligence.FootballIntelligenceAwayEvidenceStatus IN
+          (N'Missing', N'NoActionableFacts', N'LowConfidence', N'Stale', N'FutureCutoff', N'Available')
+      AND
+      (
+          intelligence.FootballIntelligenceHomeEvidenceStatus <> N'Available'
+          OR
+          (
+              intelligence.FootballIntelligenceHomeCutoffUtc IS NOT NULL
+              AND intelligence.FootballIntelligenceHomeCutoffUtc <= candidate.PredictionTimestampUtc
+          )
+      )
+      AND
+      (
+          intelligence.FootballIntelligenceAwayEvidenceStatus <> N'Available'
+          OR
+          (
+              intelligence.FootballIntelligenceAwayCutoffUtc IS NOT NULL
+              AND intelligence.FootballIntelligenceAwayCutoffUtc <= candidate.PredictionTimestampUtc
+          )
+      )
+      AND
+      (
+          intelligence.FootballIntelligenceHomeEvidenceStatus = N'Available'
+          OR intelligence.FootballIntelligenceAwayEvidenceStatus = N'Available'
+          OR ABS(intelligence.FootballIntelligenceProbabilityAdjustment) < 0.000000001
+      )
       AND candidate.LegacyPrediction IS NOT NULL
       AND candidate.Prediction2026 IS NOT NULL
       AND candidate.ContextPrediction IS NOT NULL

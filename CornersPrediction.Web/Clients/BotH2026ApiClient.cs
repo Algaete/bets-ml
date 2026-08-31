@@ -55,6 +55,31 @@ public sealed class BotH2026ApiClient
         return result ?? [];
     }
 
+    public async Task<IReadOnlyList<BotH2026ThresholdAnalysisViewModel>> GetThresholdAnalysisAsync(
+        BotH2026ThresholdAnalysisFiltersViewModel filters,
+        CancellationToken cancellationToken)
+    {
+        var query = new List<string>();
+        AddDate(query, "asOfUtc", filters.AsOfUtc);
+        Add(query, "configurationVersion", filters.ConfigurationVersion);
+        Add(query, "marketType", filters.MarketType);
+        Add(query, "selection", filters.Selection);
+        Add(query, "analysisVersion", filters.AnalysisVersion);
+        AddDecimal(query, "minimumFinalProbability", filters.MinimumFinalProbability);
+        AddDecimal(query, "minimumFinalEdge", filters.MinimumFinalEdge);
+        AddDecimal(query, "minimumFinalExpectedValue", filters.MinimumFinalExpectedValue);
+        AddDecimal(query, "minimumDataQualityScore", filters.MinimumDataQualityScore);
+        AddDecimal(query, "minimumContextAgreementScore", filters.MinimumContextAgreementScore);
+        AddDecimal(query, "minimumOdds", filters.MinimumOdds);
+        AddDecimal(query, "maximumOdds", filters.MaximumOdds);
+        AddDecimal(query, "developmentFraction", filters.DevelopmentFraction);
+
+        var result = await _httpClient.GetFromJsonAsync<IReadOnlyList<BotH2026ThresholdAnalysisViewModel>>(
+            $"/api/bot-h2026/threshold-analysis{ToQueryString(query)}",
+            cancellationToken);
+        return result ?? [];
+    }
+
     private static List<string> BuildCommonQuery(
         BotH2026FiltersViewModel filters,
         bool includeEvaluationFilters)
@@ -92,6 +117,9 @@ public sealed class BotH2026ApiClient
             : DateTime.SpecifyKind(value.Value, DateTimeKind.Utc);
         query.Add($"{name}={Uri.EscapeDataString(utc.ToString("O", CultureInfo.InvariantCulture))}");
     }
+
+    private static void AddDecimal(List<string> query, string name, decimal value) =>
+        query.Add($"{name}={value.ToString(CultureInfo.InvariantCulture)}");
 
     private static string ToQueryString(IReadOnlyCollection<string> query) =>
         query.Count == 0 ? string.Empty : $"?{string.Join('&', query)}";

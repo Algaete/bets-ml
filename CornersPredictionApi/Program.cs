@@ -4,6 +4,7 @@ using CornersMLData.Services;
 using CornersPrediction.Application;
 using CornersPrediction.Application.Automation.BotC;
 using CornersPrediction.Application.Automation.BotG;
+using CornersPrediction.Application.Automation.BotI;
 using CornersPrediction.Application.FootballIntelligence;
 using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPrediction.Infrastructure;
@@ -113,6 +114,15 @@ builder.Services.AddHttpClient<PredictionApiClient>();
 builder.Services.AddScoped<BotGAutomationService>();
 builder.Services.AddScoped<AutomatedCornersSelectionService>();
 builder.Services.AddHostedService<BotGShadowSettlementWorker>();
+builder.Services.AddOptions<BotIShadowCollectorOptions>()
+    .Bind(builder.Configuration.GetSection(BotIShadowCollectorOptions.SectionName))
+    .Validate(options => options.StartupDelaySeconds is >= 0 and <= 3600
+        && options.PollMinutes is >= 1 and <= 1440
+        && options.FixtureLookAheadDays is >= 1 and <= 14
+        && options.MaximumFixtures is >= 1 and <= 1000,
+        "Bot I shadow collector limits are invalid.")
+    .ValidateOnStart();
+builder.Services.AddHostedService<BotIShadowCollectorWorker>();
 builder.Services.Configure<ApiFootballOptions>(builder.Configuration.GetSection(ApiFootballOptions.SectionName));
 builder.Services.AddHttpClient<ApiFootballClient>((serviceProvider, client) =>
 {
@@ -350,6 +360,10 @@ static IDictionary<string, string?> BuildDeploymentConfigurationFromEnvironment(
         ["BotCMetaModel:ArtifactPaths:bot-d-features-1.0.0"] = Environment.GetEnvironmentVariable("BOT_D_META_MODEL_ARTIFACT_PATH"),
         ["BotG:Enabled"] = Environment.GetEnvironmentVariable("BOT_G_ENABLED"),
         ["BotG:ArtifactPath"] = Environment.GetEnvironmentVariable("BOT_G_ARTIFACT_PATH"),
+        ["BotIShadowCollector:Enabled"] = Environment.GetEnvironmentVariable("BOT_I_SHADOW_COLLECTOR_ENABLED"),
+        ["BotIShadowCollector:PollMinutes"] = Environment.GetEnvironmentVariable("BOT_I_SHADOW_COLLECTOR_POLL_MINUTES"),
+        ["BotIShadowCollector:FixtureLookAheadDays"] = Environment.GetEnvironmentVariable("BOT_I_SHADOW_COLLECTOR_LOOKAHEAD_DAYS"),
+        ["BotIShadowCollector:MaximumFixtures"] = Environment.GetEnvironmentVariable("BOT_I_SHADOW_COLLECTOR_MAX_FIXTURES"),
         ["RobustPickEvaluation:Enabled"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_ENABLED"),
         ["RobustPickEvaluation:Mode"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_MODE"),
         ["RobustPickEvaluation:Version"] = Environment.GetEnvironmentVariable("ROBUST_PICK_EVALUATION_VERSION"),

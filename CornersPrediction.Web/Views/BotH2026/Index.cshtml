@@ -4,7 +4,8 @@
 }
 
 <style>
-    .h-shell { display: grid; gap: 1rem; min-width: 0; max-width: 100%; }
+    .h-shell { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; gap: 1rem; min-width: 0; max-width: 100%; }
+    .h-shell > *, .h-async-host { width: 100%; min-width: 0; max-width: 100%; }
     .h-hero { border: 1px solid var(--bs-border-color); border-radius: 1rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(25, 135, 84, .14), rgba(13, 110, 253, .08)); }
     .h-status { display: inline-flex; align-items: center; gap: .45rem; border-radius: 999px; padding: .32rem .72rem; font-size: .82rem; font-weight: 750; }
     .h-status::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 .2rem color-mix(in srgb, currentColor 18%, transparent); }
@@ -27,6 +28,19 @@
     .h-lineage { min-width: 190px; white-space: normal; }
     .h-window { min-width: 210px; border-left: .22rem solid rgba(13, 110, 253, .55); }
     .h-shadow-note { border-left: .25rem solid var(--bs-info); padding: .8rem 1rem; background: rgba(13, 202, 240, .08); border-radius: .25rem .7rem .7rem .25rem; }
+    .h-what-if-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); align-items: end; gap: .7rem; min-width: 0; }
+    .h-what-if-grid > * { min-width: 0; }
+    .h-what-if-grid .form-control, .h-what-if-grid .form-select { width: 100%; min-width: 0; }
+    .h-what-if-config { grid-column: span 2; }
+    .h-what-if-action { display: flex; justify-content: flex-end; }
+    .h-split-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; }
+    .h-split-card { min-width: 0; padding: .9rem; border: 1px solid var(--bs-border-color); border-radius: .85rem; background: color-mix(in srgb, var(--bs-body-bg) 94%, var(--bs-primary) 6%); }
+    .h-split-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+    .h-split-metrics > div { min-width: 0; padding: .48rem; border-radius: .55rem; background: var(--bs-body-bg); }
+    .h-split-metrics span { display: block; color: var(--bs-secondary-color); font-size: .7rem; }
+    .h-split-metrics strong { display: block; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    @@media (max-width: 991.98px) { .h-split-grid { grid-template-columns: 1fr; } }
+    @@media (max-width: 575.98px) { .h-what-if-config { grid-column: auto; } .h-what-if-action .btn { width: 100%; } }
 </style>
 
 <div class="h-shell">
@@ -65,6 +79,13 @@
         <section class="h-card" aria-live="polite" aria-busy="true"><div class="h-card-header"><h2 class="h5 mb-1">Estado y barreras de seguridad</h2></div><div class="h-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Comprobando estado sin bloquear H2026…</strong></div></div></section>
     </div>
 
+    <div id="HThresholdAnalysisHost" class="h-async-host">
+        @await Html.PartialAsync("_ThresholdAnalysis", new CornersPrediction.Web.Models.BotPicks.BotH2026IndexViewModel
+        {
+            ThresholdFilters = Model.ThresholdFilters
+        })
+    </div>
+
     <div id="HScorecardsHost"
          data-url="@Url.Action("Scorecards", "BotH2026", new { PredictionFromUtc = Model.Filters.PredictionFromUtc?.ToString("O"), PredictionToUtc = Model.Filters.PredictionToUtc?.ToString("O"), AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
         <section class="h-card" aria-live="polite" aria-busy="true">
@@ -99,6 +120,40 @@
         if (event.target.closest('.js-retry-status')) loadStatus();
     });
     loadStatus();
+})();
+
+(() => {
+    const host = document.getElementById('HThresholdAnalysisHost');
+    if (!host) return;
+
+    async function loadThresholdAnalysis(form) {
+        const feedback = form.querySelector('.js-h-threshold-feedback');
+        const button = form.querySelector('.js-run-h-threshold');
+        if (button) button.disabled = true;
+        if (feedback) feedback.innerHTML = `<div class="d-flex align-items-center gap-2 small"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Calculando los tres tramos sin bloquear los otros bloques…</strong></div>`;
+        try {
+            const url = new URL(form.action, window.location.origin);
+            url.search = new URLSearchParams(new FormData(form)).toString();
+            const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            host.innerHTML = await response.text();
+        } catch (error) {
+            if (button) button.disabled = false;
+            if (feedback) feedback.innerHTML = `<div class="alert alert-warning py-2 mb-0">No se pudo calcular este escenario. La tabla y los scorecards siguen disponibles. <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-h-threshold">Reintentar</button></div>`;
+        }
+    }
+
+    host.addEventListener('submit', event => {
+        const form = event.target.closest('.js-h-threshold-form');
+        if (!form) return;
+        event.preventDefault();
+        loadThresholdAnalysis(form);
+    });
+    host.addEventListener('click', event => {
+        if (!event.target.closest('.js-retry-h-threshold')) return;
+        const form = host.querySelector('.js-h-threshold-form');
+        if (form) loadThresholdAnalysis(form);
+    });
 })();
 
 (() => {

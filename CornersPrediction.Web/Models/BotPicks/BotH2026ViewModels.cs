@@ -14,20 +14,46 @@ public sealed class BotH2026FiltersViewModel
     public int PageSize { get; set; } = 100;
 }
 
+/// <summary>
+/// Read-only parameters for replaying the immutable H2026 evidence with alternate
+/// thresholds. These values never mutate a captured decision or publish a pick.
+/// </summary>
+public sealed class BotH2026ThresholdAnalysisFiltersViewModel
+{
+    public DateTime? AsOfUtc { get; set; }
+    public string? ConfigurationVersion { get; set; }
+    public string? MarketType { get; set; }
+    public string? Selection { get; set; }
+    public string AnalysisVersion { get; set; } = "bot-h-threshold-what-if-1.0.0";
+    public decimal MinimumFinalProbability { get; set; } = 0.56m;
+    public decimal MinimumFinalEdge { get; set; } = 0.04m;
+    public decimal MinimumFinalExpectedValue { get; set; } = 0.03m;
+    public decimal MinimumDataQualityScore { get; set; } = 0.70m;
+    public decimal MinimumContextAgreementScore { get; set; } = 0.70m;
+    public decimal MinimumOdds { get; set; } = 1.60m;
+    public decimal MaximumOdds { get; set; } = 2.20m;
+    public decimal DevelopmentFraction { get; set; } = 0.70m;
+}
+
 public sealed class BotH2026IndexViewModel
 {
     public BotH2026FiltersViewModel Filters { get; init; } = new();
+    public BotH2026ThresholdAnalysisFiltersViewModel ThresholdFilters { get; init; } = new();
     public BotH2026EvaluationPageViewModel Evaluations { get; init; } = new();
     public IReadOnlyList<BotH2026ScorecardViewModel> Scorecards { get; init; } = [];
+    public IReadOnlyList<BotH2026ThresholdAnalysisViewModel> ThresholdAnalysis { get; init; } = [];
     public BotH2026StatusViewModel Status { get; init; } = new();
     public string? ErrorMessage { get; init; }
     public string? StatusErrorMessage { get; init; }
     public string? EvaluationsErrorMessage { get; init; }
     public string? ScorecardsErrorMessage { get; init; }
+    public string? ThresholdAnalysisErrorMessage { get; init; }
+    public bool ThresholdAnalysisRequested { get; init; }
 
     public bool StatusAvailable => string.IsNullOrWhiteSpace(StatusErrorMessage);
     public bool EvaluationsAvailable => string.IsNullOrWhiteSpace(EvaluationsErrorMessage);
     public bool ScorecardsAvailable => string.IsNullOrWhiteSpace(ScorecardsErrorMessage);
+    public bool ThresholdAnalysisAvailable => string.IsNullOrWhiteSpace(ThresholdAnalysisErrorMessage);
 }
 
 public sealed class BotH2026StatusViewModel
@@ -162,4 +188,49 @@ public sealed class BotH2026ScorecardViewModel
     public bool Deployable { get; init; }
     public string PromotionState { get; init; } = "SHADOW_ONLY";
     public string UnitOfAnalysis { get; init; } = "FIRST_APPROVED_PER_FIXTURE_CONFIGURATION";
+}
+
+public sealed class BotH2026ThresholdAnalysisViewModel
+{
+    public string AnalysisVersion { get; init; } = "bot-h-threshold-what-if-1.0.0";
+    public DateTime AsOfUtc { get; init; }
+    public string? ConfigurationVersion { get; init; }
+    public string? MarketType { get; init; }
+    public string? Selection { get; init; }
+    public decimal MinimumFinalProbability { get; init; }
+    public decimal MinimumFinalEdge { get; init; }
+    public decimal MinimumFinalExpectedValue { get; init; }
+    public decimal MinimumDataQualityScore { get; init; }
+    public decimal MinimumContextAgreementScore { get; init; }
+    public decimal MinimumOdds { get; init; }
+    public decimal MaximumOdds { get; init; }
+    public decimal DevelopmentFraction { get; init; }
+    public DateTime? SplitBoundaryUtc { get; init; }
+    public string Split { get; init; } = string.Empty;
+    public long AvailableSettledEvaluations { get; init; }
+    public long EligibleEvaluations { get; init; }
+    public long SelectedPicks { get; init; }
+    public long Fixtures { get; init; }
+    public long Won { get; init; }
+    public long HalfWon { get; init; }
+    public long Pushes { get; init; }
+    public long HalfLost { get; init; }
+    public long Lost { get; init; }
+    public double? Stake { get; init; }
+    public double? ProfitLoss { get; init; }
+    public double? Yield { get; init; }
+    public double? AverageOdds { get; init; }
+    public double? AverageModelProbability { get; init; }
+    public double? AverageMarketProbability { get; init; }
+    public double? AverageEdge { get; init; }
+    public double? AverageExpectedValue { get; init; }
+    public double? ObservedEconomicOutcome { get; init; }
+    public double? CalibrationGap { get; init; }
+    public double? Brier { get; init; }
+    public double? MarketBrier { get; init; }
+    public double? DeltaBrier { get; init; }
+    public bool ReadOnly { get; init; } = true;
+    public bool Deployable { get; init; }
+    public string PromotionState { get; init; } = "SHADOW_ONLY";
+    public string UnitOfAnalysis { get; init; } = "FIRST_ELIGIBLE_PER_FIXTURE";
 }

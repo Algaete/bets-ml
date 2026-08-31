@@ -45,6 +45,14 @@ REQUIRED_COLUMNS = (
     "HistoryCount",
     "DataQualityScore",
     "ActualValue",
+    "ConfigurationVersion",
+    "FeatureSchemaVersion",
+    "TrainingContractVersion",
+    "FootballIntelligenceEnabled",
+    "FootballIntelligenceVersion",
+    "FootballIntelligenceProbabilityAdjustment",
+    "FootballIntelligenceHomeEvidenceStatus",
+    "FootballIntelligenceAwayEvidenceStatus",
 )
 
 UTC_COLUMNS = (
@@ -70,7 +78,17 @@ NUMERIC_COLUMNS = (
     "HistoryCount",
     "DataQualityScore",
     "ActualValue",
+    "FootballIntelligenceProbabilityAdjustment",
 )
+
+OPTIONAL_UTC_COLUMNS = (
+    "FootballIntelligenceHomeCutoffUtc",
+    "FootballIntelligenceAwayCutoffUtc",
+)
+
+INTELLIGENCE_EVIDENCE_STATUSES = {
+    "missing", "noactionablefacts", "lowconfidence", "stale", "futurecutoff", "available",
+}
 
 
 @dataclass(frozen=True)
@@ -136,6 +154,10 @@ def _validate_quote_pairs(frame: pd.DataFrame) -> None:
         "LegacyModelVersion", "LegacyModelTrainedThroughUtc", "Prediction2026",
         "Model2026Version", "Model2026TrainedThroughUtc", "ContextPrediction",
         "HistoricalMean", "HistoricalStd", "HistoryCount", "DataQualityScore", "ActualValue",
+        "ConfigurationVersion", "FeatureSchemaVersion", "TrainingContractVersion",
+        "FootballIntelligenceEnabled", "FootballIntelligenceVersion",
+        "FootballIntelligenceHomeEvidenceStatus", "FootballIntelligenceAwayEvidenceStatus",
+        "FootballIntelligenceHomeCutoffUtc", "FootballIntelligenceAwayCutoffUtc",
     ]
     problems: list[str] = []
     for quote_id, rows in frame.groupby("QuoteId", sort=False):
@@ -182,7 +204,105 @@ def _validate_temporal(frame: pd.DataFrame) -> None:
         raise ValueError("Anti-leakage validation failed: " + "; ".join(failed))
 
 
+def _lineage_components(value: str) -> tuple[str, ...]:
+    components = tuple(item.strip() for item in value.split("+") if item.strip())
+    if not components or len(set(components)) != len(components):
+        raise ValueError(f"Invalid model-lineage signature: {value!r}")
+    return components
+
+
+def _validate_runtime_contract(
+    frame: pd.DataFrame,
+    config: BotGConfig,
+    declared_synthetic: bool,
+) -> None:
+    if config.configuration_version == "bot-g-goals-market-1.0.0":
+        raise ValueError(
+            "Bot G v1.0 data cannot be relabeled or trained as the live intelligence v1.1 contract."
+        )
+    expected = {
+        "ConfigurationVersion": config.configuration_version,
+        "FeatureSchemaVersion": config.feature_schema_version,
+        "TrainingContractVersion": config.training_contract_version,
+        "FootballIntelligenceVersion": config.football_intelligence.version,
+    }
+    mismatches = [
+        f"{column} expected {value!r}, found {sorted(frame[column].unique().tolist())!r}"
+        for column, value in expected.items()
+        if not frame[column].eq(value).all()
+    ]
+    if mismatches:
+        raise ValueError("Bot G runtime/trainer contract mismatch: " + "; ".join(mismatches))
+    if not config.football_intelligence.enabled:
+        raise ValueError("Bot G live v1.1 requires Football Intelligence to be enabled.")
+    if not frame["FootballIntelligenceEnabled"].eq(True).all():
+        raise ValueError("Every Bot G v1.1 row must declare FootballIntelligenceEnabled=true.")
+
+    if set(config.market_lineages) != set(config.supported_markets):
+        raise ValueError("Bot G config must declare one base-model lineage per supported market.")
+    if declared_synthetic:
+        # Synthetic lineages remain visibly synthetic and can never produce a deployable artifact.
+        for value in frame["LegacyModelVersion"].unique():
+            _lineage_components(str(value))
+        for value in frame["Model2026Version"].unique():
+            _lineage_components(str(value))
+        return
+
+    for market, rows in frame.groupby("MarketType", sort=False):
+        lineage = config.market_lineages[str(market)]
+        allowed_legacy = set(lineage.legacy_model_versions)
+        allowed_2026 = set(lineage.model2026_versions)
+        for value in rows["LegacyModelVersion"].unique():
+            if not set(_lineage_components(str(value))).issubset(allowed_legacy):
+                raise ValueError(
+                    f"Unexpected real legacy lineage for {market}: {value!r}; allowed={sorted(allowed_legacy)!r}"
+                )
+        for value in rows["Model2026Version"].unique():
+            if not set(_lineage_components(str(value))).issubset(allowed_2026):
+                raise ValueError(
+                    f"Unexpected real Models 2026 lineage for {market}: {value!r}; allowed={sorted(allowed_2026)!r}"
+                )
+
+
+def _validate_intelligence(frame: pd.DataFrame, config: BotGConfig) -> None:
+    for column in OPTIONAL_UTC_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NaT
+        supplied = frame[column].notna()
+        parsed = pd.to_datetime(frame[column], utc=True, errors="coerce")
+        if (supplied & parsed.isna()).any():
+            raise ValueError(f"{column} contains an invalid supplied UTC timestamp.")
+        frame[column] = parsed
+
+    home_status = frame["FootballIntelligenceHomeEvidenceStatus"].str.lower()
+    away_status = frame["FootballIntelligenceAwayEvidenceStatus"].str.lower()
+    invalid = sorted((set(home_status) | set(away_status)) - INTELLIGENCE_EVIDENCE_STATUSES)
+    if invalid:
+        raise ValueError(f"Unsupported Football Intelligence evidence statuses: {invalid!r}")
+    usable = home_status.eq("available") | away_status.eq("available")
+    frame["FootballIntelligenceEvidenceUsable"] = usable
+    if (frame["FootballIntelligenceProbabilityAdjustment"].abs()
+            > config.football_intelligence.maximum_probability_adjustment + 1e-12).any():
+        raise ValueError("Football Intelligence adjustment exceeds the configured bound.")
+    if ((~usable) & frame["FootballIntelligenceProbabilityAdjustment"].abs().gt(1e-12)).any():
+        raise ValueError("Unavailable Football Intelligence evidence must have exactly zero adjustment.")
+
+    available_home = home_status.eq("available")
+    available_away = away_status.eq("available")
+    if (available_home & frame["FootballIntelligenceHomeCutoffUtc"].isna()).any():
+        raise ValueError("Available home intelligence requires its immutable cutoff timestamp.")
+    if (available_away & frame["FootballIntelligenceAwayCutoffUtc"].isna()).any():
+        raise ValueError("Available away intelligence requires its immutable cutoff timestamp.")
+    if (available_home & (
+            frame["FootballIntelligenceHomeCutoffUtc"] > frame["PredictionTimestampUtc"])).any():
+        raise ValueError("Home Football Intelligence cutoff leaks beyond PredictionTimestampUtc.")
+    if (available_away & (
+            frame["FootballIntelligenceAwayCutoffUtc"] > frame["PredictionTimestampUtc"])).any():
+        raise ValueError("Away Football Intelligence cutoff leaks beyond PredictionTimestampUtc.")
+
+
 def validate_candidate_frame(frame: pd.DataFrame, config: BotGConfig) -> pd.DataFrame:
+    config.validate()
     missing = [column for column in REQUIRED_COLUMNS if column not in frame.columns]
     if missing:
         raise ValueError(f"Bot G candidate dataset is missing columns: {', '.join(missing)}")
@@ -211,12 +331,16 @@ def validate_candidate_frame(frame: pd.DataFrame, config: BotGConfig) -> pd.Data
             raise ValueError("Optional FProbability must be in [0,1].")
     _optional_boolean(frame, "FPublished")
     _optional_boolean(frame, "IsSynthetic")
+    _optional_boolean(frame, "FootballIntelligenceEnabled")
     if "IsSynthetic" in frame.columns and frame["IsSynthetic"].nunique() != 1:
         raise ValueError("IsSynthetic must be constant for the entire candidate universe.")
 
     for column in (
         "CandidateId", "QuoteId", "FixtureId", "League", "HomeTeam", "AwayTeam",
         "Bookmaker", "MarketType", "Selection", "LegacyModelVersion", "Model2026Version",
+        "ConfigurationVersion", "FeatureSchemaVersion", "TrainingContractVersion",
+        "FootballIntelligenceVersion", "FootballIntelligenceHomeEvidenceStatus",
+        "FootballIntelligenceAwayEvidenceStatus",
     ):
         frame[column] = frame[column].astype("string").str.strip()
         if frame[column].isna().any() or frame[column].eq("").any():
@@ -230,6 +354,8 @@ def validate_candidate_frame(frame: pd.DataFrame, config: BotGConfig) -> pd.Data
         raise ValueError(
             f"Unsupported markets/sides: markets={unsupported_markets}, sides={unsupported_sides}"
         )
+    declared_synthetic = bool(frame["IsSynthetic"].all()) if "IsSynthetic" in frame else False
+    _validate_runtime_contract(frame, config, declared_synthetic)
     if (frame[["OverOdds", "UnderOdds", "SelectedOdds"]] <= 1.0).any().any():
         raise ValueError("Both sides and selected decimal odds must exceed 1.0; no-vig is mandatory.")
     if (frame["Line"] < 0).any():
@@ -250,8 +376,9 @@ def validate_candidate_frame(frame: pd.DataFrame, config: BotGConfig) -> pd.Data
     if (~frame["ActualValue"].round().eq(frame["ActualValue"])).any():
         raise ValueError("ActualValue must be an integer goal count for the row's market.")
 
-    _validate_quote_pairs(frame)
     _validate_temporal(frame)
+    _validate_intelligence(frame, config)
+    _validate_quote_pairs(frame)
 
     semantic = ["FixtureId", "Bookmaker", "MarketType", "Selection", "Line", "OddsTimestampUtc"]
     if frame.duplicated(semantic).any():
@@ -286,6 +413,7 @@ def validate_candidate_frame(frame: pd.DataFrame, config: BotGConfig) -> pd.Data
 
 
 def load_candidate_dataset(path: str | Path, config: BotGConfig) -> CandidateDataset:
+    config.validate()
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"Bot G input not found: {resolved}")
@@ -304,6 +432,21 @@ def load_candidate_dataset(path: str | Path, config: BotGConfig) -> CandidateDat
             "model2026": sorted(rows["Model2026Version"].unique().tolist()),
         },
         "declaredSynthetic": bool(rows["IsSynthetic"].all()) if "IsSynthetic" in rows else False,
+        "configurationVersion": config.configuration_version,
+        "featureSchemaVersion": config.feature_schema_version,
+        "trainingContractVersion": config.training_contract_version,
+        "footballIntelligence": {
+            "version": config.football_intelligence.version,
+            "usableRows": int(rows["FootballIntelligenceEvidenceUsable"].sum()),
+            "unusableRows": int((~rows["FootballIntelligenceEvidenceUsable"]).sum()),
+        },
+        "marketLineages": {
+            str(market): {
+                "legacy": sorted(group["LegacyModelVersion"].unique().tolist()),
+                "model2026": sorted(group["Model2026Version"].unique().tolist()),
+            }
+            for market, group in rows.groupby("MarketType", sort=True)
+        },
     }
     return CandidateDataset(rows, resolved, _sha256(resolved), metadata)
 
@@ -321,6 +464,12 @@ def contract_document() -> dict[str, Any]:
             "training folds require OutcomeAvailableUtc plus configured lag before validation",
             "FixtureId is atomic across every split and bootstrap",
         ],
+        "runtimeIdentity": {
+            "configurationVersion": BotGConfig().configuration_version,
+            "featureSchemaVersion": BotGConfig().feature_schema_version,
+            "trainingContractVersion": BotGConfig().training_contract_version,
+            "footballIntelligenceVersion": BotGConfig().football_intelligence.version,
+        },
     }
 
 

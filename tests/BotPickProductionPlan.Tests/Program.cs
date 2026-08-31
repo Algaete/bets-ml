@@ -197,7 +197,7 @@ var tests = new (string Name, Action Body)[]
             [Scorecard("C2026", "AwayTeamGoals", "Green", blocked: false, sample: 150)]);
         Equal(1m, pick.ProductionPlan!.StakeUnits);
     }),
-    ("qualified goals evidence opens only a half-unit controlled trial", () =>
+    ("qualified C2026 away-goals evidence opens only a half-unit controlled trial", () =>
     {
         var pick = Pick(1, "C2026", "AwayTeamGoals");
         BotPickProductionPlanner.Apply(
@@ -215,6 +215,21 @@ var tests = new (string Name, Action Body)[]
                 yield: 0.168m)]);
         Equal(0.5m, pick.ProductionPlan!.StakeUnits);
         Contains("Prueba controlada", pick.ProductionPlan.Label);
+    }),
+    ("controlled trial keeps D challengers and home goals in monitoring", () =>
+    {
+        var challenger = Pick(1, "D2026", "AwayTeamGoals");
+        var homeGoals = Pick(2, "C2026", "HomeTeamGoals", home: "Other");
+        BotPickProductionPlanner.Apply(
+            [challenger, homeGoals],
+            [Definition("D2026", "GOALS"), Definition("C2026", "GOALS")],
+            "goals",
+            [
+                Scorecard("D2026", "AwayTeamGoals", "Amber", false, 45, 0.02, -0.01, 0.12m),
+                Scorecard("C2026", "HomeTeamGoals", "Amber", false, 45, 0.02, -0.01, 0.12m)
+            ]);
+        Equal(0m, challenger.ProductionPlan!.StakeUnits);
+        Equal(0m, homeGoals.ProductionPlan!.StakeUnits);
     }),
     ("legacy goals history keeps its frozen one-unit reconstruction", () =>
     {

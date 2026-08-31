@@ -160,6 +160,21 @@ La suite cubre estadística ponderada, mediana, varianza, desviación, percentil
 - Las features cruzadas aún no están enlazadas en una misma evaluación; se marca su ausencia y baja calidad sin inventar valores.
 - Un meta-modelo no se debe activar hasta contar con suficientes candidatos liquidados de **todos** los estados previos. El pipeline y el runtime están listos; el artefacto productivo se mantiene ausente intencionalmente.
 
+## Prueba productiva controlada
+
+Desde la política `PRODUCTIVE-GATE-2026-08-31-V3`, el único atajo permitido antes de alcanzar el estado `Green` es la cohorte exacta:
+
+- bot `C2026`;
+- familia `GOALS`;
+- mercado `AwayTeamGoals`;
+- lado `Over`;
+- bookmaker `Pinnacle`;
+- línea binaria `.5` y snapshot bilateral, inmutable y fresco;
+- al menos 30 fixtures independientes en la ventana de 30 días;
+- yield positivo, brecha absoluta de calibración no superior a 5 puntos y Brier no peor que el mercado.
+
+La exposición máxima es `0.5u` y el plan conserva una sola señal por fixture. Cualquier cambio de bot, mercado, lado, bookmaker o versión vuelve a pasar por su scorecard exacto y permanece en monitoreo si no está `Green`. La política no reclasifica apuestas históricas ni convierte a los challengers D/E/F en picks productivos.
+
 ## Archivos principales de esta entrega
 
 - `CornersPrediction.Application/Automation/BotC/BotCStrategy.cs`: configuración, thresholds, manifiesto y códigos.

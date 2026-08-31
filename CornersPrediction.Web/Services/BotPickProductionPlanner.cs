@@ -13,7 +13,7 @@ public static class BotPickProductionPlanner
     private const decimal DefaultMinimumExpectedValue = 0.020m;
     private const int MinimumPredictiveFixtures = 100;
     private const int ControlledTrialMinimumPredictiveFixtures = 30;
-    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-08-27-V2";
+    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-08-31-V3";
     private const string LegacyGoalsPolicyVersion = "GOALS-HISTORICAL-RECONSTRUCTION-V1";
     private const string LegacyCornersPolicyVersion = "CORNERS-HISTORICAL-RECONSTRUCTION-V1";
     private static readonly DateTime LegacyGoalsPolicyCutover = new(2026, 8, 27, 0, 0, 0);
@@ -109,8 +109,14 @@ public static class BotPickProductionPlanner
                 winner.Selection.SelectedSide,
                 winner.Selection.Source,
                 winner.Selection.AutomationVersion);
-            var stakeUnits = ResolveStakeUnits(winner.Selection, family, performance);
-            var controlledTrial = IsControlledGoalsTrial(performance, family, winner.Selection.MarketType);
+            var stakeUnits = ResolveStakeUnits(winner.Selection, winner.BotKey, family, performance);
+            var controlledTrial = IsControlledGoalsTrial(
+                performance,
+                winner.BotKey,
+                family,
+                winner.Selection.MarketType,
+                winner.Selection.SelectedSide,
+                winner.Selection.Source);
             var signalKey = SignalKey(winner.Selection);
             var sameSignal = ranked
                 .Where(candidate => SignalKey(candidate.Selection) == signalKey)
@@ -369,7 +375,13 @@ public static class BotPickProductionPlanner
         var green = performance.PredictiveFixtures >= MinimumPredictiveFixtures
             && performance.TrafficLight.Equals("Green", StringComparison.OrdinalIgnoreCase)
             && !performance.ProductionBlocked;
-        var controlledTrial = IsControlledGoalsTrial(performance, family, selection.MarketType);
+        var controlledTrial = IsControlledGoalsTrial(
+            performance,
+            botKey,
+            family,
+            selection.MarketType,
+            selection.SelectedSide,
+            selection.Source);
         if (!green && !controlledTrial && performance.PredictiveFixtures < MinimumPredictiveFixtures)
             return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures}, ROI positivo, calibración <= 5 pp y Brier mejor que mercado";
         if (!green && !controlledTrial)
@@ -564,21 +576,34 @@ public static class BotPickProductionPlanner
 
     private static decimal ResolveStakeUnits(
         BotPickSelectionViewModel selection,
+        string botKey,
         string family,
         BotPerformanceScorecardViewModel? performance)
     {
-        if (IsControlledGoalsTrial(performance, family, selection.MarketType))
+        if (IsControlledGoalsTrial(
+                performance,
+                botKey,
+                family,
+                selection.MarketType,
+                selection.SelectedSide,
+                selection.Source))
             return 0.5m;
         return family == "CORNERS" && selection.MarketType == "AwayTeamCorners" ? 0.5m : 1m;
     }
 
     private static bool IsControlledGoalsTrial(
         BotPerformanceScorecardViewModel? performance,
+        string botKey,
         string family,
-        string marketType) =>
+        string marketType,
+        string selectedSide,
+        string bookmaker) =>
         performance is not null
+        && NormalizeBotKey(botKey) == "C2026"
         && family.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
-        && marketType is "HomeTeamGoals" or "AwayTeamGoals"
+        && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
+        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
+        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase)
         && performance.PredictiveFixtures >= ControlledTrialMinimumPredictiveFixtures
         && performance.PredictiveFixtures < MinimumPredictiveFixtures
         && performance.Yield is > 0m

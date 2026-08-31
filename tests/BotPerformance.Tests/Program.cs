@@ -57,6 +57,8 @@ EqualDecimal(1m, eligible.MaxStakeUnits, "Green stake cap");
 // It must not be vetoed by a BotFamily aggregate polluted by paused TotalGoals.
 var controlledTrialCard = greenSide with
 {
+    BotKey = "C2026",
+    AutomationVersion = "AutomatedCornersBotV1.0-C2026",
     PredictiveResolved = 45,
     PredictiveFixtures = 45,
     Yield = 0.08m,
@@ -65,9 +67,13 @@ var controlledTrialCard = greenSide with
     TrafficLight = "Amber",
     ProductionBlocked = false
 };
-var controlledTrialCards = new[] { controlledTrialCard, redGoalsFamily };
+var controlledTrialCards = new[]
+{
+    controlledTrialCard,
+    redGoalsFamily with { BotKey = "C2026" }
+};
 var controlledTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    controlledTrialCards, "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+    controlledTrialCards, "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (!controlledTrial.CanPublish)
     throw new InvalidOperationException($"Healthy GOALS controlled trial was blocked: {controlledTrial.Reason}");
 Equal("ControlledTrial", controlledTrial.Tier ?? string.Empty, "controlled-trial eligibility tier");
@@ -75,39 +81,45 @@ EqualDecimal(0.5m, controlledTrial.MaxStakeUnits, "controlled-trial stake cap");
 
 var homeGoalsTrialCard = controlledTrialCard with { MarketType = "HomeTeamGoals" };
 var homeGoalsTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [homeGoalsTrialCard], "D2026", "GOALS", "HomeTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
-if (!homeGoalsTrial.CanPublish || homeGoalsTrial.Tier != "ControlledTrial")
-    throw new InvalidOperationException("Healthy HomeTeamGoals did not enter the controlled trial.");
+    [homeGoalsTrialCard], "C2026", "GOALS", "HomeTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
+if (homeGoalsTrial.CanPublish)
+    throw new InvalidOperationException("HomeTeamGoals entered the frozen AwayTeamGoals trial.");
+
+var challengerTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
+    [controlledTrialCard with { BotKey = "D2026", AutomationVersion = "AutomatedCornersBotV1.0-D2026" }],
+    "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+if (challengerTrial.CanPublish)
+    throw new InvalidOperationException("A D/E/F challenger entered C2026's controlled trial.");
 
 var unhealthyTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [controlledTrialCard with { Yield = 0m }], "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+    [controlledTrialCard with { Yield = 0m }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (unhealthyTrial.CanPublish) throw new InvalidOperationException("GOALS without positive yield entered the controlled trial.");
 var uncalibratedTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [controlledTrialCard with { CalibrationGap = 0.051d }], "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+    [controlledTrialCard with { CalibrationGap = 0.051d }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (uncalibratedTrial.CanPublish) throw new InvalidOperationException("GOALS outside the calibration limit entered the controlled trial.");
 var worseThanMarketTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [controlledTrialCard with { DeltaBrier = 0.001d }], "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+    [controlledTrialCard with { DeltaBrier = 0.001d }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (worseThanMarketTrial.CanPublish) throw new InvalidOperationException("GOALS with positive delta Brier entered the controlled trial.");
 var undersampledTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [controlledTrialCard with { PredictiveFixtures = 29 }], "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, freshOdds, now);
+    [controlledTrialCard with { PredictiveFixtures = 29 }], "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, freshOdds, now);
 if (undersampledTrial.CanPublish) throw new InvalidOperationException("GOALS with fewer than 30 independent fixtures entered the controlled trial.");
 
 var quarter = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    controlledTrialCards, "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.25m, freshOdds, now);
+    controlledTrialCards, "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.25m, freshOdds, now);
 if (quarter.CanPublish) throw new InvalidOperationException("Quarter line reached binary-EV production.");
 
 var stale = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    controlledTrialCards, "D2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 1.5m, now.AddHours(-3), now);
+    controlledTrialCards, "C2026", "GOALS", "AwayTeamGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 1.5m, now.AddHours(-3), now);
 if (stale.CanPublish) throw new InvalidOperationException("Stale odds reached the controlled trial.");
 
 var mutableOdds = AutomatedBotProductionEligibilityPolicy.Evaluate(
     controlledTrialCards,
-    "D2026",
+    "C2026",
     "GOALS",
     "AwayTeamGoals",
     "Over",
     "Pinnacle",
-    "AutomatedCornersBotV1.0-D2026",
+    "AutomatedCornersBotV1.0-C2026",
     1.5m,
     freshOdds,
     now,
@@ -116,12 +128,12 @@ if (mutableOdds.CanPublish) throw new InvalidOperationException("Mutable odds re
 
 var unprovenBookmaker = AutomatedBotProductionEligibilityPolicy.Evaluate(
     controlledTrialCards,
-    "D2026",
+    "C2026",
     "GOALS",
     "AwayTeamGoals",
     "Over",
     "Betano",
-    "AutomatedCornersBotV1.0-D2026",
+    "AutomatedCornersBotV1.0-C2026",
     1.5m,
     freshOdds,
     now);
@@ -129,12 +141,12 @@ if (unprovenBookmaker.CanPublish) throw new InvalidOperationException("A bookmak
 
 var unprovenSide = AutomatedBotProductionEligibilityPolicy.Evaluate(
     controlledTrialCards,
-    "D2026",
+    "C2026",
     "GOALS",
     "AwayTeamGoals",
     "Under",
     "Pinnacle",
-    "AutomatedCornersBotV1.0-D2026",
+    "AutomatedCornersBotV1.0-C2026",
     1.5m,
     freshOdds,
     now);
@@ -142,12 +154,12 @@ if (unprovenSide.CanPublish) throw new InvalidOperationException("A side without
 
 var unprovenVersion = AutomatedBotProductionEligibilityPolicy.Evaluate(
     controlledTrialCards,
-    "D2026",
+    "C2026",
     "GOALS",
     "AwayTeamGoals",
     "Over",
     "Pinnacle",
-    "AutomatedCornersBotV2.0-D2026",
+    "AutomatedCornersBotV2.0-C2026",
     1.5m,
     freshOdds,
     now);
@@ -155,7 +167,7 @@ if (unprovenVersion.CanPublish) throw new InvalidOperationException("A new bot v
 
 var totalGoalsTrialCard = controlledTrialCard with { MarketType = "TotalGoals" };
 var totalGoalsTrial = AutomatedBotProductionEligibilityPolicy.Evaluate(
-    [totalGoalsTrialCard], "D2026", "GOALS", "TotalGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-D2026", 2.5m, freshOdds, now);
+    [totalGoalsTrialCard], "C2026", "GOALS", "TotalGoals", "Over", "Pinnacle", "AutomatedCornersBotV1.0-C2026", 2.5m, freshOdds, now);
 if (totalGoalsTrial.CanPublish) throw new InvalidOperationException("TotalGoals entered a controlled trial.");
 
 var damagedMarket = AutomatedBotProductionEligibilityPolicy.Evaluate(
@@ -173,7 +185,7 @@ var cornersFamilyVeto = AutomatedBotProductionEligibilityPolicy.Evaluate(
 if (cornersFamilyVeto.CanPublish) throw new InvalidOperationException("A Red non-GOALS family did not veto production.");
 
 Console.WriteLine("PASS Green eligibility exposes a 1u authoritative cap");
-Console.WriteLine("PASS healthy exact GOALS segments enter a 0.5u controlled trial");
+Console.WriteLine("PASS the frozen C2026 AwayTeamGoals Over cohort enters a 0.5u controlled trial");
 Console.WriteLine("PASS controlled trial is fail-closed by side/bookmaker/version, freshness, snapshot and market health");
 Console.WriteLine("PASS TotalGoals remains paused and non-GOALS retains its family veto");
 

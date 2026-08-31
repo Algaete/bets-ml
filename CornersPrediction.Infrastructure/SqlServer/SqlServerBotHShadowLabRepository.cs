@@ -111,6 +111,63 @@ public sealed class SqlServerBotHShadowLabRepository : IBotHShadowLabReadReposit
         return rows;
     }
 
+    public async Task<IReadOnlyList<BotHThresholdAnalysisDto>> GetThresholdAnalysisAsync(
+        BotHThresholdAnalysisFilter filter,
+        CancellationToken cancellationToken)
+    {
+        var utcNow = DateTime.UtcNow;
+        BotHShadowLab.Validate(filter, utcNow);
+        var asOfUtc = BotHShadowLab.NormalizeAsOfUtc(filter.AsOfUtc, utcNow);
+
+        await using var connection = new SqlConnection(_connectionString);
+        var rows = (await connection.QueryAsync<BotHThresholdAnalysisDto>(
+            new CommandDefinition(
+                "dbo.sp_GetBotH2026ThresholdAnalysis",
+                new
+                {
+                    AsOfUtc = asOfUtc,
+                    ConfigurationVersion = Normalize(filter.ConfigurationVersion),
+                    MarketType = Normalize(filter.MarketType),
+                    Selection = Normalize(filter.Selection),
+                    filter.AnalysisVersion,
+                    filter.MinimumFinalProbability,
+                    filter.MinimumFinalEdge,
+                    filter.MinimumFinalExpectedValue,
+                    filter.MinimumDataQualityScore,
+                    filter.MinimumContextAgreementScore,
+                    filter.MinimumOdds,
+                    filter.MaximumOdds,
+                    filter.DevelopmentFraction
+                },
+                commandType: CommandType.StoredProcedure,
+                commandTimeout: 120,
+                cancellationToken: cancellationToken))).AsList();
+
+        var expectedSplits = new[] { "Overall", "Development", "Holdout" };
+        if (rows.Count != expectedSplits.Length
+            || !rows.Select(row => row.Split).SequenceEqual(expectedSplits)
+            || rows.Any(row => !row.ReadOnly
+                || row.Deployable
+                || !row.AnalysisVersion.Equals(BotHShadowLab.ThresholdAnalysisVersion, StringComparison.Ordinal)
+                || !row.PromotionState.Equals(BotHShadowLab.PromotionState, StringComparison.Ordinal)
+                || !row.UnitOfAnalysis.Equals(BotHShadowLab.ThresholdAnalysisUnitOfAnalysis, StringComparison.Ordinal)
+                || Math.Abs((row.AsOfUtc - asOfUtc).TotalMilliseconds) > 1.1d
+                || !string.Equals(row.ConfigurationVersion, Normalize(filter.ConfigurationVersion), StringComparison.Ordinal)
+                || !string.Equals(row.MarketType, Normalize(filter.MarketType), StringComparison.Ordinal)
+                || !string.Equals(row.Selection, Normalize(filter.Selection), StringComparison.Ordinal)
+                || row.MinimumFinalProbability != filter.MinimumFinalProbability
+                || row.MinimumFinalEdge != filter.MinimumFinalEdge
+                || row.MinimumFinalExpectedValue != filter.MinimumFinalExpectedValue
+                || row.MinimumDataQualityScore != filter.MinimumDataQualityScore
+                || row.MinimumContextAgreementScore != filter.MinimumContextAgreementScore
+                || row.MinimumOdds != filter.MinimumOdds
+                || row.MaximumOdds != filter.MaximumOdds
+                || row.DevelopmentFraction != filter.DevelopmentFraction))
+            throw new InvalidDataException("Bot H threshold analysis violated its read-only contract.");
+
+        return rows;
+    }
+
     private static void ValidateRows(
         IReadOnlyList<BotHShadowEvaluationDto> rows,
         DateTime asOfUtc)

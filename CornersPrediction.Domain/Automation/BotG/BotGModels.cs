@@ -31,6 +31,12 @@ public sealed record BotGHistoryObservation(
     double ValueFor,
     double ValueAgainst);
 
+public sealed record BotGBaseModelLineage(
+    string LegacyModelVersion,
+    DateTime? LegacyTrainedThroughUtc,
+    string Model2026Version,
+    DateTime? Model2026TrainedThroughUtc);
+
 public sealed record BotGBasePredictions
 {
     public double LegacyTotal { get; init; }
@@ -40,9 +46,12 @@ public sealed record BotGBasePredictions
     public double Model2026Home { get; init; }
     public double Model2026Away { get; init; }
     public string LegacyModelVersion { get; init; } = "goals_v1";
-    public string Model2026Version { get; init; } = "goals_deep_tuned_v2";
+    public string Model2026Version { get; init; } = string.Empty;
     public DateTime? LegacyTrainedThroughUtc { get; init; }
     public DateTime? Model2026TrainedThroughUtc { get; init; }
+    public BotGBaseModelLineage? TotalGoalsLineage { get; init; }
+    public BotGBaseModelLineage? HomeTeamGoalsLineage { get; init; }
+    public BotGBaseModelLineage? AwayTeamGoalsLineage { get; init; }
 
     public double LegacyFor(BotGMarketType market) => market switch
     {
@@ -57,6 +66,20 @@ public sealed record BotGBasePredictions
         BotGMarketType.AwayTeamGoals => Model2026Away,
         _ => Model2026Total
     };
+
+    public BotGBaseModelLineage LineageFor(BotGMarketType market) => market switch
+    {
+        BotGMarketType.TotalGoals => TotalGoalsLineage ?? LegacyLineageFallback(),
+        BotGMarketType.HomeTeamGoals => HomeTeamGoalsLineage ?? LegacyLineageFallback(),
+        BotGMarketType.AwayTeamGoals => AwayTeamGoalsLineage ?? LegacyLineageFallback(),
+        _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unsupported Bot G market.")
+    };
+
+    private BotGBaseModelLineage LegacyLineageFallback() => new(
+        LegacyModelVersion,
+        LegacyTrainedThroughUtc,
+        Model2026Version,
+        Model2026TrainedThroughUtc);
 }
 
 public sealed record BotGFeatureBuildInput(
@@ -370,6 +393,8 @@ public sealed record BotGDecisionInput
     public double ContextAgreementScore { get; init; }
     public double ModelDisagreement { get; init; }
     public int HistoricalMatches { get; init; }
+    public bool FootballIntelligenceEvidenceRequired { get; init; }
+    public bool FootballIntelligenceEvidenceUsable { get; init; }
 }
 
 public sealed record BotGCandidate

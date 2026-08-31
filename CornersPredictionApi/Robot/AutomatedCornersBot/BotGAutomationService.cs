@@ -400,6 +400,7 @@ public sealed class BotGAutomationService
                     : MapHistory(context.AwayAsAwayMatches, quote.AwayTeam, quote.PredictionTimestampUtc),
                 market), configuration);
             var vector = features.ToNumericVector();
+            var baseModelLineage = predictions.LineageFor(quote.MarketType);
             var meta = _metaModel.Predict(new BotGMetaModelInput(
                 configuration.FeatureSchemaVersion,
                 quote.PredictionTimestampUtc,
@@ -409,8 +410,8 @@ public sealed class BotGAutomationService
                 market.SelectedNoVigProbability,
                 vector,
                 configuration,
-                predictions.LegacyModelVersion,
-                predictions.Model2026Version,
+                baseModelLineage.LegacyModelVersion,
+                baseModelLineage.Model2026Version,
                 quote.League,
                 quote.Line));
             var candidateProbability = meta.IsAvailable
@@ -479,7 +480,11 @@ public sealed class BotGAutomationService
                 DataQualityScore = features.DataQualityScore,
                 ContextAgreementScore = features.ContextAgreementScore,
                 ModelDisagreement = features.ModelDisagreement,
-                HistoricalMatches = features.HistoryCount
+                HistoricalMatches = features.HistoryCount,
+                FootballIntelligenceEvidenceRequired = footballIntelligenceConfiguration.Enabled,
+                FootballIntelligenceEvidenceUsable =
+                    footballIntelligence.HomeEvidenceStatus == IntelligenceEvidenceStatus.Available
+                    || footballIntelligence.AwayEvidenceStatus == IntelligenceEvidenceStatus.Available
             }, configuration);
 
             var snapshot = SerializeSnapshot(new
@@ -487,6 +492,8 @@ public sealed class BotGAutomationService
                 features,
                 lineage = new
                 {
+                    trainingContractVersion = BotGConfiguration.DefaultTrainingContractVersion,
+                    marketType = quote.MarketType,
                     sourceRow.PartidoProximoCuotaId,
                     quote.SourceOddsId,
                     immutableOddsSnapshot = true,
@@ -494,10 +501,10 @@ public sealed class BotGAutomationService
                     quote.PredictionTimestampUtc,
                     quote.FixtureDateUtc,
                     neutralMatch,
-                    predictions.LegacyModelVersion,
-                    predictions.LegacyTrainedThroughUtc,
-                    predictions.Model2026Version,
-                    predictions.Model2026TrainedThroughUtc,
+                    baseModelLineage.LegacyModelVersion,
+                    baseModelLineage.LegacyTrainedThroughUtc,
+                    baseModelLineage.Model2026Version,
+                    baseModelLineage.Model2026TrainedThroughUtc,
                     meta.ModelVersion,
                     meta.TrainedThroughUtc
                 },
@@ -510,6 +517,8 @@ public sealed class BotGAutomationService
                 {
                     enabled = footballIntelligenceConfiguration.Enabled,
                     footballIntelligenceConfiguration.Version,
+                    homeCutoffAtUtc = footballIntelligenceSnapshot?.Home?.CutoffAtUtc,
+                    awayCutoffAtUtc = footballIntelligenceSnapshot?.Away?.CutoffAtUtc,
                     probabilityBeforeFootballIntelligence,
                     expectedValueBeforeFootballIntelligence,
                     result = footballIntelligence
@@ -622,7 +631,7 @@ public sealed class BotGAutomationService
         DecisionReasons = decision.Reasons,
         Published = false,
         Shadow = configuration.ShadowMode,
-        BaseModelVersion = $"legacy:{predictions.LegacyModelVersion}|2026:{predictions.Model2026Version}",
+        BaseModelVersion = FormatBaseModelVersion(predictions.LineageFor(quote.MarketType)),
         MetaModelVersion = meta.ModelVersion,
         CalibrationVersion = calibration.Version,
         UncertaintyVersion = uncertainty.Version,
@@ -686,7 +695,7 @@ public sealed class BotGAutomationService
             Shadow = configuration.ShadowMode,
             BaseModelVersion = predictions is null
                 ? string.Empty
-                : $"legacy:{predictions.LegacyModelVersion}|2026:{predictions.Model2026Version}",
+                : FormatBaseModelVersion(predictions.LineageFor(quote.MarketType)),
             UncertaintyVersion = uncertainty.Version,
             FeatureSnapshotJson = SerializeSnapshot(new
             {
@@ -779,14 +788,25 @@ public sealed class BotGAutomationService
         var homeValue = home2026.PredictionClipped;
         var awayValue = away2026.PredictionClipped;
         var totalValue = total2026.PredictionClipped;
+        NewGenerationPredictionResult? swappedHome2026 = null;
+        NewGenerationPredictionResult? swappedAway2026 = null;
+        NewGenerationPredictionResult? swappedTotal2026 = null;
         if (swapped2026 is not null)
         {
-            homeValue = Average(homeValue, RequirePrediction(swapped2026, NewGenerationModelDefinitions.AwayGoals).PredictionClipped);
-            awayValue = Average(awayValue, RequirePrediction(swapped2026, NewGenerationModelDefinitions.HomeGoals).PredictionClipped);
-            totalValue = Average(totalValue, RequirePrediction(swapped2026, NewGenerationModelDefinitions.TotalGoals).PredictionClipped);
+            swappedAway2026 = RequirePrediction(swapped2026, NewGenerationModelDefinitions.AwayGoals);
+            swappedHome2026 = RequirePrediction(swapped2026, NewGenerationModelDefinitions.HomeGoals);
+            swappedTotal2026 = RequirePrediction(swapped2026, NewGenerationModelDefinitions.TotalGoals);
+            homeValue = Average(homeValue, swappedAway2026.PredictionClipped);
+            awayValue = Average(awayValue, swappedHome2026.PredictionClipped);
+            totalValue = Average(totalValue, swappedTotal2026.PredictionClipped);
         }
 
-        var cutoffs = new[] { home2026, away2026, total2026 }
+        var allUsedModels = new NewGenerationPredictionResult?[]
+            { home2026, away2026, total2026, swappedHome2026, swappedAway2026, swappedTotal2026 }
+            .Where(value => value is not null)
+            .Cast<NewGenerationPredictionResult>()
+            .ToArray();
+        var cutoffs = allUsedModels
             .Select(value => ParseUtc(value.TrainedThrough, $"{value.Target} trainedThrough"))
             .ToArray();
         return new BotGBasePredictions
@@ -798,13 +818,42 @@ public sealed class BotGAutomationService
             Model2026Home = homeValue,
             Model2026Away = awayValue,
             LegacyModelVersion = "goals_v1",
-            Model2026Version = string.Join("+", new[] { home2026, away2026, total2026 }
+            Model2026Version = string.Join("+", allUsedModels
                 .Select(value => value.ModelVersion ?? value.Target)
-                .Distinct(StringComparer.Ordinal)),
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)),
             LegacyTrainedThroughUtc = LegacyGoalsCutoffUtc,
-            Model2026TrainedThroughUtc = cutoffs.Max()
+            Model2026TrainedThroughUtc = cutoffs.Max(),
+            TotalGoalsLineage = BuildBaseModelLineage(total2026, swappedTotal2026),
+            HomeTeamGoalsLineage = BuildBaseModelLineage(home2026, swappedAway2026),
+            AwayTeamGoalsLineage = BuildBaseModelLineage(away2026, swappedHome2026)
         };
     }
+
+    private static BotGBaseModelLineage BuildBaseModelLineage(
+        NewGenerationPredictionResult primary,
+        NewGenerationPredictionResult? neutralCounterpart)
+    {
+        var models = new[] { primary, neutralCounterpart }
+            .Where(value => value is not null)
+            .Cast<NewGenerationPredictionResult>()
+            .ToArray();
+        var version = string.Join("+", models
+            .Select(value => value.ModelVersion ?? value.Target)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal));
+        var trainedThrough = models
+            .Select(value => ParseUtc(value.TrainedThrough, $"{value.Target} trainedThrough"))
+            .Max();
+        return new BotGBaseModelLineage(
+            "goals_v1",
+            LegacyGoalsCutoffUtc,
+            version,
+            trainedThrough);
+    }
+
+    private static string FormatBaseModelVersion(BotGBaseModelLineage lineage) =>
+        $"legacy:{lineage.LegacyModelVersion}|2026:{lineage.Model2026Version}";
 
     private BotGOutcomeDistribution? ResolveOutcomeDistribution(
         decimal line,

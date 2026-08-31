@@ -11,6 +11,7 @@ var tests = new (string Name, Action Run)[]
 {
     ("Scorecard windows are fixed at 7/30/90", ScorecardWindowsAreFixed),
     ("Query contract rejects future as-of and invalid ranges", QueryContractIsFailClosed),
+    ("Threshold replay contract is versioned and fail-closed", ThresholdAnalysisContractIsFailClosed),
     ("Asian settlement handles full results and pushes", FullAsianSettlement),
     ("Asian settlement handles quarter-line half results", QuarterAsianSettlement),
     ("Settlement rejects unsupported inputs", SettlementRejectsInvalidInputs),
@@ -19,6 +20,8 @@ var tests = new (string Name, Action Run)[]
     ("Migration parses with SQL Server ScriptDom", MigrationParsesWithScriptDom),
     ("Dynamic settlement is official, unique and temporal", DynamicSettlementIsFailClosed),
     ("Scorecards are shadow-only and economic", ScorecardsAreHonest),
+    ("Scorecards bound evidence before reconciliation", ScorecardsBoundEvidenceFirst),
+    ("Threshold replay is chronological and read-only", ThresholdReplayIsChronologicalAndReadOnly),
     ("API and repository remain read-only", SurfaceIsReadOnly),
     ("Controller rejects a future as-of without querying", ControllerRejectsFutureAsOf),
     ("Controller exposes GET actions only", ControllerExposesGetOnly)
@@ -57,6 +60,24 @@ static void QueryContractIsFailClosed()
         new BotHShadowEvaluationFilter(AsOfUtc: now, PageSize: 1001), now));
     BotHShadowLab.Validate(
         new BotHShadowEvaluationFilter(now.AddDays(-1), now, now, Page: 1, PageSize: 1000), now);
+}
+
+static void ThresholdAnalysisContractIsFailClosed()
+{
+    var now = new DateTime(2026, 8, 27, 12, 0, 0, DateTimeKind.Utc);
+    BotHShadowLab.Validate(new BotHThresholdAnalysisFilter(AsOfUtc: now), now);
+    Throws<ArgumentException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, AnalysisVersion: "future-version"), now));
+    Throws<ArgumentException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, MarketType: "CombinedCorners"), now));
+    Throws<ArgumentException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, Selection: "Both"), now));
+    Throws<ArgumentOutOfRangeException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, MinimumFinalProbability: 1.01m), now));
+    Throws<ArgumentException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, MinimumOdds: 2.3m, MaximumOdds: 2.2m), now));
+    Throws<ArgumentOutOfRangeException>(() => BotHShadowLab.Validate(
+        new BotHThresholdAnalysisFilter(AsOfUtc: now, DevelopmentFraction: 0.49m), now));
 }
 
 static void FullAsianSettlement()
@@ -194,6 +215,45 @@ static void ScorecardsAreHonest()
     Contains(sql, "UnsafeOrUnavailable");
 }
 
+static void ScorecardsBoundEvidenceFirst()
+{
+    var sql = Migration();
+    var procedure = Slice(
+        sql,
+        "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ShadowScorecards",
+        "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ThresholdAnalysis");
+    Contains(procedure, "FROM dbo.fn_BotH2026ShadowLabWindow");
+    Contains(procedure, "DATEADD(DAY, -90, @AsOfUtc)");
+    Contains(procedure, "@ConfigurationVersion");
+    Contains(procedure, "CREATE CLUSTERED INDEX CX_BotHLab_Scorecard");
+    NotContains(procedure, "FROM dbo.fn_BotH2026ShadowLab(@AsOfUtc)");
+    Contains(sql, "IX_MatchHistory_BotH_ApiFixture");
+    Contains(sql, "IX_MatchHistory_BotH_CanonicalDate");
+}
+
+static void ThresholdReplayIsChronologicalAndReadOnly()
+{
+    var sql = Migration();
+    var procedure = Slice(
+        sql,
+        "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ThresholdAnalysis",
+        "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ShadowStatus");
+    Contains(procedure, "bot-h-threshold-what-if-1.0.0");
+    Contains(procedure, "WHERE lab.SettlementState = N'Settled'");
+    Contains(procedure, "PARTITION BY evidence.FixtureKey");
+    Contains(procedure, "@MarketType IS NULL AND evidence.MarketType IN");
+    Contains(procedure, "@Selection IS NULL OR evidence.Selection = @Selection");
+    Contains(procedure, "ORDER BY\n                    evidence.PredictionTimestampUtc");
+    Contains(procedure, "DENSE_RANK() OVER (ORDER BY dates.FixtureDateUtc)");
+    Contains(procedure, "FIRST_ELIGIBLE_PER_FIXTURE");
+    Contains(procedure, "ReadOnly = CONVERT(BIT, 1)");
+    Contains(procedure, "Deployable = CONVERT(BIT, 0)");
+    Contains(procedure, "PromotionState = N'SHADOW_ONLY'");
+    NotContains(procedure, "AutomatedCornerBetSelections");
+    NotContains(procedure, "UPDATE dbo.");
+    NotContains(procedure, "DELETE FROM dbo.");
+}
+
 static void SurfaceIsReadOnly()
 {
     var root = FindRepositoryRoot();
@@ -205,11 +265,13 @@ static void SurfaceIsReadOnly()
     Contains(controller, "[HttpGet(\"status\")]");
     Contains(controller, "[HttpGet(\"evaluations\")]");
     Contains(controller, "[HttpGet(\"scorecards\")]");
+    Contains(controller, "[HttpGet(\"threshold-analysis\")]");
     NotContains(controller, "[HttpPost");
     NotContains(controller, "[HttpPut");
     NotContains(controller, "[HttpDelete");
     Contains(repository, "sp_GetBotH2026ShadowEvaluations");
     Contains(repository, "sp_GetBotH2026ShadowScorecards");
+    Contains(repository, "sp_GetBotH2026ThresholdAnalysis");
     NotContains(repository, "ExecuteAsync");
     NotContains(repository, "INSERT INTO");
     NotContains(repository, "UPDATE ");
@@ -247,7 +309,7 @@ static void ControllerExposesGetOnly()
         })
         .Where(value => value.Routes.Length > 0)
         .ToArray();
-    Equal(3, actions.Length);
+    Equal(4, actions.Length);
     if (actions.SelectMany(action => action.Routes)
         .Any(route => route.HttpMethods.Any(method => method != "GET")))
         throw new InvalidOperationException("Bot H controller exposed a mutating HTTP method.");
@@ -255,6 +317,17 @@ static void ControllerExposesGetOnly()
 
 static string Migration() => File.ReadAllText(Path.Combine(
     FindRepositoryRoot(), "CornersPredictionApi", "sql", "20260827_bot_h_shadow_lab.sql"));
+
+static string Slice(string value, string start, string end)
+{
+    var startIndex = value.IndexOf(start, StringComparison.Ordinal);
+    if (startIndex < 0)
+        throw new InvalidOperationException($"Could not find slice start {start}.");
+    var endIndex = value.IndexOf(end, startIndex + start.Length, StringComparison.Ordinal);
+    if (endIndex < 0)
+        throw new InvalidOperationException($"Could not find slice end {end}.");
+    return value[startIndex..endIndex];
+}
 
 static string FindRepositoryRoot()
 {
@@ -329,5 +402,13 @@ sealed class FakeBotHRepository : IBotHShadowLabReadRepository
     {
         Calls++;
         return Task.FromResult<IReadOnlyList<BotHShadowScorecardDto>>([]);
+    }
+
+    public Task<IReadOnlyList<BotHThresholdAnalysisDto>> GetThresholdAnalysisAsync(
+        BotHThresholdAnalysisFilter filter,
+        CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<BotHThresholdAnalysisDto>>([]);
     }
 }

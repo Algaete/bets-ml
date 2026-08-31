@@ -175,6 +175,10 @@ def apply_decisions(
     for row in result.itertuples(index=False):
         abstain: list[str] = []
         rejected: list[str] = []
+        if config.football_intelligence.enabled and not bool(
+            getattr(row, "FootballIntelligenceEvidenceUsable", False)
+        ):
+            abstain.append("FootballIntelligenceUnavailable")
         if not row.OrdinalEvidenceAvailable:
             abstain.append("InsufficientSettlementEvidence")
         if row.ProbabilityUncertainty > thresholds.maximum_uncertainty:

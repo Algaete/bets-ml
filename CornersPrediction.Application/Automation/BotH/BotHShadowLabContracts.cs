@@ -21,6 +21,25 @@ public sealed record BotHShadowScorecardFilter(
     DateTime? AsOfUtc = null,
     string? ConfigurationVersion = null);
 
+/// <summary>
+/// Replays stored, decision-time H evidence with alternate thresholds.  It is an
+/// analysis filter only: it cannot rewrite a captured decision or publish a pick.
+/// </summary>
+public sealed record BotHThresholdAnalysisFilter(
+    DateTime? AsOfUtc = null,
+    string? ConfigurationVersion = null,
+    string? MarketType = null,
+    string? Selection = null,
+    string AnalysisVersion = BotHShadowLab.ThresholdAnalysisVersion,
+    decimal MinimumFinalProbability = 0.56m,
+    decimal MinimumFinalEdge = 0.04m,
+    decimal MinimumFinalExpectedValue = 0.03m,
+    decimal MinimumDataQualityScore = 0.70m,
+    decimal MinimumContextAgreementScore = 0.70m,
+    decimal MinimumOdds = 1.60m,
+    decimal MaximumOdds = 2.20m,
+    decimal DevelopmentFraction = 0.70m);
+
 public sealed record BotHShadowEvaluationPage(
     IReadOnlyList<BotHShadowEvaluationDto> Items,
     long TotalRows,
@@ -134,6 +153,56 @@ public sealed class BotHShadowScorecardDto
     public string UnitOfAnalysis { get; init; } = "FIRST_APPROVED_PER_FIXTURE_CONFIGURATION";
 }
 
+/// <summary>
+/// One row per chronological split returned by the versioned H threshold replay.
+/// Overall, Development and Holdout share the same immutable evidence boundary and
+/// threshold metadata, making the result independently auditable.
+/// </summary>
+public sealed class BotHThresholdAnalysisDto
+{
+    public string AnalysisVersion { get; init; } = BotHShadowLab.ThresholdAnalysisVersion;
+    public DateTime AsOfUtc { get; init; }
+    public string? ConfigurationVersion { get; init; }
+    public string? MarketType { get; init; }
+    public string? Selection { get; init; }
+    public decimal MinimumFinalProbability { get; init; }
+    public decimal MinimumFinalEdge { get; init; }
+    public decimal MinimumFinalExpectedValue { get; init; }
+    public decimal MinimumDataQualityScore { get; init; }
+    public decimal MinimumContextAgreementScore { get; init; }
+    public decimal MinimumOdds { get; init; }
+    public decimal MaximumOdds { get; init; }
+    public decimal DevelopmentFraction { get; init; }
+    public DateTime? SplitBoundaryUtc { get; init; }
+    public string Split { get; init; } = string.Empty;
+    public long AvailableSettledEvaluations { get; init; }
+    public long EligibleEvaluations { get; init; }
+    public long SelectedPicks { get; init; }
+    public long Fixtures { get; init; }
+    public long Won { get; init; }
+    public long HalfWon { get; init; }
+    public long Pushes { get; init; }
+    public long HalfLost { get; init; }
+    public long Lost { get; init; }
+    public double? Stake { get; init; }
+    public double? ProfitLoss { get; init; }
+    public double? Yield { get; init; }
+    public double? AverageOdds { get; init; }
+    public double? AverageModelProbability { get; init; }
+    public double? AverageMarketProbability { get; init; }
+    public double? AverageEdge { get; init; }
+    public double? AverageExpectedValue { get; init; }
+    public double? ObservedEconomicOutcome { get; init; }
+    public double? CalibrationGap { get; init; }
+    public double? Brier { get; init; }
+    public double? MarketBrier { get; init; }
+    public double? DeltaBrier { get; init; }
+    public bool ReadOnly { get; init; } = true;
+    public bool Deployable { get; init; }
+    public string PromotionState { get; init; } = BotHShadowLab.PromotionState;
+    public string UnitOfAnalysis { get; init; } = BotHShadowLab.ThresholdAnalysisUnitOfAnalysis;
+}
+
 public sealed class BotHShadowLabStatusDto
 {
     public string BotKey { get; init; } = BotHShadowLab.BotKey;
@@ -163,6 +232,10 @@ public interface IBotHShadowLabReadRepository
     Task<IReadOnlyList<BotHShadowScorecardDto>> GetScorecardsAsync(
         BotHShadowScorecardFilter filter,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<BotHThresholdAnalysisDto>> GetThresholdAnalysisAsync(
+        BotHThresholdAnalysisFilter filter,
+        CancellationToken cancellationToken);
 }
 
 public static class BotHShadowLab
@@ -170,6 +243,8 @@ public static class BotHShadowLab
     public const string BotKey = "H2026";
     public const string PromotionState = "SHADOW_ONLY";
     public const string ScorecardUnitOfAnalysis = "FIRST_APPROVED_PER_FIXTURE_CONFIGURATION";
+    public const string ThresholdAnalysisVersion = "bot-h-threshold-what-if-1.0.0";
+    public const string ThresholdAnalysisUnitOfAnalysis = "FIRST_ELIGIBLE_PER_FIXTURE";
     public static readonly IReadOnlyList<int> ScorecardWindows = [7, 30, 90];
 
     public static DateTime NormalizeAsOfUtc(DateTime? value, DateTime utcNow)
@@ -204,6 +279,34 @@ public static class BotHShadowLab
         ArgumentNullException.ThrowIfNull(filter);
         _ = NormalizeAsOfUtc(filter.AsOfUtc, utcNow);
         ValidateToken(filter.ConfigurationVersion, nameof(filter.ConfigurationVersion), 80);
+    }
+
+    public static void Validate(BotHThresholdAnalysisFilter filter, DateTime utcNow)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        _ = NormalizeAsOfUtc(filter.AsOfUtc, utcNow);
+        ValidateToken(filter.ConfigurationVersion, nameof(filter.ConfigurationVersion), 80);
+        ValidateToken(filter.MarketType, nameof(filter.MarketType), 50);
+        ValidateToken(filter.Selection, nameof(filter.Selection), 10);
+        if (filter.MarketType is not null
+            && filter.MarketType is not ("TotalCorners" or "HomeTeamCorners" or "AwayTeamCorners"))
+            throw new ArgumentException("MarketType is not supported by Bot H.", nameof(filter.MarketType));
+        if (filter.Selection is not null && filter.Selection is not ("Over" or "Under"))
+            throw new ArgumentException("Selection must be Over or Under.", nameof(filter.Selection));
+        if (!string.Equals(filter.AnalysisVersion, ThresholdAnalysisVersion, StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"AnalysisVersion must be {ThresholdAnalysisVersion}.",
+                nameof(filter.AnalysisVersion));
+        ValidateRange(filter.MinimumFinalProbability, 0m, 1m, nameof(filter.MinimumFinalProbability));
+        ValidateRange(filter.MinimumFinalEdge, 0m, 1m, nameof(filter.MinimumFinalEdge));
+        ValidateRange(filter.MinimumFinalExpectedValue, 0m, 10m, nameof(filter.MinimumFinalExpectedValue));
+        ValidateRange(filter.MinimumDataQualityScore, 0m, 1m, nameof(filter.MinimumDataQualityScore));
+        ValidateRange(filter.MinimumContextAgreementScore, 0m, 1m, nameof(filter.MinimumContextAgreementScore));
+        ValidateRange(filter.MinimumOdds, 1.01m, 10m, nameof(filter.MinimumOdds));
+        ValidateRange(filter.MaximumOdds, 1.01m, 10m, nameof(filter.MaximumOdds));
+        if (filter.MaximumOdds < filter.MinimumOdds)
+            throw new ArgumentException("MaximumOdds must be greater than or equal to MinimumOdds.", nameof(filter));
+        ValidateRange(filter.DevelopmentFraction, 0.50m, 0.90m, nameof(filter.DevelopmentFraction));
     }
 
     public static BotHSettlementResult CalculateSettlement(
@@ -264,6 +367,12 @@ public static class BotHShadowLab
     {
         if (value is not null && (string.IsNullOrWhiteSpace(value) || value.Trim().Length > maximumLength))
             throw new ArgumentException($"{name} must be non-blank and at most {maximumLength} characters.", name);
+    }
+
+    private static void ValidateRange(decimal value, decimal minimum, decimal maximum, string name)
+    {
+        if (value < minimum || value > maximum)
+            throw new ArgumentOutOfRangeException(name, $"{name} must be between {minimum} and {maximum}.");
     }
 }
 
