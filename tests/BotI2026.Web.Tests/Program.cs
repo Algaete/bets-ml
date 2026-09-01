@@ -16,7 +16,8 @@ var tests = new (string Name, Action Run)[]
     ("Collection is protected against request forgery", CollectionRequiresAntiforgery),
     ("Razor surface is responsive, sortable and explicitly non-productive", RazorSurfaceIsSafeAndResponsive),
     ("Approved is labelled as shadow and never as permission to bet", ApprovedIsExplicitlyShadowOnly),
-    ("Approved badge has explicit accessible contrast", ApprovedBadgeHasExplicitContrast)
+    ("Approved badge has explicit accessible contrast", ApprovedBadgeHasExplicitContrast),
+    ("Bots and processes uses capability metadata instead of bot-key lists", BotAutomationCatalogIsDynamic)
 };
 
 var failures = 0;
@@ -228,6 +229,30 @@ static void ApprovedBadgeHasExplicitContrast()
     Contains(index, "background:");
     Check(!evaluations.Contains("\"Approved\" => \"text-bg-info\"", StringComparison.Ordinal),
         "Approved must not depend on Bootstrap's contextual badge contrast in the current theme.");
+}
+
+static void BotAutomationCatalogIsDynamic()
+{
+    var root = FindRepositoryRoot();
+    var view = File.ReadAllText(Path.Combine(
+        root, "CornersPrediction.Web", "Views", "BotAutomation", "Index.cshtml"));
+    var model = File.ReadAllText(Path.Combine(
+        root, "CornersPrediction.Web", "Models", "BotAutomation", "BotAutomationViewModels.cs"));
+
+    Contains(view, "bot.supportsRecommendationJobs === false");
+    Contains(view, "proceso automático independiente");
+    Contains(view, "type=\"checkbox\" value=\"${escapeHtml(bot.botKey)}\" disabled");
+    Contains(view, "bot.lifecycleLabel");
+    Contains(view, "bot.runtimeConfiguration");
+    Contains(view, "Ver configuración del proceso");
+    Contains(view, "bot.canEdit !== false");
+    Contains(view, "Worker independiente");
+    Contains(model, "SupportsRecommendationJobs");
+    Contains(model, "IsRetired");
+    Check(!view.Contains("key === 'C2026'", StringComparison.Ordinal)
+          && !view.Contains("key === 'F2026'", StringComparison.Ordinal)
+          && !view.Contains("!== 'B'", StringComparison.Ordinal),
+        "The administration screen must not maintain a hardcoded bot-key catalog.");
 }
 
 static HttpResponseMessage ResponseFor(HttpRequestMessage request, string failComponent)

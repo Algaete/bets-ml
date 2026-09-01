@@ -1,7 +1,9 @@
 using CornersPrediction.Web.Models.BotAutomation;
 using CornersPrediction.Web.Models.BotPicks;
 using CornersPrediction.Web.Services;
+using CornersPrediction.Web.Controllers;
 using CornersPrediction.Application.Automation;
+using System.Reflection;
 using System.Text.Json;
 
 if (args is ["--audit", var selectionsPath, var definitionsPath, var family])
@@ -591,6 +593,109 @@ var tests = new (string Name, Action Body)[]
         Contains("cinco estados", quarter.ProductionPlan.Reason);
     }),
     ("GOALS portfolio guard caps daily exposure without changing history", BotPickProductionExposureGuardTests.RunAll),
+    ("Bot Picks default dates keep next month's pending picks visible", BotPickPendingVisibilityTests.RunAll),
+    ("Bot Picks filters and renders every CORNERS, SHOTS and SOG market", () =>
+    {
+        var resolveMarket = typeof(BotPicksController).GetMethod(
+            "ResolveMarket",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Bot Picks market resolver was not found.");
+        var filterMarketFamily = typeof(BotPicksController).GetMethod(
+            "FilterMarketFamily",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Bot Picks family filter was not found.");
+        var cases = new[]
+        {
+            (Family: "corners", Markets: new[] { "TotalCorners", "HomeTeamCorners", "AwayTeamCorners" }),
+            (Family: "shots", Markets: new[] { "HomeTeamShots", "AwayTeamShots", "TotalShots" }),
+            (Family: "sog", Markets: new[] { "HomeTeamShotsOnGoal", "AwayTeamShotsOnGoal", "TotalShotsOnGoal" })
+        };
+
+        foreach (var current in cases)
+        {
+            var page = (BotPickMarketPageViewModel)resolveMarket.Invoke(null, [current.Family])!;
+            True(page.Options.Select(option => option.Value).SequenceEqual(current.Markets));
+            var candidates = current.Markets
+                .Select((market, index) => Pick(index + 1, "C2026", market))
+                .Append(Pick(99, "C2026", "TotalGoals"))
+                .ToArray();
+            var filtered = (IReadOnlyList<BotPickSelectionViewModel>)filterMarketFamily.Invoke(
+                null,
+                [candidates, current.Family])!;
+            True(filtered.Select(selection => selection.MarketType).SequenceEqual(current.Markets));
+        }
+
+        var currentDirectory = new DirectoryInfo(AppContext.BaseDirectory);
+        string? viewPath = null;
+        while (currentDirectory is not null)
+        {
+            var candidate = Path.Combine(
+                currentDirectory.FullName,
+                "CornersPrediction.Web",
+                "Views",
+                "BotPicks",
+                "Index.cshtml");
+            if (File.Exists(candidate))
+            {
+                viewPath = candidate;
+                break;
+            }
+            currentDirectory = currentDirectory.Parent;
+        }
+        True(viewPath is not null);
+        var view = File.ReadAllText(viewPath!);
+        foreach (var market in cases.SelectMany(current => current.Markets))
+            True(view.Contains($"normalized === '{market}'", StringComparison.Ordinal));
+    }),
+    ("retired Bot B keeps only unresolved rows and always remains 0u", () =>
+    {
+        var pendingCorners = Pick(9101, "B", "HomeTeamCorners");
+        var pendingShots = Pick(9102, "B", "TotalShots", home: "Other");
+        var settledCorners = Pick(9103, "B", "AwayTeamCorners", status: "Won", home: "Settled");
+        var active = Pick(9104, "C2026", "HomeTeamCorners", home: "Active");
+
+        var visible = BotPickVisibilityPolicy.Filter(
+            [pendingCorners, pendingShots, settledCorners, active]);
+        BotPickVisibilityPolicy.EnforceRetiredPendingMonitoring(visible);
+
+        True(visible.Contains(pendingCorners));
+        True(visible.Contains(pendingShots));
+        True(visible.Contains(active));
+        True(!visible.Contains(settledCorners));
+        Equal(0m, pendingCorners.ProductionPlan!.StakeUnits);
+        Equal(0m, pendingShots.ProductionPlan!.StakeUnits);
+        True(!pendingCorners.ProductionPlan.IsProductive);
+        Contains("retirado", pendingCorners.ProductionPlan.Reason);
+    }),
+    ("monitoring summary is date-indexed and never scans evidence JSON", () =>
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CornersPrediction.sln")))
+            directory = directory.Parent;
+        True(directory is not null);
+
+        var repository = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "CornersPredictionApi",
+            "Robot",
+            "AutomatedCornersBot",
+            "SqlAutomationRepository.cs"));
+        var methodStart = repository.IndexOf("GetMonitoringSummariesAsync", StringComparison.Ordinal);
+        var methodEnd = repository.IndexOf("private async Task<SqlConnection>", methodStart, StringComparison.Ordinal);
+        True(methodStart >= 0 && methodEnd > methodStart);
+        var monitoringMethod = repository[methodStart..methodEnd];
+        True(monitoringMethod.Contains("IX_AutomatedBotPickEvaluations_MonitoringWindow", StringComparison.Ordinal));
+        True(monitoringMethod.Contains("evaluation.BotKey <> N'G2026'", StringComparison.Ordinal));
+        True(!monitoringMethod.Contains("DecisionReasonsJson", StringComparison.Ordinal));
+
+        var indexes = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "CornersPredictionApi",
+            "SqlScripts",
+            "BotAutomationReadIndexes.sql"));
+        True(indexes.Contains("ON dbo.AutomatedBotPickEvaluations(MatchDate, MarketType, BotKey, Decision)", StringComparison.Ordinal));
+        True(indexes.Contains("IX_PartidosProximosCuotas_AutomationWindow", StringComparison.Ordinal));
+    }),
     ("H2026 is permanently classified as a shadow-only challenger", () =>
     {
         if (!RecommendationBotLifecycle.IsShadowOnly("H2026"))

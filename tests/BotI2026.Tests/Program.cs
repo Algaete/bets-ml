@@ -1,7 +1,11 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using AutomatedCornersBot.Api;
+using CornersPrediction.Application.Automation;
 using CornersPrediction.Application.Automation.BotI;
+using CornersPredictionApi.AutomationBots;
+using Microsoft.Extensions.Options;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 var tests = new (string Name, Action Run)[]
@@ -21,7 +25,8 @@ var tests = new (string Name, Action Run)[]
     ("Migration parses with SQL Server ScriptDom", MigrationParses),
     ("Timeline collector SQL parses with SQL Server ScriptDom", TimelineSqlParses),
     ("API exposes collection/read surface but no publication", ApiSurfaceIsSafe),
-    ("Automatic collector is enabled and isolated", AutomaticCollectorIsConfigured)
+    ("Automatic collector is enabled and isolated", AutomaticCollectorIsConfigured),
+    ("Automation catalog discovers active I2026 without making it runnable", AutomationCatalogDiscoversBotI)
 };
 
 var failures = 0;
@@ -325,6 +330,30 @@ static void AutomaticCollectorIsConfigured()
     Contains(worker, "IBotIShadowCollectorService");
     NotContains(worker, "AutomatedCornerBetSelections");
     Contains(program, "AddHostedService<BotIShadowCollectorWorker>()");
+    Contains(program, "AddSingleton<IAutomationBotCatalogContributor, BotIAutomationBotCatalogContributor>()");
+}
+
+static void AutomationCatalogDiscoversBotI()
+{
+    var enabled = new BotIAutomationBotCatalogContributor(Options.Create(
+        new BotIShadowCollectorOptions { Enabled = true }));
+    var catalog = AutomationBotCatalog.Merge([], [enabled]);
+    Equal(1, catalog.Count);
+    var bot = catalog[0];
+    Equal("I2026", bot.BotKey);
+    True(bot.IsEnabled);
+    True(bot.IsShadowOnly);
+    True(!bot.SupportsRecommendationJobs);
+    True(!bot.CanEdit);
+    True(!bot.CanClone);
+    Equal("Cada 15 minutos", bot.RuntimeConfiguration["Frecuencia"]);
+    Equal("Bloqueada · sólo Shadow", bot.RuntimeConfiguration["Publicación"]);
+    ContainsItem(bot.MarketFamilies, "CORNERS");
+    ContainsItem(bot.MarketFamilies, "GOALS");
+
+    var disabled = new BotIAutomationBotCatalogContributor(Options.Create(
+        new BotIShadowCollectorOptions { Enabled = false }));
+    Equal(0, AutomationBotCatalog.Merge([], [disabled]).Count);
 }
 
 static BotIShadowEvaluationDraft Evaluate(BotIMarketMovementInput input) =>

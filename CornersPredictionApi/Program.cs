@@ -10,6 +10,7 @@ using CornersPrediction.Application.RobustPickEvaluation;
 using CornersPrediction.Infrastructure;
 using CornersPrediction.Infrastructure.Persistence;
 using CornersPredictionApi.ApiFootball;
+using CornersPredictionApi.AutomationBots;
 using CornersPredictionApi.CompetitionFiltering;
 using CornersPredictionApi.NewGenerationMl;
 using CornersPredictionApi.RecommendationJobs;
@@ -123,6 +124,7 @@ builder.Services.AddOptions<BotIShadowCollectorOptions>()
         "Bot I shadow collector limits are invalid.")
     .ValidateOnStart();
 builder.Services.AddHostedService<BotIShadowCollectorWorker>();
+builder.Services.AddSingleton<IAutomationBotCatalogContributor, BotIAutomationBotCatalogContributor>();
 builder.Services.Configure<ApiFootballOptions>(builder.Configuration.GetSection(ApiFootballOptions.SectionName));
 builder.Services.AddHttpClient<ApiFootballClient>((serviceProvider, client) =>
 {
@@ -419,6 +421,7 @@ static async Task InitializeRobotDatabaseAsync(IServiceProvider services)
         await scope.ServiceProvider
             .GetRequiredService<FootballIntelligenceSchemaInitializer>()
             .EnsureReadyAsync(CancellationToken.None);
+        await EnsureBotAutomationReadIndexesAsync(scope.ServiceProvider, CancellationToken.None);
         await EnsureMatchHistoryPerformanceIndexesAsync(scope.ServiceProvider, CancellationToken.None);
         logger.LogInformation("Robot database objects are ready.");
     }
@@ -426,6 +429,30 @@ static async Task InitializeRobotDatabaseAsync(IServiceProvider services)
     {
         logger.LogError(exception, "Robot database initialization failed. Robot endpoints remain available for retry.");
     }
+}
+
+static async Task EnsureBotAutomationReadIndexesAsync(
+    IServiceProvider services,
+    CancellationToken cancellationToken)
+{
+    var environment = services.GetRequiredService<IWebHostEnvironment>();
+    var options = services
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<AutomatedBotOptions>>()
+        .Value;
+    var scriptPath = Path.Combine(environment.ContentRootPath, "SqlScripts", "BotAutomationReadIndexes.sql");
+    if (!File.Exists(scriptPath))
+    {
+        throw new FileNotFoundException("The bot-automation read index script was not found.", scriptPath);
+    }
+
+    var sql = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+    await using var connection = new SqlConnection(options.ResolveSqlConnectionString());
+    await connection.OpenAsync(cancellationToken);
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    command.CommandType = CommandType.Text;
+    command.CommandTimeout = 600;
+    await command.ExecuteNonQueryAsync(cancellationToken);
 }
 
 static async Task EnsureMatchHistoryPerformanceIndexesAsync(

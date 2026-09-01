@@ -557,7 +557,47 @@
             </select>
         </div>
     </div>
+    <div class="small text-muted mt-2">
+        Al ver “Todos” o “Pendiente”, los picks todavía abiertos se incluyen aunque sean anteriores a “Desde”, para que ninguno desaparezca antes de liquidarse. Los ya resueltos sí respetan exactamente el rango.
+    </div>
 </form>
+
+<details id="BotPicksMonitoringAudit" class="surface-panel mb-3" open>
+    <summary class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <span>
+            <strong>Diagnóstico del motor · no son apuestas</strong>
+            <small class="d-block text-muted">Confirma si los bots analizaron este mercado aunque no hayan publicado un pick.</small>
+        </span>
+        <span id="BotPicksMonitoringBadge" class="badge text-bg-light">Cargando…</span>
+    </summary>
+    <div class="mt-3">
+        <div class="alert alert-info py-2 small" role="note">
+            <strong>Cómo leerlo:</strong> “Gate productivo” significa que existió una señal, pero quedó en monitoreo a 0u por muestra, calibración o rendimiento. “Faltan datos” significa que el modelo se abstuvo antes de crear un pick.
+            Este bloque muestra los selectores del motor común (C–F y H); G e I mantienen su auditoría masiva en sus laboratorios Shadow.
+        </div>
+        <div id="BotPicksMonitoringLoading" class="small text-muted" role="status">Consultando auditoría…</div>
+        <div id="BotPicksMonitoringError" class="alert alert-warning py-2 d-none" role="alert"></div>
+        <div id="BotPicksMonitoringEmpty" class="small text-muted d-none">No hubo evaluaciones de selectores para estas fechas y este mercado.</div>
+        <div id="BotPicksMonitoringTableWrap" class="table-responsive d-none">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Bot</th>
+                        <th class="text-end">Partidos</th>
+                        <th class="text-end">Evaluaciones</th>
+                        <th class="text-end">Gate productivo</th>
+                        <th class="text-end">Faltan datos</th>
+                        <th class="text-end">Otros descartes</th>
+                        <th class="text-end">Shadow aprobado</th>
+                        <th class="text-end">Publicados</th>
+                        <th>Última revisión</th>
+                    </tr>
+                </thead>
+                <tbody id="BotPicksMonitoringBody"></tbody>
+            </table>
+        </div>
+    </div>
+</details>
 
 <section class="surface-panel bot-picks-recommendations-panel">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
@@ -574,6 +614,7 @@
             <select id="BotPicksTableBot" class="form-select form-select-sm">
                 <option value="">Todos los bots</option>
                 <option value="A">Bot A</option>
+                <option id="BotPicksRetiredBOption" value="B" hidden>Bot B · pendientes heredados</option>
                 <option value="C">Bot C</option>
                 <option value="D">Bot D</option>
                 <option value="E">Bot E</option>
@@ -879,6 +920,7 @@
     <script>
 		        (() => {
 		            const endpointUrl = '@Url.Action("Selections", "BotPicks")';
+                    const monitoringSummaryUrl = '@Url.Action("MonitoringSummary", "BotPicks")';
                     const intelligenceEndpointUrl = '@Url.Action("Intelligence", "BotPicks")';
                     const robustEvaluationEndpointUrl = '@Url.Action("RobustEvaluation", "BotPicks")';
                     const monthlyHistoryUrl = '@Url.Action("MonthlyHistory", "BotPicks", new { marketFamily })';
@@ -961,6 +1003,12 @@
             const scorecardError = document.getElementById('BotPicksScorecardError');
             const scorecardWrap = document.getElementById('BotPicksScorecardWrap');
             const scorecardBody = document.getElementById('BotPicksScorecardBody');
+            const monitoringLoading = document.getElementById('BotPicksMonitoringLoading');
+            const monitoringError = document.getElementById('BotPicksMonitoringError');
+            const monitoringEmpty = document.getElementById('BotPicksMonitoringEmpty');
+            const monitoringTableWrap = document.getElementById('BotPicksMonitoringTableWrap');
+            const monitoringBody = document.getElementById('BotPicksMonitoringBody');
+            const monitoringBadge = document.getElementById('BotPicksMonitoringBadge');
             const scorecardWindowButtons = Array.from(document.querySelectorAll('[data-scorecard-window]'));
             const summaryPeriod = document.getElementById('BotPicksSummaryPeriod');
             const bankrollChart = document.getElementById('BotPicksBankrollChart');
@@ -991,6 +1039,7 @@
             let tableSelections = [];
             let monthlyHistoryItems = [];
             let performanceScorecards = [];
+            let monitoringSummary = [];
             let activeDetailRequest = 0;
             let performanceWindow = 30;
             const pageSize = 20;
@@ -1015,7 +1064,7 @@
                 activeBotTab = '';
             }
 
-            if (!['', 'A', 'C', 'D', 'E', 'F', 'Legacy'].includes(tableBotKey)) {
+            if (!['', 'A', 'B', 'C', 'D', 'E', 'F', 'Legacy'].includes(tableBotKey)) {
                 tableBotKey = '';
             }
 
@@ -1278,6 +1327,7 @@
 
             const marketLabel = marketType => {
                 const normalized = String(marketType ?? '');
+                if (normalized === 'TotalCorners') return 'Corners totales';
                 if (normalized === 'HomeTeamCorners') return 'Corners local';
                 if (normalized === 'AwayTeamCorners') return 'Corners visita';
                 if (normalized === 'HomeTeamGoals') return 'Goles local';
@@ -1804,6 +1854,7 @@
 
             const toBettingMarketType = marketType => {
                 const normalized = String(marketType ?? '');
+                if (normalized === 'TotalCorners') return 'TotalCorners';
                 if (normalized === 'HomeTeamCorners') return 'HomeCorners';
                 if (normalized === 'AwayTeamCorners') return 'AwayCorners';
                 if (normalized === 'HomeTeamGoals') return 'HomeGoals';
@@ -2072,6 +2123,17 @@
 
             const updateBotTabs = baseItems => {
                 const countByBot = botKey => baseItems.filter(item => getBotInfo(item).key === botKey).length;
+                const retiredBCount = countByBot('B');
+                const retiredBOption = document.getElementById('BotPicksRetiredBOption');
+                if (retiredBOption) {
+                    retiredBOption.hidden = retiredBCount === 0;
+                    retiredBOption.disabled = retiredBCount === 0;
+                }
+                if (retiredBCount === 0 && tableBotKey === 'B') {
+                    tableBotKey = '';
+                    tableBotSelect.value = '';
+                    localStorage.setItem(`${storagePrefix}-table-bot`, tableBotKey);
+                }
                 const legacyCount = countByBot('Legacy');
                 legacyTab?.classList.toggle('d-none', legacyCount === 0);
                 legacyCard?.classList.toggle('d-none', legacyCount === 0);
@@ -3134,8 +3196,7 @@
                     }
 
                     robustEvaluationsById.clear();
-                    selections = (await response.json())
-                        .filter(item => getBotInfo(item).key !== 'B');
+                    selections = await response.json();
                     const browserQuery = new URLSearchParams(buildQuery().replace(/^\?/, ''));
                     browserQuery.delete('marketFamily');
                     browserQuery.set('market', marketFamily);
@@ -3317,6 +3378,60 @@
                     scorecardError.classList.remove('d-none');
                 } finally {
                     scorecardLoading.classList.add('d-none');
+                }
+            };
+
+            const renderMonitoringSummary = () => {
+                const totals = monitoringSummary.reduce((current, row) => ({
+                    fixtures: current.fixtures + Number(getValue(row, 'EvaluatedFixtures') ?? 0),
+                    rows: current.rows + Number(getValue(row, 'EvaluatedRows') ?? 0)
+                }), { fixtures: 0, rows: 0 });
+                monitoringBadge.textContent = monitoringSummary.length === 0
+                    ? 'Sin evaluaciones'
+                    : `${totals.fixtures} casos bot-partido · ${totals.rows} evaluaciones`;
+                monitoringBody.innerHTML = monitoringSummary.map(row => {
+                    const key = String(getValue(row, 'BotKey') ?? '-').toUpperCase();
+                    const label = key === 'A' ? 'Bot A' : `Bot ${key.replace('2026', '')}`;
+                    return `<tr>
+                        <td><span class="fw-semibold">${escapeHtml(label)}</span><div class="small text-muted">${escapeHtml(key)}</div></td>
+                        <td class="text-end">${escapeHtml(getValue(row, 'EvaluatedFixtures') ?? 0)}</td>
+                        <td class="text-end">${escapeHtml(getValue(row, 'EvaluatedRows') ?? 0)}</td>
+                        <td class="text-end"><span class="badge text-bg-warning">${escapeHtml(getValue(row, 'ProductionGateBlockedRows') ?? 0)}</span></td>
+                        <td class="text-end"><span class="badge text-bg-secondary">${escapeHtml(getValue(row, 'PendingDataRows') ?? 0)}</span></td>
+                        <td class="text-end">${escapeHtml(getValue(row, 'OtherRejectedRows') ?? 0)}</td>
+                        <td class="text-end">${escapeHtml(getValue(row, 'ApprovedShadowRows') ?? 0)}</td>
+                        <td class="text-end">${escapeHtml(getValue(row, 'PublishedRows') ?? 0)}</td>
+                        <td class="text-nowrap small">${escapeHtml(formatDate(getValue(row, 'LatestEvaluationAtUtc')))}</td>
+                    </tr>`;
+                }).join('');
+                monitoringEmpty.classList.toggle('d-none', monitoringSummary.length > 0);
+                monitoringTableWrap.classList.toggle('d-none', monitoringSummary.length === 0);
+            };
+
+            const loadMonitoringSummary = async () => {
+                monitoringLoading.classList.remove('d-none');
+                monitoringError.classList.add('d-none');
+                const query = new URLSearchParams();
+                if (dateFromInput.value) query.set('DateFrom', dateFromInput.value);
+                if (dateToInput.value) query.set('DateTo', dateToInput.value);
+                query.set('marketFamily', marketFamily);
+                try {
+                    const response = await fetch(`${monitoringSummaryUrl}?${query.toString()}`);
+                    if (!response.ok) throw new Error('No se pudo cargar el diagnóstico del motor.');
+                    monitoringSummary = await response.json();
+                    renderMonitoringSummary();
+                } catch (error) {
+                    monitoringSummary = [];
+                    monitoringBody.innerHTML = '';
+                    monitoringTableWrap.classList.add('d-none');
+                    monitoringEmpty.classList.add('d-none');
+                    monitoringBadge.textContent = 'No disponible';
+                    monitoringError.textContent = error instanceof Error
+                        ? error.message
+                        : 'No se pudo cargar el diagnóstico del motor.';
+                    monitoringError.classList.remove('d-none');
+                } finally {
+                    monitoringLoading.classList.add('d-none');
                 }
             };
 
@@ -4324,6 +4439,7 @@
             filtersForm.addEventListener('submit', event => {
                 event.preventDefault();
                 loadSelections();
+                loadMonitoringSummary();
             });
 
             const syncFlatStakeStep = () => {
@@ -4400,6 +4516,7 @@
                 loadSelections();
                 loadMonthlyHistory();
                 loadPerformanceScorecards();
+                loadMonitoringSummary();
             });
             scorecardWindowButtons.forEach(button => button.addEventListener('click', () => {
                 performanceWindow = Number(button.dataset.scorecardWindow) || 30;
@@ -4546,6 +4663,7 @@
             loadSelections();
             loadMonthlyHistory();
             loadPerformanceScorecards();
+            loadMonitoringSummary();
         })();
     </script>
 }

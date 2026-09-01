@@ -34,6 +34,24 @@ public sealed class AutomatedCornersApiClient
         return scorecards ?? [];
     }
 
+    public async Task<IReadOnlyList<BotMonitoringSummaryViewModel>> GetMonitoringSummaryAsync(
+        BotPickFiltersViewModel filters,
+        string marketFamily,
+        CancellationToken cancellationToken)
+    {
+        var query = new List<string>();
+        if (filters.DateFrom.HasValue)
+            query.Add($"dateFrom={Uri.EscapeDataString(filters.DateFrom.Value.ToString("yyyy-MM-dd"))}");
+        if (filters.DateTo.HasValue)
+            query.Add($"dateTo={Uri.EscapeDataString(filters.DateTo.Value.ToString("yyyy-MM-dd"))}");
+        query.Add($"marketFamily={Uri.EscapeDataString(marketFamily.Trim().ToUpperInvariant())}");
+
+        var rows = await _httpClient.GetFromJsonAsync<IReadOnlyList<BotMonitoringSummaryViewModel>>(
+            $"/api/automated-corners/monitoring-summary?{string.Join('&', query)}",
+            cancellationToken);
+        return rows ?? [];
+    }
+
     public async Task<BotPickRobustEvaluationDetailViewModel?> GetRobustEvaluationAsync(
         long selectionId,
         CancellationToken cancellationToken)

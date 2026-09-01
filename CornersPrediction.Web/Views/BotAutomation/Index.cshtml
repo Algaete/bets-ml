@@ -226,6 +226,7 @@
         <div class="alert alert-info small">
             Puedes crear variantes reales de A, ML legacy calibrado o Modelos 2026. Para agregar una señal completamente nueva —por ejemplo lesiones,
             clima o noticias— primero se implementa esa estrategia en código y luego queda disponible aquí para configurarla.
+            Los workers independientes activos también aparecen en este catálogo, marcados como sólo lectura.
         </div>
 
         <div id="BotCards" class="bot-definition-grid mb-4"></div>
@@ -474,9 +475,13 @@
     };
 
     const renderBotOptions = () => {
-        const enabledBots = bots.filter(bot => bot.isEnabled && bot.botKey.toUpperCase() !== 'B');
+        const enabledBots = bots.filter(bot => bot.isEnabled && !bot.isRetired);
         document.getElementById('JobBotOptions').innerHTML = enabledBots.length
-            ? enabledBots.map(bot => `
+            ? enabledBots.map(bot => bot.supportsRecommendationJobs === false ? `
+                <label class="form-check opacity-75" title="Este bot usa un worker propio y no el proceso genérico de recomendaciones.">
+                    <input class="form-check-input" type="checkbox" value="${escapeHtml(bot.botKey)}" disabled />
+                    <span class="form-check-label">${escapeHtml(bot.displayName)} <small class="text-body-secondary">· proceso automático independiente</small></span>
+                </label>` : `
                 <label class="form-check">
                     <input class="form-check-input job-bot" type="checkbox" value="${escapeHtml(bot.botKey)}" checked />
                     <span class="form-check-label">${escapeHtml(bot.displayName)}</span>
@@ -534,18 +539,27 @@
             <div class="strategy-section"><h4>Persistencia y liquidación</h4>${renderList(manifest.persistenceAndSettlement)}</div>
         </details>`;
     };
+    const renderRuntimeConfiguration = bot => {
+        const entries = Object.entries(bot.runtimeConfiguration || {});
+        if (!entries.length) return '';
+        return `<details class="strategy-details">
+            <summary>Ver configuración del proceso</summary>
+            <div class="strategy-section">
+                <h4>Runtime activo · sólo lectura</h4>
+                <div class="strategy-config-grid">${entries.map(([key, value]) => `
+                    <div class="strategy-config-item"><span>${escapeHtml(key)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
+            </div>
+        </details>`;
+    };
     const lifecycleLabel = bot => {
-        const key = String(bot.botKey || '').toUpperCase();
-        if (key === 'A') return 'Referencia legacy';
-        if (key === 'C2026') return 'Referencia ML 2026';
-        if (key === 'D2026') return 'Experimento · brecha de nivel';
-        if (key === 'E2026') return 'Experimento · calibración 2026';
-        if (key === 'F2026') return 'Experimento · calibración legacy';
-        if (key === 'G2026') return 'Experimento · goals market-anchored';
-        return bot.isBuiltIn ? 'Integrado' : 'Experimento personalizado';
+        if (bot.lifecycleLabel) return bot.lifecycleLabel;
+        if (bot.isShadowOnly) return 'Laboratorio Shadow';
+        if (bot.baseStrategy === 'GOALS_MARKET_ANCHORED') return 'Goals market-anchored';
+        if (bot.usesMachineLearning) return bot.isBuiltIn ? 'ML integrado' : 'Experimento ML';
+        return bot.isBuiltIn ? 'Legacy integrado' : 'Experimento personalizado';
     };
     const renderBots = () => {
-        const visibleBots = bots.filter(bot => String(bot.botKey || '').toUpperCase() !== 'B');
+        const visibleBots = bots.filter(bot => !bot.isRetired);
         document.getElementById('BotCards').innerHTML = visibleBots.length ? visibleBots.map(bot => `
             <article class="bot-definition-card">
                 <div class="d-flex justify-content-between gap-3 mb-2">
@@ -559,8 +573,9 @@
                 <p class="small text-body-secondary">${escapeHtml(bot.description || 'Sin descripción')}</p>
                 <div class="mb-2">
                     <span class="strategy-pill">${escapeHtml(bot.baseStrategy)}</span>
-                    ${bot.baseStrategy === 'GOALS_MARKET_ANCHORED' ? '<span class="strategy-pill">Market anchored</span>' : (bot.usesMachineLearning ? '<span class="strategy-pill">ML</span>' : '<span class="strategy-pill">Legacy</span>')}
-                    ${bot.baseStrategy === 'GOALS_MARKET_ANCHORED' ? `<span class="strategy-pill">${bot.publishEnabled ? 'Publishing' : 'Shadow'}</span>` : ''}
+                    ${bot.baseStrategy === 'GOALS_MARKET_ANCHORED' ? '<span class="strategy-pill">Market anchored</span>' : (bot.usesMachineLearning ? '<span class="strategy-pill">ML</span>' : (bot.supportsRecommendationJobs === false ? '<span class="strategy-pill">Servicio autónomo</span>' : '<span class="strategy-pill">Legacy</span>'))}
+                    ${bot.isShadowOnly ? '<span class="strategy-pill">Shadow · no publica</span>' : ''}
+                    ${bot.supportsRecommendationJobs === false ? '<span class="strategy-pill">Worker independiente</span>' : ''}
                     ${bot.isBuiltIn ? '<span class="strategy-pill">Integrado</span>' : '<span class="strategy-pill">Personalizado</span>'}
                 </div>
                 <div class="mb-3">${(bot.marketFamilies || []).map(market => `<span class="market-pill">${escapeHtml(market)}</span>`).join('')}</div>
@@ -574,10 +589,12 @@
                     <div class="col-4 metric-mini"><span class="text-body-secondary d-block">Desacuerdo</span><strong>${bot.allowModelDisagreement == null ? 'Heredado' : (bot.allowModelDisagreement ? 'Sí' : 'No')}</strong></div>
                 </div>
                 ${renderStrategyManifest(bot)}
+                ${renderRuntimeConfiguration(bot)}
                 <div class="d-flex flex-wrap gap-2">
-                    <button class="btn btn-sm btn-outline-primary" type="button" data-edit-bot="${escapeHtml(bot.botKey)}">Editar</button>
-                    <button class="btn btn-sm btn-outline-secondary" type="button" data-clone-bot="${escapeHtml(bot.botKey)}">Clonar</button>
-                    ${bot.isBuiltIn ? '' : `<button class="btn btn-sm btn-outline-danger" type="button" data-delete-bot="${escapeHtml(bot.botKey)}">Eliminar</button>`}
+                    ${bot.canEdit !== false ? `<button class="btn btn-sm btn-outline-primary" type="button" data-edit-bot="${escapeHtml(bot.botKey)}">Editar</button>` : ''}
+                    ${bot.canClone !== false ? `<button class="btn btn-sm btn-outline-secondary" type="button" data-clone-bot="${escapeHtml(bot.botKey)}">Clonar</button>` : ''}
+                    ${!bot.isBuiltIn && bot.canEdit !== false ? `<button class="btn btn-sm btn-outline-danger" type="button" data-delete-bot="${escapeHtml(bot.botKey)}">Eliminar</button>` : ''}
+                    ${bot.canEdit === false && bot.canClone === false ? '<span class="small text-body-secondary">Administrado por su configuración de runtime.</span>' : ''}
                 </div>
             </article>`).join('') : '<div class="text-body-secondary">No hay bots configurados.</div>';
 
@@ -609,7 +626,7 @@
                 <td>
                     <div class="fw-semibold">${escapeHtml(job.name)}</div>
                     <div class="small text-body-secondary">${escapeHtml(job.mode)} · ${escapeHtml(job.dateFrom)} a ${escapeHtml(job.dateTo)}</div>
-                    <div class="small">${(job.botKeys || []).filter(value => String(value).toUpperCase() !== 'B').map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
+                    <div class="small">${(job.botKeys || []).map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
                 </td>
                 <td><span class="${statusClass(job.status)}">${escapeHtml(job.status)}</span>${activityText(job) ? `<div class="small text-body-secondary mt-1">${escapeHtml(activityText(job))}</div>` : ''}${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
                 <td>

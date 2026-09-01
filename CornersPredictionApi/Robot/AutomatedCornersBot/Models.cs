@@ -344,6 +344,25 @@ public sealed record SkippedMatchResult(
     DateTime MatchDate,
     string Reason);
 
+/// <summary>
+/// Read-only health summary for selector evaluations that did not necessarily
+/// become published Bot Picks. It lets the UI distinguish "the bot did not run"
+/// from "the bot ran and deliberately abstained or was blocked by production".
+/// </summary>
+public sealed record AutomatedBotMonitoringSummary
+{
+    public string MarketFamily { get; init; } = string.Empty;
+    public string BotKey { get; init; } = string.Empty;
+    public long EvaluatedRows { get; init; }
+    public long EvaluatedFixtures { get; init; }
+    public long ProductionGateBlockedRows { get; init; }
+    public long PendingDataRows { get; init; }
+    public long OtherRejectedRows { get; init; }
+    public long ApprovedShadowRows { get; init; }
+    public long PublishedRows { get; init; }
+    public DateTime? LatestEvaluationAtUtc { get; init; }
+}
+
 public sealed record ErrorMatchResult(
     string League,
     string HomeTeam,

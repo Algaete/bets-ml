@@ -262,6 +262,14 @@ public sealed record RecommendationBotDefinitionDto(
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc)
 {
+    public bool SupportsRecommendationJobs { get; init; } = true;
+    public bool CanEdit { get; init; } = true;
+    public bool CanClone { get; init; } = true;
+    public string? LifecycleLabel { get; init; }
+    public IReadOnlyDictionary<string, string> RuntimeConfiguration { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public bool IsRetired => RecommendationBotLifecycle.IsRetired(BotKey);
+    public bool IsShadowOnly => RecommendationBotLifecycle.IsShadowOnly(BotKey) || !PublishEnabled;
     public IReadOnlyList<RecommendationBotLeagueFilter> LeagueFilters { get; init; } = [];
 
     public bool IsLeagueAllowed(string marketFamily, string league) =>

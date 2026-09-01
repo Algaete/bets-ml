@@ -1,6 +1,7 @@
 using AutomatedCornersBot.Api;
 using CornersPrediction.Application.Automation;
 using CornersPredictionApi.Requests;
+using CornersPredictionApi.AutomationBots;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPredictionApi.Controllers;
@@ -11,13 +12,16 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
 {
     private readonly IRecommendationBotDefinitionsUseCase _useCase;
     private readonly SqlAutomationRepository _schemaRepository;
+    private readonly IReadOnlyCollection<IAutomationBotCatalogContributor> _catalogContributors;
 
     public RecommendationBotDefinitionsController(
         IRecommendationBotDefinitionsUseCase useCase,
-        SqlAutomationRepository schemaRepository)
+        SqlAutomationRepository schemaRepository,
+        IEnumerable<IAutomationBotCatalogContributor> catalogContributors)
     {
         _useCase = useCase;
         _schemaRepository = schemaRepository;
+        _catalogContributors = catalogContributors.ToArray();
     }
 
     [HttpGet]
@@ -25,7 +29,7 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
     public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
         await _schemaRepository.EnsureSchemaAsync(cancellationToken);
-        return Ok(await _useCase.GetAllAsync(cancellationToken));
+        return Ok(await LoadCatalogAsync(cancellationToken));
     }
 
     [HttpGet("{botKey}")]
@@ -36,7 +40,9 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
         await _schemaRepository.EnsureSchemaAsync(cancellationToken);
         try
         {
-            var bot = await _useCase.GetAsync(botKey, cancellationToken);
+            var normalizedBotKey = RecommendationBotDefinitionsUseCase.NormalizeBotKey(botKey);
+            var bot = (await LoadCatalogAsync(cancellationToken)).FirstOrDefault(definition =>
+                definition.BotKey.Equals(normalizedBotKey, StringComparison.OrdinalIgnoreCase));
             return bot is null ? NotFound(new { error = $"Bot {botKey} was not found." }) : Ok(bot);
         }
         catch (ArgumentException exception)
@@ -63,7 +69,9 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
         await _schemaRepository.EnsureSchemaAsync(cancellationToken);
         try
         {
-            var existing = await _useCase.GetAsync(request.BotKey, cancellationToken);
+            var normalizedBotKey = RecommendationBotDefinitionsUseCase.NormalizeBotKey(request.BotKey);
+            var existing = (await LoadCatalogAsync(cancellationToken)).FirstOrDefault(definition =>
+                definition.BotKey.Equals(normalizedBotKey, StringComparison.OrdinalIgnoreCase));
             if (existing is not null)
             {
                 return Conflict(new { error = $"Bot {existing.BotKey} already exists. Use PUT to update it." });
@@ -96,6 +104,13 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
                 return BadRequest(new { error = "Route bot key and body bot key must match." });
             }
 
+            var existing = (await LoadCatalogAsync(cancellationToken)).FirstOrDefault(definition =>
+                definition.BotKey.Equals(normalizedRouteKey, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null && !existing.CanEdit)
+            {
+                return BadRequest(new { error = $"Bot {existing.BotKey} is managed by its independent runtime configuration." });
+            }
+
             return Ok(await _useCase.SaveAsync(ToCommand(request), cancellationToken));
         }
         catch (ArgumentException exception)
@@ -113,7 +128,9 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
         await _schemaRepository.EnsureSchemaAsync(cancellationToken);
         try
         {
-            var existing = await _useCase.GetAsync(botKey, cancellationToken);
+            var normalizedBotKey = RecommendationBotDefinitionsUseCase.NormalizeBotKey(botKey);
+            var existing = (await LoadCatalogAsync(cancellationToken)).FirstOrDefault(definition =>
+                definition.BotKey.Equals(normalizedBotKey, StringComparison.OrdinalIgnoreCase));
             if (existing is null)
             {
                 return NotFound(new { error = $"Bot {botKey} was not found." });
@@ -133,6 +150,12 @@ public sealed class RecommendationBotDefinitionsController : ControllerBase
             return BadRequest(new { error = exception.Message });
         }
     }
+
+    private async Task<IReadOnlyList<RecommendationBotDefinitionDto>> LoadCatalogAsync(
+        CancellationToken cancellationToken) =>
+        AutomationBotCatalog.Merge(
+            await _useCase.GetAllAsync(cancellationToken),
+            _catalogContributors);
 
     private static SaveRecommendationBotDefinitionCommand ToCommand(
         SaveRecommendationBotDefinitionRequest request) =>

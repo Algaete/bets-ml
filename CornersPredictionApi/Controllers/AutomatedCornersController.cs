@@ -180,6 +180,39 @@ public sealed class AutomatedCornersController : ControllerBase
         }
     }
 
+    [HttpGet("monitoring-summary")]
+    [ProducesResponseType(typeof(IReadOnlyList<AutomatedBotMonitoringSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetMonitoringSummary(
+        [FromQuery] DateTime? dateFrom,
+        [FromQuery] DateTime? dateTo,
+        [FromQuery] string marketFamily = "CORNERS",
+        CancellationToken cancellationToken = default)
+    {
+        if (dateFrom.HasValue && dateTo.HasValue && dateTo.Value.Date < dateFrom.Value.Date)
+        {
+            return BadRequest(new { error = "dateTo must be on or after dateFrom." });
+        }
+
+        try
+        {
+            await _automationRepository.EnsureSchemaAsync(cancellationToken);
+            return Ok(await _automationRepository.GetMonitoringSummariesAsync(
+                dateFrom.HasValue ? DateOnly.FromDateTime(dateFrom.Value) : null,
+                dateTo.HasValue ? DateOnly.FromDateTime(dateTo.Value) : null,
+                marketFamily,
+                cancellationToken));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError(exception, "Failed to load automated bot monitoring summary");
+            return Problem(
+                title: "Could not load bot monitoring summary",
+                detail: exception.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
     [HttpPut("selections/{id:long}/status")]
     [ProducesResponseType(typeof(AutomatedCornerSelectionDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

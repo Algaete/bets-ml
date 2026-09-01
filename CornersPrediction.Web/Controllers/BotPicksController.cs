@@ -75,6 +75,11 @@ public sealed class BotPicksController : Controller
         {
             ApplyDefaultMonthRange(filters);
             var selectionsTask = _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken);
+            var olderPendingTask = BotPickVisibilityPolicy.ShouldLoadOlderPending(filters)
+                ? _automatedCornersApiClient.GetSelectionsAsync(
+                    BotPickVisibilityPolicy.CreateOlderPendingFilters(filters),
+                    cancellationToken)
+                : null;
             var canonicalPendingTask = BotPickProductionExposureGuard.RequiresCanonicalPendingUniverse(
                     filters,
                     marketFamily)
@@ -84,9 +89,14 @@ public sealed class BotPicksController : Controller
                 : null;
             var definitionsTask = _recommendationAutomationApiClient.GetBotsAsync(cancellationToken);
             var performanceTask = _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken);
-            var selections = FilterVisibleBots(FilterMarketFamily(
-                await selectionsTask,
-                marketFamily));
+            var currentSelections = await selectionsTask;
+            var completeSelections = olderPendingTask is null
+                ? currentSelections
+                : BotPickVisibilityPolicy.MergeDistinct(
+                    currentSelections,
+                    await olderPendingTask,
+                    filters.DateFrom!.Value);
+            var selections = FilterVisibleBots(FilterMarketFamily(completeSelections, marketFamily));
             IReadOnlyList<RecommendationBotDefinitionViewModel> definitions;
             IReadOnlyList<BotPerformanceScorecardViewModel> performance;
             try
@@ -112,6 +122,7 @@ public sealed class BotPicksController : Controller
             }
 
             BotPickProductionPlanner.Apply(selections, definitions, marketFamily, performance);
+            BotPickVisibilityPolicy.EnforceRetiredPendingMonitoring(selections);
             if (canonicalPendingTask is null)
             {
                 BotPickProductionExposureGuard.Apply(selections, marketFamily);
@@ -128,6 +139,7 @@ public sealed class BotPicksController : Controller
                         definitions,
                         marketFamily,
                         performance);
+                    BotPickVisibilityPolicy.EnforceRetiredPendingMonitoring(canonicalSelections);
                     BotPickProductionExposureGuard.Apply(canonicalSelections, marketFamily);
                     BotPickProductionExposureGuard.OverlayCurrentPlans(selections, canonicalSelections);
                 }
@@ -184,6 +196,41 @@ public sealed class BotPicksController : Controller
         {
             _logger.LogError(exception, "Could not load server bot performance scorecards");
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "No se pudo cargar el semáforo de rendimiento." });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> MonitoringSummary(
+        [FromQuery] BotPickFiltersViewModel filters,
+        [FromQuery] string marketFamily = "corners",
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCancellation.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            ApplyDefaultMonthRange(filters);
+            return Json(await _automatedCornersApiClient.GetMonitoringSummaryAsync(
+                filters,
+                marketFamily,
+                timeoutCancellation.Token));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "Monitoring summary request was cancelled." });
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(
+                StatusCodes.Status504GatewayTimeout,
+                new { error = "El diagnóstico tardó más de 15 segundos. La tabla de picks sigue disponible." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not load {MarketFamily} monitoring summary", marketFamily);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "No se pudo cargar el diagnóstico de ejecución de los bots." });
         }
     }
 
@@ -454,12 +501,7 @@ public sealed class BotPicksController : Controller
     }
 
     private static void ApplyDefaultMonthRange(BotPickFiltersViewModel filters)
-    {
-        var referenceDate = filters.DateFrom ?? filters.DateTo ?? DateTime.Today;
-        var monthStart = new DateTime(referenceDate.Year, referenceDate.Month, 1);
-        filters.DateFrom ??= monthStart;
-        filters.DateTo ??= monthStart.AddMonths(1).AddDays(-1);
-    }
+        => BotPickDefaultDateRange.Apply(filters, DateTime.Today);
 
     private static IReadOnlyList<BotPickSelectionViewModel> FilterMarketFamily(
         IReadOnlyList<BotPickSelectionViewModel> selections,
@@ -473,12 +515,7 @@ public sealed class BotPicksController : Controller
 
     private static IReadOnlyList<BotPickSelectionViewModel> FilterVisibleBots(
         IReadOnlyList<BotPickSelectionViewModel> selections)
-        => selections
-            .Where(selection => !string.Equals(
-                ResolveBotKey(selection),
-                "B",
-                StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+        => BotPickVisibilityPolicy.Filter(selections);
 
     private static string ResolveBotKey(BotPickSelectionViewModel selection)
     {

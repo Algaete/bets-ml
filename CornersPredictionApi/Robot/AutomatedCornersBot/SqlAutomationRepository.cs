@@ -911,6 +911,130 @@ public sealed class SqlAutomationRepository
         return rows;
     }
 
+    public async Task<IReadOnlyList<AutomatedBotMonitoringSummary>> GetMonitoringSummariesAsync(
+        DateOnly? dateFrom,
+        DateOnly? dateTo,
+        string marketFamily,
+        CancellationToken cancellationToken)
+    {
+        var normalizedFamily = marketFamily.Trim().ToUpperInvariant() switch
+        {
+            "GOALS" => "GOALS",
+            "SHOTS" => "SHOTS",
+            "SOG" => "SOG",
+            _ => "CORNERS"
+        };
+        var marketTypes = normalizedFamily switch
+        {
+            "GOALS" => new[] { "TotalGoals", "HomeTeamGoals", "AwayTeamGoals" },
+            "SHOTS" => new[] { "TotalShots", "HomeTeamShots", "AwayTeamShots" },
+            "SOG" => new[] { "TotalShotsOnGoal", "HomeTeamShotsOnGoal", "AwayTeamShotsOnGoal" },
+            _ => new[] { "TotalCorners", "HomeTeamCorners", "AwayTeamCorners" }
+        };
+
+        const string sql = """
+        ;WITH Scoped AS
+        (
+            SELECT
+                evaluation.BotKey,
+                evaluation.Decision,
+                evaluation.PublishedSelectionId,
+                evaluation.EvaluatedAtUtc,
+                ProductionGateBlocked = CASE
+                    WHEN evaluation.Decision = N'Rejected'
+                     AND evaluation.Explanation LIKE N'Rejected for production:%'
+                        THEN 1 ELSE 0 END,
+                FixtureKey = COALESCE(
+                    CONVERT(NVARCHAR(40), NULLIF(evaluation.FixtureIdentity, 0)),
+                    CONVERT(NVARCHAR(40), evaluation.ApiFootballFixtureId),
+                    CONCAT(
+                        CONVERT(NVARCHAR(19), evaluation.MatchDate, 126), N'|',
+                        UPPER(LTRIM(RTRIM(evaluation.HomeTeam))), N'|',
+                        UPPER(LTRIM(RTRIM(evaluation.AwayTeam)))))
+            FROM dbo.AutomatedBotPickEvaluations AS evaluation
+                WITH (INDEX(IX_AutomatedBotPickEvaluations_MonitoringWindow))
+            WHERE (@DateFrom IS NULL OR evaluation.MatchDate >= @DateFrom)
+              AND (@DateToExclusive IS NULL OR evaluation.MatchDate < @DateToExclusive)
+              AND evaluation.MarketType IN (@MarketType1, @MarketType2, @MarketType3)
+              -- G owns a high-volume candidate audit and I has an independent
+              -- table. H remains here because it shares this selector pipeline.
+              AND evaluation.BotKey <> N'G2026'
+        )
+        SELECT
+            MarketFamily = @MarketFamily,
+            scoped.BotKey,
+            EvaluatedRows = COUNT_BIG(*),
+            EvaluatedFixtures = COUNT_BIG(DISTINCT scoped.FixtureKey),
+            PendingDataRows = SUM(CONVERT(BIGINT, CASE
+                WHEN scoped.Decision = N'PendingData' THEN 1 ELSE 0 END)),
+            ProductionGateBlockedRows = SUM(CONVERT(BIGINT, scoped.ProductionGateBlocked)),
+            OtherRejectedRows = SUM(CONVERT(BIGINT, CASE
+                WHEN scoped.Decision = N'Rejected' AND scoped.ProductionGateBlocked = 0 THEN 1 ELSE 0 END)),
+            ApprovedShadowRows = SUM(CONVERT(BIGINT, CASE
+                WHEN scoped.Decision = N'Approved' AND scoped.PublishedSelectionId IS NULL THEN 1 ELSE 0 END)),
+            PublishedRows = SUM(CONVERT(BIGINT, CASE
+                WHEN scoped.PublishedSelectionId IS NOT NULL THEN 1 ELSE 0 END)),
+            LatestEvaluationAtUtc = MAX(scoped.EvaluatedAtUtc)
+        FROM Scoped AS scoped
+        GROUP BY scoped.BotKey
+        ORDER BY BotKey
+        OPTION (RECOMPILE);
+        """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.CommandType = CommandType.Text;
+        command.CommandTimeout = 30;
+        command.Parameters.Add(new SqlParameter("@DateFrom", SqlDbType.DateTime2)
+        {
+            Value = (object?)dateFrom?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value
+        });
+        command.Parameters.Add(new SqlParameter("@DateToExclusive", SqlDbType.DateTime2)
+        {
+            Value = (object?)dateTo?.AddDays(1).ToDateTime(TimeOnly.MinValue) ?? DBNull.Value
+        });
+        command.Parameters.Add(new SqlParameter("@MarketFamily", SqlDbType.NVarChar, 20)
+        {
+            Value = normalizedFamily
+        });
+        command.Parameters.Add(new SqlParameter("@MarketType1", SqlDbType.NVarChar, 50)
+        {
+            Value = marketTypes[0]
+        });
+        command.Parameters.Add(new SqlParameter("@MarketType2", SqlDbType.NVarChar, 50)
+        {
+            Value = marketTypes[1]
+        });
+        command.Parameters.Add(new SqlParameter("@MarketType3", SqlDbType.NVarChar, 50)
+        {
+            Value = marketTypes[2]
+        });
+
+        var rows = new List<AutomatedBotMonitoringSummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(new AutomatedBotMonitoringSummary
+            {
+                MarketFamily = reader.GetString(reader.GetOrdinal("MarketFamily")),
+                BotKey = reader.GetString(reader.GetOrdinal("BotKey")),
+                EvaluatedRows = reader.GetInt64(reader.GetOrdinal("EvaluatedRows")),
+                EvaluatedFixtures = reader.GetInt64(reader.GetOrdinal("EvaluatedFixtures")),
+                ProductionGateBlockedRows = reader.GetInt64(reader.GetOrdinal("ProductionGateBlockedRows")),
+                PendingDataRows = reader.GetInt64(reader.GetOrdinal("PendingDataRows")),
+                OtherRejectedRows = reader.GetInt64(reader.GetOrdinal("OtherRejectedRows")),
+                ApprovedShadowRows = reader.GetInt64(reader.GetOrdinal("ApprovedShadowRows")),
+                PublishedRows = reader.GetInt64(reader.GetOrdinal("PublishedRows")),
+                LatestEvaluationAtUtc = reader.IsDBNull(reader.GetOrdinal("LatestEvaluationAtUtc"))
+                    ? null
+                    : reader.GetDateTime(reader.GetOrdinal("LatestEvaluationAtUtc"))
+            });
+        }
+
+        return rows;
+    }
+
     private async Task<SqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqlConnection(_options.ResolveSqlConnectionString());

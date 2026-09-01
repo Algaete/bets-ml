@@ -3,6 +3,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="161.8901.0" />
     <ProjectReference Include="../../CornersPrediction.Application/CornersPrediction.Application.csproj" />
+    <ProjectReference Include="../../CornersPredictionApi/CornersPredictionApi.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

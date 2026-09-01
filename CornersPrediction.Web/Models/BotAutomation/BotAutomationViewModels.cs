@@ -29,6 +29,14 @@ public sealed record RecommendationBotDefinitionViewModel
     public bool IsEnabled { get; init; }
     public bool PublishEnabled { get; init; } = true;
     public bool IsBuiltIn { get; init; }
+    public bool SupportsRecommendationJobs { get; init; } = true;
+    public bool CanEdit { get; init; } = true;
+    public bool CanClone { get; init; } = true;
+    public string? LifecycleLabel { get; init; }
+    public IReadOnlyDictionary<string, string> RuntimeConfiguration { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public bool IsRetired { get; init; }
+    public bool IsShadowOnly { get; init; }
     public IReadOnlyList<string> MarketFamilies { get; init; } = [];
     public IReadOnlyList<RecommendationBotLeagueFilterViewModel> LeagueFilters { get; init; } = [];
     public double? MinEdge { get; init; }

@@ -143,6 +143,20 @@ public sealed class BotPerformanceScorecardViewModel
     public string Recommendation { get; init; } = string.Empty;
 }
 
+public sealed class BotMonitoringSummaryViewModel
+{
+    public string MarketFamily { get; init; } = string.Empty;
+    public string BotKey { get; init; } = string.Empty;
+    public long EvaluatedRows { get; init; }
+    public long EvaluatedFixtures { get; init; }
+    public long ProductionGateBlockedRows { get; init; }
+    public long PendingDataRows { get; init; }
+    public long OtherRejectedRows { get; init; }
+    public long ApprovedShadowRows { get; init; }
+    public long PublishedRows { get; init; }
+    public DateTime? LatestEvaluationAtUtc { get; init; }
+}
+
 public sealed class BotPickIntelligenceDetailViewModel
 {
     public JsonElement? Latest { get; init; }
