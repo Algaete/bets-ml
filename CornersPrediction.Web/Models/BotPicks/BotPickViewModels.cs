@@ -146,6 +146,7 @@ public sealed class BotPerformanceScorecardViewModel
 public sealed class BotMonitoringSummaryViewModel
 {
     public string MarketFamily { get; init; } = string.Empty;
+    public string MarketType { get; init; } = string.Empty;
     public string BotKey { get; init; } = string.Empty;
     public long EvaluatedRows { get; init; }
     public long EvaluatedFixtures { get; init; }
@@ -155,6 +156,149 @@ public sealed class BotMonitoringSummaryViewModel
     public long ApprovedShadowRows { get; init; }
     public long PublishedRows { get; init; }
     public DateTime? LatestEvaluationAtUtc { get; init; }
+}
+
+/// <summary>
+/// Filters for the append-only research universe. These filters are deliberately
+/// independent from the production pick filters: a production gate must never
+/// remove an evaluation from the scientific sample.
+/// </summary>
+public sealed class BotResearchEvaluationFiltersViewModel
+{
+    public string? SortBy { get; set; }
+    public string? SortDirection { get; set; }
+    public DateTime? DateFrom { get; set; }
+
+    public DateTime? DateTo { get; set; }
+
+    public string? MarketFamily { get; set; }
+
+    public string? MarketType { get; set; }
+
+    public string? BotKey { get; set; }
+
+    public string? ModelDecision { get; set; }
+
+    public string? PublicationStatus { get; set; }
+
+    public int Page { get; set; } = 1;
+
+    public int PageSize { get; set; } = 50;
+}
+
+public sealed class BotResearchEvaluationPageViewModel
+{
+    public IReadOnlyList<BotResearchEvaluationViewModel> Items { get; init; } = [];
+
+    public IReadOnlyList<BotGeneralPickBotViewModel> AvailableBots { get; init; } = [];
+
+    public long TotalCount { get; init; }
+
+    public int Page { get; init; } = 1;
+
+    public int PageSize { get; init; } = 50;
+
+    public int TotalPages { get; init; }
+}
+
+public sealed record BotGeneralPickBotViewModel(string BotKey, string DisplayName);
+
+public sealed class GeneralPickLabViewModel
+{
+    public GeneralPickLabSummaryViewModel Summary { get; init; } = new();
+    public IReadOnlyList<GeneralPickLabDailyPointViewModel> Timeline { get; init; } = [];
+    public IReadOnlyList<GeneralPickLabCalibrationBinViewModel> Calibration { get; init; } = [];
+    public IReadOnlyList<GeneralPickLabSegmentViewModel> Segments { get; init; } = [];
+    public DateTime GeneratedAtUtc { get; init; }
+}
+
+public sealed class GeneralPickLabSummaryViewModel
+{
+    public long ApprovedEvaluations { get; init; }
+    public int IndependentSignals { get; init; }
+    public int UniqueFixtures { get; init; }
+    public int ResolvedSignals { get; init; }
+    public int PendingSignals { get; init; }
+    public int UnavailableSignals { get; init; }
+    public int VoidSignals { get; init; }
+    public decimal ProfitLossUnits { get; init; }
+    public decimal? Yield { get; init; }
+    public double? ObservedWinRate { get; init; }
+    public double? AverageModelProbability { get; init; }
+    public double? CalibrationGap { get; init; }
+    public double? BrierScore { get; init; }
+}
+
+public sealed record GeneralPickLabDailyPointViewModel(
+    DateTime Date,
+    int ResolvedSignals,
+    decimal DailyProfitLossUnits,
+    decimal CumulativeProfitLossUnits);
+
+public sealed record GeneralPickLabCalibrationBinViewModel(
+    decimal ProbabilityFrom,
+    decimal ProbabilityTo,
+    int Signals,
+    double AverageModelProbability,
+    double ObservedWinRate);
+
+public sealed record GeneralPickLabSegmentViewModel(
+    string BotKey,
+    string MarketType,
+    int ResolvedSignals,
+    decimal ProfitLossUnits,
+    decimal? Yield,
+    double? ObservedWinRate);
+
+public sealed record GeneralPickManualSettlementViewModel(int? ActualValue, string? Reason, Guid RequestId);
+
+/// <summary>
+/// One selector evaluation, whether or not it became a published selection.
+/// Nullable fields keep older evaluation snapshots readable as the schema evolves.
+/// </summary>
+public sealed class BotResearchEvaluationViewModel
+{
+    public string? OutcomeSource { get; init; }
+    public string? ManualSettlementReason { get; init; }
+    public string? ManualSettledBy { get; init; }
+    public long EvaluationId { get; init; }
+    public string RecordKind { get; init; } = "Evaluation";
+    public Guid RunId { get; init; }
+    public string BotKey { get; init; } = string.Empty;
+    public string? AutomationVersion { get; init; }
+    public DateTime MatchDate { get; init; }
+    public string? League { get; init; }
+    public string? HomeTeam { get; init; }
+    public string? AwayTeam { get; init; }
+    public string? Source { get; init; }
+    public string? MarketFamily { get; init; }
+    public string? MarketType { get; init; }
+    public decimal? LineValue { get; init; }
+    public string? SelectedSide { get; init; }
+    public decimal? SelectedOdds { get; init; }
+    public string? ModelDecision { get; init; }
+    public IReadOnlyList<string> ModelDecisionReasons { get; init; } = [];
+    public string? ModelExplanation { get; init; }
+    public string? PublicationStatus { get; init; }
+    public string? ProductionDecision { get; init; }
+    public string? ProductionReason { get; init; }
+    public bool IsResearchWinner { get; init; }
+    public long? PublishedSelectionId { get; init; }
+    public decimal? FinalProbability { get; init; }
+    public decimal? MarketProbability { get; init; }
+    public decimal? FinalEdge { get; init; }
+    public decimal? FinalExpectedValue { get; init; }
+    public decimal? SelectionScore { get; init; }
+    public decimal? DataQualityScore { get; init; }
+    public decimal? ContextAgreementScore { get; init; }
+    public string? ConfigurationVersion { get; init; }
+    public string? FeatureSchemaVersion { get; init; }
+    public string? FeatureSnapshotJson { get; init; }
+    public string? OutcomeStatus { get; init; }
+    public decimal? ActualValue { get; init; }
+    public decimal? ProfitLoss { get; init; }
+    public DateTime? OutcomeAvailableUtc { get; init; }
+    public DateTime EvaluatedAtUtc { get; init; }
 }
 
 public sealed class BotPickIntelligenceDetailViewModel

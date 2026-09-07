@@ -6,25 +6,30 @@ using System.Text.Json;
 using CornersPrediction.Application.Automation.BotE;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace AutomatedCornersBot.Api;
 
-public sealed class SqlAutomationRepository
+public sealed partial class SqlAutomationRepository
 {
     private readonly SemaphoreSlim _schemaLock = new(1, 1);
     private readonly AutomatedBotOptions _options;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<SqlAutomationRepository> _logger;
     private bool _schemaReady;
+    private readonly IMemoryCache _cache;
+    private readonly SemaphoreSlim _calibrationLock = new(1, 1);
 
     public SqlAutomationRepository(
         IOptions<AutomatedBotOptions> options,
         IWebHostEnvironment environment,
-        ILogger<SqlAutomationRepository> logger)
+        ILogger<SqlAutomationRepository> logger,
+        IMemoryCache cache)
     {
         _options = options.Value;
         _environment = environment;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken)
@@ -47,7 +52,12 @@ public sealed class SqlAutomationRepository
                 Path.Combine(_environment.ContentRootPath, "sql", "automated_corners_bot.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260819_bot_g2026.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260827_bot_h_shadow_lab.sql"),
-                Path.Combine(_environment.ContentRootPath, "sql", "20260831_bot_i_shadow_market_movement.sql")
+                Path.Combine(_environment.ContentRootPath, "sql", "20260831_bot_i_shadow_market_movement.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260904_automated_bot_research.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260906_recommendation_job_activity.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260906_calibration_probability_cache.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260906_recommendation_job_errors.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260906_general_pick_manual_settlements.sql")
             };
 
             foreach (var scriptPath in scriptPaths)
@@ -89,17 +99,28 @@ public sealed class SqlAutomationRepository
                 }
 
                 _logger.LogInformation("Applying SQL migration {MigrationKey}.", migrationKey);
-                foreach (var batch in SplitSqlBatches(sql))
+                var batches = SplitSqlBatches(sql);
+                for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
                 {
+                    var batch = batches[batchIndex];
                     if (string.IsNullOrWhiteSpace(batch))
                     {
                         continue;
                     }
 
+                    _logger.LogInformation(
+                        "Applying SQL migration {MigrationKey}, batch {BatchNumber}/{BatchCount}.",
+                        migrationKey,
+                        batchIndex + 1,
+                        batches.Count);
                     await using var command = connection.CreateCommand();
                     command.CommandText = batch;
                     command.CommandType = CommandType.Text;
-                    command.CommandTimeout = 180;
+                    // Azure SQL can need several minutes for guarded backfills and
+                    // index maintenance on the append-only evaluation ledger. The
+                    // batches are idempotent, so prefer one honest completion window
+                    // over repeated 180-second partial startup attempts.
+                    command.CommandTimeout = 600;
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
                 await RecordAppliedMigrationAsync(connection, migrationKey, contentHash, cancellationToken);
@@ -107,6 +128,7 @@ public sealed class SqlAutomationRepository
 
             // Set only after the base schema and every bot migration have completed.
             // A failure in any script leaves initialization retryable.
+            await EnsureSelectionProcedureContractAsync(connection, scriptPaths[0], cancellationToken);
             _schemaReady = true;
         }
         finally
@@ -179,6 +201,10 @@ public sealed class SqlAutomationRepository
                 OBJECT_ID(N'dbo.AutomatedBotPickEvaluations', N'U') IS NOT NULL
                 AND OBJECT_ID(N'dbo.sp_UpsertAutomatedBotPickEvaluation', N'P') IS NOT NULL
                 AND OBJECT_ID(N'dbo.AutomatedRecommendationJobs', N'U') IS NOT NULL
+                AND COL_LENGTH(N'dbo.AutomatedCornerBetSelections', N'LogicalPickKey') IS NOT NULL
+                AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'dbo.sp_UpsertAutomatedCornerBetSelection') AND name = N'@BotGCandidateId')
+                AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'dbo.sp_UpsertAutomatedCornerBetSelection') AND name = N'@BotKey')
+                AND EXISTS (SELECT 1 FROM sys.parameters WHERE object_id = OBJECT_ID(N'dbo.sp_UpsertAutomatedCornerBetSelection') AND name = N'@ApiFootballFixtureId')
                 """,
             "20260819_bot_g2026.sql" => """
                 OBJECT_ID(N'dbo.sp_GetBotG2026Scorecard', N'P') IS NOT NULL
@@ -216,6 +242,7 @@ public sealed class SqlAutomationRepository
         bool excludeExistingSelections,
         int expectedAutomationVersionCount,
         bool resolveApiFootballFixtureId,
+        bool includeLatestOddsSnapshot,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -326,7 +353,8 @@ public sealed class SqlAutomationRepository
                     SnapshotOverOdds = snapshot.OverOdds,
                     SnapshotUnderOdds = snapshot.UnderOdds
                 FROM dbo.CornerOddsSnapshots AS snapshot
-                WHERE snapshot.Source = q.Source
+                WHERE @IncludeLatestOddsSnapshot = 1
+                  AND snapshot.Source = q.Source
                   AND snapshot.MatchDate = q.MatchDate
                   AND snapshot.MarketType = q.MarketType
                   AND snapshot.LineValue = q.LineValue
@@ -449,6 +477,9 @@ public sealed class SqlAutomationRepository
         command.Parameters.Add(new SqlParameter("@ExcludeExistingSelections", SqlDbType.Bit) { Value = excludeExistingSelections });
         command.Parameters.Add(new SqlParameter("@ExpectedAutomationVersionCount", SqlDbType.Int) { Value = Math.Max(1, expectedAutomationVersionCount) });
         command.Parameters.Add(new SqlParameter("@ResolveApiFootballFixtureId", SqlDbType.Bit) { Value = resolveApiFootballFixtureId });
+        // Availability only counts the deduplicated odds rows. With RECOMPILE,
+        // SQL Server can remove the snapshot lookup entirely for that request.
+        command.Parameters.Add(new SqlParameter("@IncludeLatestOddsSnapshot", SqlDbType.Bit) { Value = includeLatestOddsSnapshot });
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -487,216 +518,94 @@ public sealed class SqlAutomationRepository
     public async Task<IReadOnlyList<BotECalibrationObservation>> GetBotECalibrationHistoryAsync(
         string sourceBotKey,
         DateTime asOfDateUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<int, Task>? reportPrepared = null)
     {
         if (string.IsNullOrWhiteSpace(sourceBotKey))
         {
             throw new ArgumentException("A source bot key is required.", nameof(sourceBotKey));
         }
 
-        const string sql = """
-        WITH EligibleEvaluations AS
-        (
-            SELECT
-                e.AutomatedBotPickEvaluationId,
-                e.ApiFootballFixtureId,
-                e.PublishedSelectionId,
-                e.MatchDate,
-                ExpectedUtcDate = CAST(
-                    e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                    AS DATE),
-                e.HomeTeam,
-                e.AwayTeam,
-                e.MarketType,
-                e.SelectedSide,
-                e.LineValue,
-                e.SelectedOdds,
-                e.BaseCalibratedProbability,
-                e.MarketNoVigProbability,
-                e.DataQualityScore,
-                e.FeatureSnapshotJson,
-                e.BaseModelTrainedThroughUtc,
-                BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
-            FROM dbo.AutomatedBotPickEvaluations e
-            WHERE e.BotKey = @SourceBotKey
-              AND e.MatchDate < @AsOfDateUtc
-              AND e.Decision IN (N'Approved', N'Rejected')
-              AND e.SelectedSide IN (N'Over', N'Under')
-              AND e.SelectedOdds > 1
-              AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
-              AND e.DataQualityScore BETWEEN 0 AND 1
-              AND e.BaseModelTrainedThroughUtc IS NOT NULL
-              AND CAST(
-                    e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                    AS DATETIME2) > e.BaseModelTrainedThroughUtc
-        ),
-        CandidateMatchesRaw AS
-        (
-            SELECT
-                e.AutomatedBotPickEvaluationId,
-                MatchHistoryId = CONVERT(BIGINT, mh.Id),
-                mh.ApiFootballFixtureId,
-                LinkPriority = 0,
-                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
-            FROM EligibleEvaluations e
-            INNER JOIN dbo.AutomatedCornerBetSelections s
-                ON s.AutomatedCornerBetSelectionId = e.PublishedSelectionId
-            INNER JOIN dbo.MatchHistory mh
-                ON mh.Id = s.MatchHistoryId
-            WHERE e.PublishedSelectionId IS NOT NULL
-              AND s.MatchHistoryId IS NOT NULL
+        cancellationToken.ThrowIfCancellationRequested();
+        var cacheKey = ("bot-calibration-history-v1", sourceBotKey.Trim().ToUpperInvariant(), asOfDateUtc.Ticks);
+        if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out var cached))
+            return cached!;
+        await _calibrationLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out cached))
+                return cached!;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromMinutes(5));
+            var result = await LoadBotECalibrationHistoryAsync(sourceBotKey, asOfDateUtc, timeout.Token, reportPrepared);
+            _cache.Set(cacheKey, result, TimeSpan.FromMinutes(2));
+            return result;
+        }
+        finally
+        {
+            _calibrationLock.Release();
+        }
+    }
 
-            UNION ALL
-
-            SELECT
-                e.AutomatedBotPickEvaluationId,
-                MatchHistoryId = CONVERT(BIGINT, mh.Id),
-                mh.ApiFootballFixtureId,
-                LinkPriority = 1,
-                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
-            FROM EligibleEvaluations e
-            INNER JOIN dbo.MatchHistory mh
-                ON mh.ApiFootballFixtureId = e.ApiFootballFixtureId
-            WHERE e.ApiFootballFixtureId IS NOT NULL
-
-            UNION ALL
-
-            SELECT
-                e.AutomatedBotPickEvaluationId,
-                MatchHistoryId = CONVERT(BIGINT, mh.Id),
-                mh.ApiFootballFixtureId,
-                LinkPriority = 2,
-                DateDistanceDays = ABS(DATEDIFF(DAY, e.ExpectedUtcDate, mh.MatchDate))
-            FROM EligibleEvaluations e
-            INNER JOIN dbo.MatchHistory mh
-                ON mh.MatchDate BETWEEN DATEADD(DAY, -1, e.ExpectedUtcDate)
-                                    AND DATEADD(DAY, 1, e.ExpectedUtcDate)
-               AND COALESCE(NULLIF(mh.StandardizedHomeTeam, N''), mh.HomeTeam)
-                    COLLATE Latin1_General_100_CI_AI = e.HomeTeam COLLATE Latin1_General_100_CI_AI
-               AND COALESCE(NULLIF(mh.StandardizedAwayTeam, N''), mh.AwayTeam)
-                    COLLATE Latin1_General_100_CI_AI = e.AwayTeam COLLATE Latin1_General_100_CI_AI
-            WHERE e.PublishedSelectionId IS NULL
-              AND e.ApiFootballFixtureId IS NULL
-        ),
-        CandidateMatches AS
-        (
-            SELECT
-                AutomatedBotPickEvaluationId,
-                MatchHistoryId,
-                ApiFootballFixtureId = MAX(ApiFootballFixtureId),
-                LinkPriority = MIN(LinkPriority),
-                DateDistanceDays = MIN(DateDistanceDays)
-            FROM CandidateMatchesRaw
-            GROUP BY AutomatedBotPickEvaluationId, MatchHistoryId
-        ),
-        RankedCandidateMatches AS
-        (
-            SELECT
-                candidate.*,
-                CandidateRank = DENSE_RANK() OVER
-                (
-                    PARTITION BY candidate.AutomatedBotPickEvaluationId
-                    ORDER BY candidate.LinkPriority, candidate.DateDistanceDays,
-                        CASE WHEN candidate.ApiFootballFixtureId IS NULL THEN 1 ELSE 0 END
-                )
-            FROM CandidateMatches candidate
-        ),
-        MatchedEvaluations AS
-        (
-            SELECT
-                AutomatedBotPickEvaluationId,
-                MatchCandidateCount = SUM(CASE WHEN CandidateRank = 1 THEN 1 ELSE 0 END),
-                MatchHistoryId = MAX(CASE WHEN CandidateRank = 1 THEN MatchHistoryId END)
-            FROM RankedCandidateMatches
-            GROUP BY AutomatedBotPickEvaluationId
-        )
-        SELECT
-            EvaluationId = e.AutomatedBotPickEvaluationId,
-            FixtureId = mh.ApiFootballFixtureId,
-            MatchDateUtc = CAST(
-                e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                AS DATETIME2),
-            e.MarketType,
-            e.SelectedSide,
-            LineValue = e.LineValue,
-            Odds = e.SelectedOdds,
-            ActualValue = CONVERT(INT, CASE e.MarketType
-                WHEN N'TotalGoals' THEN mh.HomeGoals + mh.AwayGoals
-                WHEN N'HomeTeamGoals' THEN mh.HomeGoals
-                WHEN N'AwayTeamGoals' THEN mh.AwayGoals
-                WHEN N'TotalCorners' THEN mh.HomeCorners + mh.AwayCorners
-                WHEN N'HomeTeamCorners' THEN mh.HomeCorners
-                WHEN N'AwayTeamCorners' THEN mh.AwayCorners
-                WHEN N'TotalShots' THEN mh.HomeShots + mh.AwayShots
-                WHEN N'HomeTeamShots' THEN mh.HomeShots
-                WHEN N'AwayTeamShots' THEN mh.AwayShots
-                WHEN N'TotalShotsOnGoal' THEN mh.HomeShotsOnGoal + mh.AwayShotsOnGoal
-                WHEN N'HomeTeamShotsOnGoal' THEN mh.HomeShotsOnGoal
-                WHEN N'AwayTeamShotsOnGoal' THEN mh.AwayShotsOnGoal
-            END),
-            e.BaseCalibratedProbability,
-            e.MarketNoVigProbability,
-            e.DataQualityScore,
-            e.FeatureSnapshotJson,
-            e.BaseModelVersion
-        FROM EligibleEvaluations e
-        INNER JOIN MatchedEvaluations matched
-            ON matched.AutomatedBotPickEvaluationId = e.AutomatedBotPickEvaluationId
-           AND matched.MatchCandidateCount = 1
-        INNER JOIN dbo.MatchHistory mh
-            ON mh.Id = matched.MatchHistoryId
-        WHERE mh.ApiFootballFixtureId IS NOT NULL
-          AND UPPER(LTRIM(RTRIM(COALESCE(mh.FixtureStatus, N'')))) IN (N'FT', N'AET', N'PEN')
-          AND
-          (
-              (e.MarketType IN (N'TotalGoals', N'HomeTeamGoals', N'AwayTeamGoals')
-                  AND ISNULL(mh.ApiFootballGoalsAvailable, 0) = 1)
-              OR (e.MarketType IN (N'TotalCorners', N'HomeTeamCorners', N'AwayTeamCorners')
-                  AND ISNULL(mh.ApiFootballCornersAvailable, 0) = 1)
-              OR (e.MarketType IN (N'TotalShots', N'HomeTeamShots', N'AwayTeamShots')
-                  AND ISNULL(mh.ApiFootballShotsAvailable, 0) = 1)
-              OR (e.MarketType IN (N'TotalShotsOnGoal', N'HomeTeamShotsOnGoal', N'AwayTeamShotsOnGoal')
-                  AND ISNULL(mh.ApiFootballShotsOnGoalAvailable, 0) = 1)
-          )
-          AND CASE e.MarketType
-                WHEN N'TotalGoals' THEN mh.HomeGoals + mh.AwayGoals
-                WHEN N'HomeTeamGoals' THEN mh.HomeGoals
-                WHEN N'AwayTeamGoals' THEN mh.AwayGoals
-                WHEN N'TotalCorners' THEN mh.HomeCorners + mh.AwayCorners
-                WHEN N'HomeTeamCorners' THEN mh.HomeCorners
-                WHEN N'AwayTeamCorners' THEN mh.AwayCorners
-                WHEN N'TotalShots' THEN mh.HomeShots + mh.AwayShots
-                WHEN N'HomeTeamShots' THEN mh.HomeShots
-                WHEN N'AwayTeamShots' THEN mh.AwayShots
-                WHEN N'TotalShotsOnGoal' THEN mh.HomeShotsOnGoal + mh.AwayShotsOnGoal
-                WHEN N'HomeTeamShotsOnGoal' THEN mh.HomeShotsOnGoal
-                WHEN N'AwayTeamShotsOnGoal' THEN mh.AwayShotsOnGoal
-              END IS NOT NULL
-        ORDER BY e.MatchDate, e.AutomatedBotPickEvaluationId
-        OPTION (RECOMPILE);
-        """;
+    private async Task<IReadOnlyList<BotECalibrationObservation>> LoadBotECalibrationHistoryAsync(
+        string sourceBotKey, DateTime asOfDateUtc, CancellationToken cancellationToken, Func<int, Task>? reportPrepared)
+    {
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        command.CommandType = CommandType.Text;
-        command.CommandTimeout = 180;
-        command.Parameters.Add(new SqlParameter("@SourceBotKey", SqlDbType.NVarChar, 50)
+        command.CommandText = "CREATE TABLE #CalibrationParameters (SourceBotKey NVARCHAR(50), AsOfDateUtc DATETIME2);";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        command.CommandText = "INSERT #CalibrationParameters VALUES (@SourceBotKey,@AsOfDateUtc);";
+        command.Parameters.Add(new SqlParameter("@SourceBotKey", SqlDbType.NVarChar, 50) { Value = sourceBotKey.Trim().ToUpperInvariant() });
+        command.Parameters.Add(new SqlParameter("@AsOfDateUtc", SqlDbType.DateTime2) { Value = asOfDateUtc });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        command.Parameters.Clear();
+        // Keep temporary tables in this connection's scope, outside sp_executesql.
+        command.CommandText = "DECLARE @SourceBotKey NVARCHAR(50), @AsOfDateUtc DATETIME2; SELECT @SourceBotKey=SourceBotKey,@AsOfDateUtc=AsOfDateUtc FROM #CalibrationParameters;\n" + CalibrationPreparationSql;
+        command.CommandTimeout = 300;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        var prepared = 0;
+        while (true)
         {
-            Value = sourceBotKey.Trim().ToUpperInvariant()
-        });
-        command.Parameters.Add(new SqlParameter("@AsOfDateUtc", SqlDbType.DateTime2)
-        {
-            Value = asOfDateUtc
-        });
-
+            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            command.Transaction = transaction;
+            command.CommandText = "DECLARE @SnapshotBatchSize INT=100;\n" + CalibrationSnapshotBatchSql + "\nSELECT * FROM #CalibrationMissingSnapshots;";
+            var cacheRows = new DataTable();
+            cacheRows.Columns.Add("EvaluationId", typeof(long));
+            cacheRows.Columns.Add("SourceHash", typeof(byte[]));
+            cacheRows.Columns.Add("SourceProbability", typeof(double));
+            await using (var snapshots = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                while (await snapshots.ReadAsync(cancellationToken))
+                {
+                    var probability = BotECalibrationSourceProbabilityResolver.Resolve(
+                        snapshots["FeatureSnapshotJson"] as string,
+                        snapshots["BaseCalibratedProbability"] is decimal value ? (double)value : null);
+                    cacheRows.Rows.Add(snapshots.GetInt64(snapshots.GetOrdinal("EvaluationId")),
+                        (byte[])snapshots["SourceHash"], (object?)probability ?? DBNull.Value);
+                }
+            }
+            if (cacheRows.Rows.Count > 0)
+                await PersistCalibrationSourceCacheAsync(connection, transaction, cacheRows, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            command.Transaction = null;
+            if (cacheRows.Rows.Count == 0) break;
+            prepared += cacheRows.Rows.Count;
+            _logger.LogInformation("Calibration source cache prepared. SourceBot={SourceBot}, Rows={Rows}", sourceBotKey, prepared);
+            if (reportPrepared is not null) await reportPrepared(prepared);
+        }
+        command.CommandText = CalibrationResultsSql;
         var observations = new List<BotECalibrationObservation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var baseCalibratedProbabilityOrdinal = reader.GetOrdinal("BaseCalibratedProbability");
         var featureSnapshotJsonOrdinal = reader.GetOrdinal("FeatureSnapshotJson");
         while (await reader.ReadAsync(cancellationToken))
         {
-            var sourceProbability = BotECalibrationSourceProbabilityResolver.Resolve(
+            var hasCachedProbability = reader.GetBoolean(reader.GetOrdinal("HasCachedProbability"));
+            var sourceProbability = hasCachedProbability
+                ? (reader.IsDBNull(reader.GetOrdinal("CachedProbability")) ? (double?)null
+                    : reader.GetDouble(reader.GetOrdinal("CachedProbability")))
+                : BotECalibrationSourceProbabilityResolver.Resolve(
                 reader.IsDBNull(featureSnapshotJsonOrdinal)
                     ? null
                     : reader.GetString(featureSnapshotJsonOrdinal),
@@ -726,6 +635,35 @@ public sealed class SqlAutomationRepository
         return observations;
     }
 
+    private static async Task PersistCalibrationSourceCacheAsync(SqlConnection connection, SqlTransaction transaction,
+        DataTable rows, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DROP TABLE IF EXISTS #CalibrationSourceCache; CREATE TABLE #CalibrationSourceCache (EvaluationId BIGINT PRIMARY KEY, SourceHash BINARY(32), SourceProbability FLOAT NULL);";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction) { DestinationTableName = "#CalibrationSourceCache", BulkCopyTimeout = 30 };
+        foreach (DataColumn column in rows.Columns) bulk.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+        await bulk.WriteToServerAsync(rows, cancellationToken);
+        command.CommandTimeout = 60;
+        // Snapshot rows are held with update locks in this short transaction.
+        // Later changes invalidate the committed cache through the trigger.
+        command.CommandText = """
+            INSERT dbo.AutomatedBotCalibrationProbabilityCache (EvaluationId,SourceHash,SourceProbability)
+            SELECT pending.EvaluationId,pending.SourceHash,pending.SourceProbability
+            FROM #CalibrationSourceCache AS pending
+            WHERE NOT EXISTS (SELECT 1 FROM dbo.AutomatedBotCalibrationProbabilityCache AS existing WITH (UPDLOCK,HOLDLOCK)
+                  WHERE existing.EvaluationId = pending.EvaluationId)
+            OPTION (RECOMPILE, FORCE ORDER);
+            INSERT #CalibrationCachedSources (EvaluationId, SourceProbability)
+            SELECT EvaluationId, SourceProbability FROM #CalibrationSourceCache;
+            DELETE missing FROM #CalibrationMissingSources AS missing
+            INNER JOIN #CalibrationSourceCache AS prepared ON prepared.EvaluationId = missing.EvaluationId;
+
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<UpsertSelectionResult> UpsertSelectionAsync(
         PersistSelectionCommand commandModel,
         CancellationToken cancellationToken)
@@ -734,6 +672,9 @@ public sealed class SqlAutomationRepository
         await using var command = connection.CreateCommand();
         command.CommandText = "dbo.sp_UpsertAutomatedCornerBetSelection";
         command.CommandType = CommandType.StoredProcedure;
+        // Match the write budget used by evaluation persistence. The first call
+        // after restoring this procedure can refresh SQL statistics synchronously.
+        command.CommandTimeout = 120;
 
         command.Parameters.Add(new SqlParameter("@BotGCandidateId", SqlDbType.BigInt)
         {
@@ -801,16 +742,67 @@ public sealed class SqlAutomationRepository
             MergeAction: Convert.ToString(mergeActionParameter.Value) ?? "UNKNOWN");
     }
 
-    public async Task UpsertBotCEvaluationAsync(
-        PersistBotCEvaluationCommand model,
+    public Task UpsertBotCEvaluationAsync(PersistBotCEvaluationCommand model,
+        CancellationToken cancellationToken) => UpsertBotCEvaluationsAsync([model], cancellationToken);
+
+    public async Task UpsertBotCEvaluationsAsync(IReadOnlyCollection<PersistBotCEvaluationCommand> models,
         CancellationToken cancellationToken)
     {
+        if (models.Count == 0) return;
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        foreach (var chunk in models.Chunk(20))
+        {
+            var commands = chunk.Select(BuildBotCEvaluationCommand).ToArray();
+            try
+            {
+                using var batch = BuildEvaluationBatch(connection, commands);
+                await batch.ExecuteNonQueryAsync(cancellationToken);
+            }
+            finally
+            {
+                foreach (var command in commands) command.Dispose();
+            }
+        }
+    }
+
+    internal static SqlCommand BuildEvaluationBatch(SqlConnection connection, IReadOnlyList<SqlCommand> commands)
+    {
+        var batch = connection.CreateCommand();
+        batch.CommandType = CommandType.Text;
+        batch.CommandTimeout = 120;
+        var sql = new StringBuilder();
+        for (var index = 0; index < commands.Count; index++)
+        {
+            var assignments = new List<string>();
+            foreach (SqlParameter original in commands[index].Parameters)
+            {
+                var parameter = (SqlParameter)((ICloneable)original).Clone();
+                parameter.ParameterName = $"{original.ParameterName}_{index}";
+                batch.Parameters.Add(parameter);
+                assignments.Add($"{original.ParameterName} = {parameter.ParameterName}");
+            }
+            sql.Append("EXEC ").Append(commands[index].CommandText).Append(' ')
+                .AppendJoin(", ", assignments).AppendLine(";");
+        }
+        if (batch.Parameters.Count > 2000)
+        {
+            batch.Dispose();
+            throw new InvalidOperationException("Evaluation batch exceeds the bounded SQL parameter budget.");
+        }
+        batch.CommandText = sql.ToString();
+        return batch;
+    }
+
+    private static SqlCommand BuildBotCEvaluationCommand(PersistBotCEvaluationCommand model)
+    {
         var decision = model.Decision;
-        var evidenceFingerprint = decision.ConfigurationVersion.StartsWith(
-            "bot-e-",
-            StringComparison.OrdinalIgnoreCase)
-            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(decision.FeatureSnapshotJson)))
-            : string.Empty;
+        // The feature snapshot is the immutable scientific observation. Including
+        // its hash for every selector prevents a later run with changed evidence
+        // from overwriting an earlier C/D/E/F/H evaluation.
+        var evidenceFingerprint = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(decision.FeatureSnapshotJson)));
+        var predictionTimestampUtc = ReadPredictionTimestampUtc(decision.FeatureSnapshotJson)
+            ?? DateTime.UtcNow;
         var idempotencyPayload = string.Join(
             "|",
             model.BotKey.Trim().ToUpperInvariant(),
@@ -822,8 +814,7 @@ public sealed class SqlAutomationRepository
             evidenceFingerprint);
         var idempotencyKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idempotencyPayload)));
 
-        await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var command = new SqlCommand();
         command.CommandText = "dbo.sp_UpsertAutomatedBotPickEvaluation";
         command.CommandType = CommandType.StoredProcedure;
         command.CommandTimeout = 120;
@@ -865,8 +856,20 @@ public sealed class SqlAutomationRepository
         Add(command, "@RiskFlagsJson", SqlDbType.NVarChar, JsonSerializer.Serialize(decision.RiskFlags));
         Add(command, "@Explanation", SqlDbType.NVarChar, decision.Summary, 1000);
         Add(command, "@FeatureSnapshotJson", SqlDbType.NVarChar, decision.FeatureSnapshotJson);
+        Add(command, "@EvidenceSnapshotHash", SqlDbType.Char, evidenceFingerprint, 64);
         Add(command, "@PublishedSelectionId", SqlDbType.BigInt, model.PublishedSelectionId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        Add(command, "@PublicationStatus", SqlDbType.NVarChar, model.PublicationStatus, 20);
+        Add(command, "@ProductionDecision", SqlDbType.NVarChar, model.ProductionDecision, 30);
+        Add(command, "@ProductionReason", SqlDbType.NVarChar, model.ProductionReason, 1000);
+        Add(command, "@IsResearchWinner", SqlDbType.Bit, model.IsResearchWinner);
+        AddDecimal(command, "@SelectionScore", decision.SelectionScore, 9, 6);
+        Add(
+            command,
+            "@OddsTimestampUtc",
+            SqlDbType.DateTime2,
+            model.Odds.OddsCapturedAtUtc ?? model.Odds.UpdatedAtUtc);
+        Add(command, "@PredictionTimestampUtc", SqlDbType.DateTime2, predictionTimestampUtc);
+        return command;
     }
 
     private static void Add(SqlCommand command, string name, SqlDbType type, object? value, int size = 0)
@@ -886,6 +889,34 @@ public sealed class SqlAutomationRepository
     }
 
     private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static DateTime? ReadPredictionTimestampUtc(string featureSnapshotJson)
+    {
+        if (string.IsNullOrWhiteSpace(featureSnapshotJson))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(featureSnapshotJson);
+            if (!document.RootElement.TryGetProperty("predictionTimestampUtc", out var timestamp)
+                || timestamp.ValueKind != JsonValueKind.String
+                || !timestamp.TryGetDateTime(out var value))
+            {
+                return null;
+            }
+
+            return value.Kind switch
+            {
+                DateTimeKind.Utc => value,
+                DateTimeKind.Local => value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     public async Task<IReadOnlyList<PersistedAutomatedSelection>> GetSelectionsAsync(
         DateOnly? dateFrom,
@@ -915,6 +946,7 @@ public sealed class SqlAutomationRepository
         DateOnly? dateFrom,
         DateOnly? dateTo,
         string marketFamily,
+        string? marketType,
         CancellationToken cancellationToken)
     {
         var normalizedFamily = marketFamily.Trim().ToUpperInvariant() switch
@@ -931,12 +963,23 @@ public sealed class SqlAutomationRepository
             "SOG" => new[] { "TotalShotsOnGoal", "HomeTeamShotsOnGoal", "AwayTeamShotsOnGoal" },
             _ => new[] { "TotalCorners", "HomeTeamCorners", "AwayTeamCorners" }
         };
+        var normalizedMarketType = string.IsNullOrWhiteSpace(marketType)
+            ? null
+            : marketTypes.FirstOrDefault(value =>
+                value.Equals(marketType.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(marketType) && normalizedMarketType is null)
+        {
+            throw new ArgumentException(
+                $"Market type '{marketType}' does not belong to {normalizedFamily}.",
+                nameof(marketType));
+        }
 
         const string sql = """
         ;WITH Scoped AS
         (
             SELECT
                 evaluation.BotKey,
+                evaluation.MarketType,
                 evaluation.Decision,
                 evaluation.PublishedSelectionId,
                 evaluation.EvaluatedAtUtc,
@@ -956,12 +999,14 @@ public sealed class SqlAutomationRepository
             WHERE (@DateFrom IS NULL OR evaluation.MatchDate >= @DateFrom)
               AND (@DateToExclusive IS NULL OR evaluation.MatchDate < @DateToExclusive)
               AND evaluation.MarketType IN (@MarketType1, @MarketType2, @MarketType3)
+              AND (@MarketType IS NULL OR evaluation.MarketType = @MarketType)
               -- G owns a high-volume candidate audit and I has an independent
               -- table. H remains here because it shares this selector pipeline.
               AND evaluation.BotKey <> N'G2026'
         )
         SELECT
             MarketFamily = @MarketFamily,
+            scoped.MarketType,
             scoped.BotKey,
             EvaluatedRows = COUNT_BIG(*),
             EvaluatedFixtures = COUNT_BIG(DISTINCT scoped.FixtureKey),
@@ -976,8 +1021,8 @@ public sealed class SqlAutomationRepository
                 WHEN scoped.PublishedSelectionId IS NOT NULL THEN 1 ELSE 0 END)),
             LatestEvaluationAtUtc = MAX(scoped.EvaluatedAtUtc)
         FROM Scoped AS scoped
-        GROUP BY scoped.BotKey
-        ORDER BY BotKey
+        GROUP BY scoped.MarketType, scoped.BotKey
+        ORDER BY scoped.MarketType, scoped.BotKey
         OPTION (RECOMPILE);
         """;
 
@@ -1010,6 +1055,10 @@ public sealed class SqlAutomationRepository
         {
             Value = marketTypes[2]
         });
+        command.Parameters.Add(new SqlParameter("@MarketType", SqlDbType.NVarChar, 50)
+        {
+            Value = (object?)normalizedMarketType ?? DBNull.Value
+        });
 
         var rows = new List<AutomatedBotMonitoringSummary>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1018,6 +1067,7 @@ public sealed class SqlAutomationRepository
             rows.Add(new AutomatedBotMonitoringSummary
             {
                 MarketFamily = reader.GetString(reader.GetOrdinal("MarketFamily")),
+                MarketType = reader.GetString(reader.GetOrdinal("MarketType")),
                 BotKey = reader.GetString(reader.GetOrdinal("BotKey")),
                 EvaluatedRows = reader.GetInt64(reader.GetOrdinal("EvaluatedRows")),
                 EvaluatedFixtures = reader.GetInt64(reader.GetOrdinal("EvaluatedFixtures")),
@@ -1049,7 +1099,7 @@ public sealed class SqlAutomationRepository
             .Where(batch => !string.IsNullOrWhiteSpace(batch))
             .ToArray();
 
-        if (goSplit.Length > 1)
+        if (Regex.IsMatch(sql, @"(?im)^\s*GO\s*(?:--.*)?$"))
         {
             return goSplit;
         }

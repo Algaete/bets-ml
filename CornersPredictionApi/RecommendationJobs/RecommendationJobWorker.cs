@@ -12,15 +12,19 @@ public sealed class RecommendationJobWorker : BackgroundService
     private readonly ILogger<RecommendationJobWorker> _logger;
     private readonly string _workerId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
     private DateTime _nextRecurringAtUtc = DateTime.MinValue;
+    private readonly IHostEnvironment _environment;
+    private bool _recoveredLocalLeases;
 
     public RecommendationJobWorker(
         IServiceScopeFactory scopeFactory,
         IOptions<RecommendationJobOptions> options,
-        ILogger<RecommendationJobWorker> logger)
+        ILogger<RecommendationJobWorker> logger,
+        IHostEnvironment environment)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
         _logger = logger;
+        _environment = environment;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,10 +46,18 @@ public sealed class RecommendationJobWorker : BackgroundService
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var schema = scope.ServiceProvider.GetRequiredService<SqlAutomationRepository>();
                 await schema.EnsureSchemaAsync(stoppingToken);
-                await EnqueueRecurringJobIfDueAsync(scope.ServiceProvider, stoppingToken);
-
                 var repository = scope.ServiceProvider.GetRequiredService<IRecommendationJobRepository>();
+                if (!_recoveredLocalLeases && _environment.IsDevelopment())
+                {
+                    await RecoverLocalLeasesAsync(repository, stoppingToken);
+                    _recoveredLocalLeases = true;
+                }
                 var job = await repository.TryClaimNextAsync(_workerId, leaseDuration, stoppingToken);
+                if (job is null)
+                {
+                    await EnqueueRecurringJobIfDueAsync(scope.ServiceProvider, stoppingToken);
+                    job = await repository.TryClaimNextAsync(_workerId, leaseDuration, stoppingToken);
+                }
                 if (job is null)
                 {
                     await Task.Delay(pollInterval, stoppingToken);
@@ -58,6 +70,12 @@ public sealed class RecommendationJobWorker : BackgroundService
                     job,
                     leaseDuration,
                     stoppingToken);
+                // Finish the queued run before refreshing quotes for future work.
+                // Refreshing between its batches adds minutes and changes the
+                // ordered input while the job is still paging through it.
+                var updatedJob = await repository.GetAsync(job.RecommendationJobId, stoppingToken);
+                if (updatedJob?.IsTerminal == true)
+                    await EnqueueRecurringJobIfDueAsync(scope.ServiceProvider, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -71,6 +89,26 @@ public sealed class RecommendationJobWorker : BackgroundService
         }
 
         _logger.LogInformation("Recommendation job worker {WorkerId} stopped.", _workerId);
+    }
+
+    private async Task RecoverLocalLeasesAsync(IRecommendationJobRepository repository, CancellationToken token)
+    {
+        foreach (var lease in await repository.GetLocalLeasesAsync(Environment.MachineName, token))
+        {
+            var parts = lease.LeaseOwner.Split(':');
+            if (parts.Length != 3 || !int.TryParse(parts[1], out var processId) || processId <= 0)
+                continue;
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(processId);
+                if (!process.HasExited) continue;
+            }
+            catch (ArgumentException) { /* The old local process no longer exists. */ }
+            catch (System.ComponentModel.Win32Exception) { continue; }
+            await repository.ReleaseAsync(lease.RecommendationJobId, lease.LeaseOwner, token);
+            _logger.LogInformation("Recovered recommendation job {JobId} from exited local process {ProcessId}.",
+                lease.RecommendationJobId, processId);
+        }
     }
 
     private async Task ProcessBatchAsync(
@@ -123,7 +161,20 @@ public sealed class RecommendationJobWorker : BackgroundService
                     MarketFamilies: string.Join(',', job.MarketFamilies),
                     HistoricalBackfill: historicalBackfill,
                     BotKeys: string.Join(',', job.BotKeys)),
-                batchCancellation.Token);
+                batchCancellation.Token,
+                async (progress, token) =>
+                {
+                    try
+                    {
+                        await repository.ReportActivityAsync(job.RecommendationJobId, _workerId,
+                            progress.Stage, progress.TotalBatches, progress.CompletedMatches,
+                            progress.TotalMatches, token);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(exception, "Could not report progress for job {JobId}", job.RecommendationJobId);
+                    }
+                });
 
             if (batchCancellation.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
@@ -145,7 +196,8 @@ public sealed class RecommendationJobWorker : BackgroundService
                     response.InsertedRows,
                     response.UpdatedRows,
                     response.SkippedMatches,
-                    response.ErrorMatches),
+                    response.ErrorMatches,
+                    BuildBatchErrorSummary(response)),
                 stoppingToken);
 
             _logger.LogInformation(
@@ -164,10 +216,18 @@ public sealed class RecommendationJobWorker : BackgroundService
                 await TryReconcileBotPicksAsync(services, job, stoppingToken);
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (Exception) when (stoppingToken.IsCancellationRequested)
         {
-            await TryRecordFailureAsync(repository, job, "API shutdown interrupted the active batch.");
-            throw;
+            try
+            {
+                using var releaseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await repository.ReleaseAsync(job.RecommendationJobId, _workerId, releaseTimeout.Token);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Could not release job {JobId} during shutdown; its lease will expire.", job.RecommendationJobId);
+            }
+            throw new OperationCanceledException(stoppingToken);
         }
         catch (OperationCanceledException) when (batchCancellation.IsCancellationRequested)
         {
@@ -196,6 +256,15 @@ public sealed class RecommendationJobWorker : BackgroundService
             {
             }
         }
+    }
+
+    internal static string? BuildBatchErrorSummary(AutomatedRunResponse response)
+    {
+        if (response.ErrorMatches == 0) return null;
+        var summary = string.Join("\n", response.Errors.Select(error =>
+            $"{error.HomeTeam} vs {error.AwayTeam}: {error.Error}").Distinct().Take(5));
+        if (string.IsNullOrWhiteSpace(summary)) summary = $"El lote terminó con {response.ErrorMatches} errores.";
+        return summary.Length <= 1900 ? summary : summary[..1900];
     }
 
     private async Task MaintainLeaseAsync(

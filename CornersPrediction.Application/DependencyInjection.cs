@@ -51,6 +51,9 @@ public static class DependencyInjection
         services.AddScoped<IDeleteAutomatedCornerSelectionUseCase, DeleteAutomatedCornerSelectionUseCase>();
         services.AddScoped<IAutomatedBotPickSettlementUseCase, AutomatedBotPickSettlementUseCase>();
         services.AddScoped<IAutomatedBotPerformanceService, AutomatedBotPerformanceService>();
+        services.AddScoped<IGetAutomatedBotResearchEvaluationsUseCase, GetAutomatedBotResearchEvaluationsUseCase>();
+        services.AddScoped<IGetAutomatedBotGeneralPicksUseCase, GetAutomatedBotGeneralPicksUseCase>();
+        services.AddScoped<IGetGeneralPickLabUseCase, GetGeneralPickLabUseCase>();
         services.AddScoped<IRecommendationJobsUseCase, RecommendationJobsUseCase>();
         services.AddScoped<IRecommendationBotDefinitionsUseCase, RecommendationBotDefinitionsUseCase>();
         services.AddSingleton<IBotCPickDecisionEngine, BotCPickDecisionEngine>();

@@ -65,7 +65,14 @@ public static class DependencyInjection
         services.AddScoped<IMatchHistoryRepository, SqlServerMatchHistoryRepository>();
         services.AddScoped<IBettingRepository, SqlServerBettingRepository>();
         services.AddScoped<IAutomatedCornerSelectionsRepository, SqlServerAutomatedCornerSelectionsRepository>();
+        services.AddScoped<IAutomatedBotMonthlyHistoryRepository, SqlServerAutomatedCornerSelectionsRepository>();
+        services.AddScoped<IAutomatedBotPerformanceEvidenceRepository, SqlServerAutomatedBotPerformanceEvidenceRepository>();
         services.AddScoped<IAutomatedBotPickSettlementRepository, SqlServerAutomatedBotPickSettlementRepository>();
+        services.AddScoped<IAutomatedBotResearchRepository, SqlServerAutomatedBotResearchRepository>();
+        services.AddScoped<IAutomatedBotGeneralPicksRepository, SqlServerAutomatedBotResearchRepository>();
+        services.AddScoped<IGeneralPickLabRepository, SqlServerAutomatedBotResearchRepository>();
+        services.AddScoped<IGeneralPickEvidenceRepository, SqlServerAutomatedBotResearchRepository>();
+        services.AddScoped<IGeneralPickManualSettlementRepository, SqlServerGeneralPickManualSettlementRepository>();
         services.AddScoped<IRecommendationJobRepository, SqlServerRecommendationJobRepository>();
         services.AddScoped<IRecommendationBotDefinitionRepository, SqlServerRecommendationBotDefinitionRepository>();
         services.AddScoped<SqlServerBotGRepository>();

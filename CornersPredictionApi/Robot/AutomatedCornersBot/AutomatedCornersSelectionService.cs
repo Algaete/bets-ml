@@ -84,8 +84,12 @@ public sealed class AutomatedCornersSelectionService
 
     public async Task<AutomatedRunResponse> RunAsync(
         RunAutomatedCornersRequest? request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<AutomatedRunProgress, CancellationToken, Task>? reportProgress = null)
     {
+        Task ReportAsync(AutomatedRunProgress progress) => reportProgress is null
+            ? Task.CompletedTask : reportProgress(progress, cancellationToken);
+        await ReportAsync(new("Cargando configuración de bots"));
         var effectiveRequest = request ?? new RunAutomatedCornersRequest(
             null, null, null, null, null, null, null, false, null, null, false, 1, 100, null, false, false, null, false);
         var chileNow = GetChileNow();
@@ -196,6 +200,7 @@ public sealed class AutomatedCornersSelectionService
             throw new ArgumentException("None of the requested bots are enabled.");
         }
         var enforceLiveProductionGate = !effectiveRequest.DryRun && !historicalMode;
+        await ReportAsync(new("Verificando rendimiento y plan productivo"));
         var productionScorecards = await LoadProductionScorecardsAsync(
             enforceLiveProductionGate
             && (allBotProfiles.Any(profile => profile.PublishEnabled)
@@ -203,9 +208,10 @@ public sealed class AutomatedCornersSelectionService
             cancellationToken);
         var runId = Guid.NewGuid();
         var stopwatch = Stopwatch.StartNew();
-        var batchNumber = Math.Max(1, effectiveRequest.BatchNumber);
+        var requestedBatchNumber = Math.Max(1, effectiveRequest.BatchNumber);
         var batchSize = NormalizeBatchSize(effectiveRequest.BatchSize);
 
+        await ReportAsync(new("Cargando cuotas y preparando el lote"));
         var fetchedOddsRows = await _repository.GetUpcomingOddsAsync(
             dateFrom,
             dateTo,
@@ -216,6 +222,7 @@ public sealed class AutomatedCornersSelectionService
                 && botGDefinitions.All(definition => definition.PublishEnabled),
             Math.Max(1, expectedAutomationVersionCount),
             resolveApiFootballFixtureId: true,
+            includeLatestOddsSnapshot: true,
             cancellationToken: cancellationToken);
         var eligibleOddsRows = fetchedOddsRows
             .Where(row => _competitionPolicy.IsEligible(
@@ -227,17 +234,21 @@ public sealed class AutomatedCornersSelectionService
             .Where(row => requestedMarketFamilies.Count == 0 || requestedMarketFamilies.Contains(MarketFamily(row.MarketType)))
             .ToArray();
         var availableOddsRows = eligibleOddsRows.Length;
-        var batchOffset = (batchNumber - 1) * batchSize;
         var allGroupedMatches = eligibleOddsRows
             .GroupBy(BuildMatchIdentity)
             .ToArray();
-        // G evaluates complete line curves and ranks globally within a fixture. Never
-        // split one fixture across batches, even for a live/shadow run.
-        var batchCompleteFixtures = historicalMode || botGDefinitions.Length > 0;
-        var totalBatchItems = batchCompleteFixtures
-            ? allGroupedMatches.Length
-            : availableOddsRows;
+        // Every selector needs the complete price curve for a match/market family.
+        // Keeping that identity together also makes availability and execution use
+        // the same batching unit regardless of which bots are enabled.
+        const bool batchCompleteFixtures = true;
+        var totalBatchItems = allGroupedMatches.Length;
         var totalBatches = CalculateTotalBatches(totalBatchItems, batchSize);
+        // Availability can change after a fresh odds sync. Never let a stale batch
+        // number from the panel turn an otherwise valid run into a silent 0-row run.
+        var batchNumber = totalBatches == 0
+            ? 1
+            : Math.Min(requestedBatchNumber, totalBatches);
+        var batchOffset = (batchNumber - 1) * batchSize;
         var oddsRows = SelectBatchOddsRows(
             eligibleOddsRows,
             batchOffset,
@@ -248,6 +259,7 @@ public sealed class AutomatedCornersSelectionService
             : oddsRows.Length;
         var batchStart = processedBatchItems == 0 ? 0 : batchOffset + 1;
         var batchEnd = processedBatchItems == 0 ? 0 : batchOffset + processedBatchItems;
+        await ReportAsync(new("Preparando historial de calibración", totalBatches, 0, processedBatchItems));
         var calibrationHistoryBySourceBot = new Dictionary<string, IReadOnlyList<BotECalibrationObservation>>(
             StringComparer.OrdinalIgnoreCase);
         IReadOnlyDictionary<long, MatchIntelligenceSnapshotPair> intelligenceSnapshotsByFixture =
@@ -263,12 +275,14 @@ public sealed class AutomatedCornersSelectionService
             var latestCandidateDate = oddsRows.Max(row => EnsureUtc(row.MatchDate));
             foreach (var sourceBotKey in calibrationSourceBots)
             {
+                await ReportAsync(new($"Cargando calibración de {sourceBotKey}", totalBatches, 0, processedBatchItems));
                 try
                 {
                     var observations = await _repository.GetBotECalibrationHistoryAsync(
                         sourceBotKey,
                         latestCandidateDate,
-                        cancellationToken);
+                        cancellationToken,
+                        prepared => ReportAsync(new($"Preparando calibración de {sourceBotKey}: {prepared:N0} registros guardados", totalBatches, 0, processedBatchItems)));
                     calibrationHistoryBySourceBot[sourceBotKey] = observations;
                     _logger.LogInformation(
                         "Empirical calibration evidence loaded. SourceBot={SourceBot}, Observations={Observations}, AsOf={AsOf}",
@@ -292,6 +306,7 @@ public sealed class AutomatedCornersSelectionService
 
             if (botDefinitions.Any(definition => definition.FootballIntelligenceConfiguration.Enabled))
             {
+                await ReportAsync(new("Cargando contexto de los partidos", totalBatches, 0, processedBatchItems));
                 var fixtureIds = oddsRows
                     .Where(row => row.ApiFootballFixtureId.HasValue)
                     .Select(row => row.ApiFootballFixtureId!.Value)
@@ -373,16 +388,20 @@ public sealed class AutomatedCornersSelectionService
             var teamGender = NormalizeGender(representative.HomeTeamGender);
             var isNeutralMatch = IsNeutralOrInternationalMatch(representative);
             var currentMarketFamily = MarketFamily(representative.MarketType);
+            await ReportAsync(new($"Evaluando {homeTeam} vs {awayTeam} · {currentMarketFamily}",
+                totalBatches, matchIndex, groupedMatches.Length));
+            // League allow/deny lists govern publication, not research collection.
+            // Every compatible selector keeps producing auditable shadow evidence so
+            // a blocked segment can accumulate enough outcomes to earn promotion.
             var applicableBotGDefinitions = currentMarketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
                 ? botGDefinitions
-                    .Where(definition => definition.IsLeagueAllowed(currentMarketFamily, league))
-                    .ToArray()
                 : Array.Empty<RecommendationBotDefinitionDto>();
-            var hasLeagueEligibleStandardBot = allBotProfiles.Any(profile =>
-                profile.MarketFamilies.Contains(currentMarketFamily)
-                && profile.IsLeagueAllowed(currentMarketFamily, league));
+            var hasApplicableStandardBot = botProfiles.Any(profile =>
+                    profile.MarketFamilies.Contains(currentMarketFamily)
+                    && profile.IsLeagueAllowed(currentMarketFamily, league))
+                || selectorProfiles.Any(profile => profile.MarketFamilies.Contains(currentMarketFamily));
 
-            if (applicableBotGDefinitions.Length == 0 && !hasLeagueEligibleStandardBot)
+            if (applicableBotGDefinitions.Length == 0 && !hasApplicableStandardBot)
             {
                 skipped.Add(new SkippedMatchResult(
                     league,
@@ -471,21 +490,25 @@ public sealed class AutomatedCornersSelectionService
                         && !effectiveRequest.DryRun)
                     {
                         var sourceOdds = FindBotGSourceOdds(matchGroup, botGResult.SelectedForPublication);
-                        var eligibility = AutomatedBotProductionEligibilityPolicy.Evaluate(
-                            productionScorecards,
-                            botGResult.SelectedForPublication.BotKey,
-                            botGResult.SelectedForPublication.MarketFamily,
-                            botGResult.SelectedForPublication.MarketType.ToString(),
-                            botGResult.SelectedForPublication.Selection.ToString(),
-                            botGResult.SelectedForPublication.Bookmaker,
-                            botGResult.SelectedForPublication.AutomationVersion,
-                            botGResult.SelectedForPublication.Line,
-                            botGResult.SelectedForPublication.OddsTimestampUtc,
-                            botGResult.SelectedForPublication.PredictionTimestampUtc,
-                            immutableOddsSnapshotAvailable: sourceOdds.OddsSnapshotId is > 0
-                                && sourceOdds.OddsCapturedAtUtc.HasValue
-                                && sourceOdds.SnapshotOverOdds is > 1m
-                                && sourceOdds.SnapshotUnderOdds is > 1m);
+                        var eligibility = !botGDefinition.IsLeagueAllowed(currentMarketFamily, league)
+                            ? new AutomatedBotProductionEligibility(
+                                false,
+                                $"{league} está fuera del alcance productivo configurado para {botGDefinition.BotKey}; la evidencia permanece en shadow.")
+                            : AutomatedBotProductionEligibilityPolicy.Evaluate(
+                                productionScorecards,
+                                botGResult.SelectedForPublication.BotKey,
+                                botGResult.SelectedForPublication.MarketFamily,
+                                botGResult.SelectedForPublication.MarketType.ToString(),
+                                botGResult.SelectedForPublication.Selection.ToString(),
+                                botGResult.SelectedForPublication.Bookmaker,
+                                botGResult.SelectedForPublication.AutomationVersion,
+                                botGResult.SelectedForPublication.Line,
+                                botGResult.SelectedForPublication.OddsTimestampUtc,
+                                botGResult.SelectedForPublication.PredictionTimestampUtc,
+                                immutableOddsSnapshotAvailable: sourceOdds.OddsSnapshotId is > 0
+                                    && sourceOdds.OddsCapturedAtUtc.HasValue
+                                    && sourceOdds.SnapshotOverOdds is > 1m
+                                    && sourceOdds.SnapshotUnderOdds is > 1m);
                         if (!eligibility.CanPublish)
                         {
                             skipped.Add(new SkippedMatchResult(
@@ -540,8 +563,7 @@ public sealed class AutomatedCornersSelectionService
                     await PersistPendingBotCEvaluationsAsync(
                         runId,
                         selectorProfiles.Where(profile =>
-                            profile.MarketFamilies.Contains(currentMarketFamily)
-                            && profile.IsLeagueAllowed(currentMarketFamily, league)),
+                            profile.MarketFamilies.Contains(currentMarketFamily)),
                         matchGroup,
                         historyReason,
                         effectiveRequest.DryRun,
@@ -567,12 +589,10 @@ public sealed class AutomatedCornersSelectionService
                         && profile.IsLeagueAllowed(currentMarketFamily, league))
                     .ToArray();
                 var applicableLegacySelectorProfiles = legacySelectorProfiles
-                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)
-                        && profile.IsLeagueAllowed(currentMarketFamily, league))
+                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))
                     .ToArray();
                 var applicableNewGenerationProfiles = newGenerationProfiles
-                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily)
-                        && profile.IsLeagueAllowed(currentMarketFamily, league))
+                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))
                     .ToArray();
                 IEnumerable<UpcomingOddsRecord> legacyOddsRows = applicableLegacyProfiles.Length == 0
                     && applicableLegacySelectorProfiles.Length == 0
@@ -823,6 +843,20 @@ public sealed class AutomatedCornersSelectionService
                                             awayTeam,
                                             representative.MatchDate,
                                             $"{newGenerationProfile.Key}: rechazado por la capa robusta: {persisted.RobustReason}"));
+                                        if (!effectiveRequest.DryRun)
+                                        {
+                                            await PersistSelectorEvaluationsAsync(
+                                                runId,
+                                                newGenerationProfile,
+                                                botCEvaluations,
+                                                bestEvaluation,
+                                                publishedSelectionId: null,
+                                                winnerOnly: true,
+                                                candidateRanking.EligibilityByCandidate,
+                                                cancellationToken,
+                                                winnerProductionDecisionOverride: "RobustBlocked",
+                                                winnerProductionReasonOverride: persisted.RobustReason);
+                                        }
                                     }
                                     else
                                     {
@@ -930,6 +964,7 @@ public sealed class AutomatedCornersSelectionService
             }
         }
 
+        await ReportAsync(new("Guardando resumen del lote", totalBatches, groupedMatches.Length, groupedMatches.Length));
         stopwatch.Stop();
         var botCounts = botDefinitions.ToDictionary(
             definition => definition.BotKey,
@@ -999,6 +1034,7 @@ public sealed class AutomatedCornersSelectionService
             excludeExistingSelections: false,
             expectedAutomationVersionCount: 1,
             resolveApiFootballFixtureId: false,
+            includeLatestOddsSnapshot: false,
             cancellationToken: cancellationToken);
         var eligibleOddsRows = fetchedOddsRows
             .Where(row => row.MatchDate > minimumMatchDate)
@@ -1009,15 +1045,19 @@ public sealed class AutomatedCornersSelectionService
                 row.AwayTeamGender))
             .ToArray();
 
+        var totalMatches = eligibleOddsRows
+            .GroupBy(BuildMatchIdentity)
+            .Count();
+
         return new AutomatedOddsAvailabilityResponse(
             DateFrom: dateFrom,
             DateTo: dateTo,
             TotalOddsRows: eligibleOddsRows.Length,
-            TotalMatches: eligibleOddsRows
-                .GroupBy(BuildMatchIdentity)
-                .Count(),
+            TotalMatches: totalMatches,
             BatchSize: effectiveBatchSize,
-            TotalBatches: CalculateTotalBatches(eligibleOddsRows.Length, effectiveBatchSize));
+            // Execution uses the same match/market-family unit for every bot, so a
+            // batch advertised here always maps to the same batch in RunAsync.
+            TotalBatches: CalculateTotalBatches(totalMatches, effectiveBatchSize));
     }
 
     private static int NormalizeBatchSize(int batchSize) =>
@@ -1151,6 +1191,20 @@ public sealed class AutomatedCornersSelectionService
                             awayTeam,
                             matchDate,
                             $"{profile.Key}: rechazado por la capa robusta: {persisted.RobustReason}"));
+                        if (!dryRun)
+                        {
+                            await PersistSelectorEvaluationsAsync(
+                                runId,
+                                profile,
+                                evaluations,
+                                bestEvaluation,
+                                publishedSelectionId: null,
+                                winnerOnly: true,
+                                candidateRanking.EligibilityByCandidate,
+                                cancellationToken,
+                                winnerProductionDecisionOverride: "RobustBlocked",
+                                winnerProductionReasonOverride: persisted.RobustReason);
+                        }
                     }
                     else
                     {
@@ -1201,47 +1255,72 @@ public sealed class AutomatedCornersSelectionService
         long? publishedSelectionId,
         bool winnerOnly,
         IReadOnlyDictionary<AutomatedSelectionCandidate, AutomatedBotProductionEligibility> productionEligibilityByCandidate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? winnerProductionDecisionOverride = null,
+        string? winnerProductionReasonOverride = null)
     {
+        var researchWinner = evaluations
+            .Where(evaluation => evaluation.Candidate is not null)
+            .OrderByDescending(evaluation => evaluation.Candidate!.SelectionScore)
+            .FirstOrDefault();
+
+        var pendingWrites = new List<PersistBotCEvaluationCommand>();
         foreach (var evaluation in evaluations)
         {
             var isWinner = ReferenceEquals(evaluation, winner);
+            var isResearchWinner = ReferenceEquals(evaluation, researchWinner);
             if (winnerOnly && !isWinner)
                 continue;
 
-            var storedDecision = evaluation.Decision;
-            if (storedDecision.Decision == "Approved" && !isWinner)
+            var publicationStatus = "ModelRejected";
+            var productionDecision = "ModelRejected";
+            var productionReason = evaluation.Decision.Summary;
+            if (evaluation.Decision.Decision.Equals("Approved", StringComparison.OrdinalIgnoreCase))
             {
-                if (evaluation.Candidate is not null
+                if (isWinner && !string.IsNullOrWhiteSpace(winnerProductionDecisionOverride))
+                {
+                    publicationStatus = "ProductionBlocked";
+                    productionDecision = winnerProductionDecisionOverride;
+                    productionReason = winnerProductionReasonOverride ?? evaluation.Decision.Summary;
+                }
+                else if (isWinner && publishedSelectionId.HasValue)
+                {
+                    publicationStatus = "Published";
+                    productionDecision = "Published";
+                    productionReason = "El candidato fue publicado en Bot Picks.";
+                }
+                else if (evaluation.Candidate is not null
                     && productionEligibilityByCandidate.TryGetValue(evaluation.Candidate, out var eligibility)
                     && !eligibility.CanPublish)
                 {
-                    storedDecision = storedDecision with
-                    {
-                        Decision = "Rejected",
-                        DecisionReasons = storedDecision.DecisionReasons
-                            .Append("REJECTED_PRODUCTION_GATE")
-                            .Distinct(StringComparer.Ordinal)
-                            .ToArray(),
-                        Summary = $"Rejected for production: {eligibility.Reason} Selector: {storedDecision.Summary}"
-                    };
+                    publicationStatus = "ProductionBlocked";
+                    productionDecision = "Blocked";
+                    productionReason = eligibility.Reason;
+                }
+                else if (!isWinner)
+                {
+                    publicationStatus = "NotSelected";
+                    productionDecision = "LowerRanked";
+                    productionReason = "Otra línea o mercado aprobado obtuvo un score superior.";
+                }
+                else if (!profile.PublishEnabled)
+                {
+                    publicationStatus = "Shadow";
+                    productionDecision = "Shadow";
+                    productionReason = "La publicación está deshabilitada; la decisión se conserva como evidencia de investigación.";
                 }
                 else
                 {
-                    storedDecision = storedDecision with
-                    {
-                        Decision = "Rejected",
-                        DecisionReasons = storedDecision.DecisionReasons
-                            .Append("REJECTED_LOWER_RANKED_CANDIDATE")
-                            .Distinct(StringComparer.Ordinal)
-                            .ToArray(),
-                        Summary = $"Rejected: otra línea o mercado aprobado obtuvo un score superior. {storedDecision.Summary}"
-                    };
+                    publicationStatus = "Eligible";
+                    productionDecision = "Eligible";
+                    productionReason = evaluation.Candidate is not null
+                        && productionEligibilityByCandidate.TryGetValue(evaluation.Candidate, out var eligible)
+                            ? eligible.Reason
+                            : "Candidato ganador pendiente de completar la escritura productiva.";
                 }
             }
 
-            await _repository.UpsertBotCEvaluationAsync(
-                new PersistBotCEvaluationCommand(
+            pendingWrites.Add(new PersistBotCEvaluationCommand(
                     runId,
                     profile.Key,
                     profile.AutomationVersion,
@@ -1252,11 +1331,15 @@ public sealed class AutomatedCornersSelectionService
                         profile,
                         evaluation.Bundle.CornersPrediction,
                         evaluation.Bundle.Odds.MarketType),
-                    storedDecision,
+                    evaluation.Decision,
                     BaseModelTrainedThrough(profile, evaluation.Bundle.CornersPrediction),
-                    isWinner ? publishedSelectionId : null),
-                cancellationToken);
+                    isWinner ? publishedSelectionId : null,
+                    publicationStatus,
+                    productionDecision,
+                    productionReason,
+                    isResearchWinner));
         }
+        await _repository.UpsertBotCEvaluationsAsync(pendingWrites, cancellationToken);
     }
 
     private BotVariantProfile BuildBotProfile(
@@ -3249,6 +3332,7 @@ public sealed class AutomatedCornersSelectionService
             return;
         }
 
+        var pendingWrites = new List<PersistBotCEvaluationCommand>();
         foreach (var profile in profiles)
         {
             var configuration = profile.SelectorConfiguration
@@ -3256,8 +3340,7 @@ public sealed class AutomatedCornersSelectionService
             foreach (var odds in oddsRows)
             {
                 var decision = PendingBotCDecision(configuration, odds, reason);
-                await _repository.UpsertBotCEvaluationAsync(
-                    new PersistBotCEvaluationCommand(
+                pendingWrites.Add(new PersistBotCEvaluationCommand(
                         runId,
                         profile.Key,
                         profile.AutomationVersion,
@@ -3265,10 +3348,14 @@ public sealed class AutomatedCornersSelectionService
                         MapSelectionMarketType(odds.MarketType),
                         "Models 2026",
                         "unavailable-missing-history",
-                        decision),
-                    cancellationToken);
+                        decision,
+                        PublishedSelectionId: null,
+                        PublicationStatus: "PendingData",
+                        ProductionDecision: "NotEvaluated",
+                        ProductionReason: reason));
             }
         }
+        await _repository.UpsertBotCEvaluationsAsync(pendingWrites, cancellationToken);
     }
 
     private static BotCPickDecision PendingBotCDecision(
@@ -3411,11 +3498,20 @@ public sealed class AutomatedCornersSelectionService
     private static AutomatedBotProductionEligibility EvaluateProductionEligibility(
         IReadOnlyCollection<AutomatedBotPerformanceScorecard> scorecards,
         BotVariantProfile profile,
-        AutomatedSelectionCandidate candidate) =>
-        AutomatedBotProductionEligibilityPolicy.Evaluate(
+        AutomatedSelectionCandidate candidate)
+    {
+        var marketFamily = MarketFamily(candidate.Odds.MarketType);
+        if (!profile.IsLeagueAllowed(marketFamily, candidate.Odds.EffectiveLeague))
+        {
+            return new AutomatedBotProductionEligibility(
+                false,
+                $"{candidate.Odds.EffectiveLeague} está fuera del alcance productivo configurado para {profile.Key}; la evaluación permanece disponible para investigación.");
+        }
+
+        return AutomatedBotProductionEligibilityPolicy.Evaluate(
             scorecards,
             profile.Key,
-            MarketFamily(candidate.Odds.MarketType),
+            marketFamily,
             MapSelectionMarketType(candidate.Odds.MarketType),
             candidate.SelectedSide,
             candidate.Odds.Source,
@@ -3427,6 +3523,7 @@ public sealed class AutomatedCornersSelectionService
                 && candidate.Odds.OddsCapturedAtUtc.HasValue
                 && candidate.Odds.SnapshotOverOdds is > 1m
                 && candidate.Odds.SnapshotUnderOdds is > 1m);
+    }
 
     private static ProductionCandidateRanking RankProductionCandidates(
         IReadOnlyCollection<AutomatedSelectionCandidate> candidates,

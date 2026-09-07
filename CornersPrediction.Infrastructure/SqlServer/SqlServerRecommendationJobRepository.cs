@@ -125,7 +125,8 @@ public sealed class SqlServerRecommendationJobRepository : IRecommendationJobRep
                 progress.InsertedRows,
                 progress.UpdatedRows,
                 progress.SkippedMatches,
-                progress.ErrorMatches
+                progress.ErrorMatches,
+                progress.ErrorSummary
             },
             cancellationToken);
 
@@ -160,6 +161,49 @@ public sealed class SqlServerRecommendationJobRepository : IRecommendationJobRep
         return row is null ? null : ToDto(row);
     }
 
+    public async Task ReportActivityAsync(Guid jobId, string workerId, string stage,
+        int? totalBatches, int completedMatches, int totalMatches,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition("""
+            UPDATE dbo.AutomatedRecommendationJobs
+            SET CurrentStage = @Stage, TotalBatches = COALESCE(@TotalBatches, TotalBatches),
+                CurrentBatchCompletedMatches = @CompletedMatches,
+                CurrentBatchTotalMatches = @TotalMatches,
+                LastProgressAtUtc = SYSUTCDATETIME()
+            WHERE RecommendationJobId = @JobId AND Status = N'Running' AND LeaseOwner = @WorkerId;
+            """, new { JobId = jobId, WorkerId = workerId, Stage = stage.Length > 250 ? stage[..250] : stage,
+                TotalBatches = totalBatches, CompletedMatches = completedMatches, TotalMatches = totalMatches },
+            commandTimeout: 15, cancellationToken: cancellationToken));
+    }
+
+    public async Task ReleaseAsync(Guid jobId, string workerId, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition("""
+            UPDATE dbo.AutomatedRecommendationJobs
+            SET Status = N'Queued', LeaseOwner = NULL, LeaseExpiresAtUtc = NULL,
+                NextAttemptAtUtc = NULL, UpdatedAtUtc = SYSUTCDATETIME(),
+                CurrentStage = N'Reanudará el lote después del reinicio',
+                CurrentBatchCompletedMatches = 0, CurrentBatchTotalMatches = 0
+            WHERE RecommendationJobId = @JobId AND Status = N'Running' AND LeaseOwner = @WorkerId;
+            """, new { JobId = jobId, WorkerId = workerId },
+            commandTimeout: 15, cancellationToken: cancellationToken));
+    }
+
+    public async Task<IReadOnlyList<RecommendationJobLease>> GetLocalLeasesAsync(string hostName,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        return (await connection.QueryAsync<RecommendationJobLease>(new CommandDefinition("""
+            SELECT RecommendationJobId, LeaseOwner
+            FROM dbo.AutomatedRecommendationJobs
+            WHERE Status = N'Running' AND LEFT(LeaseOwner, LEN(@Prefix)) = @Prefix;
+            """, new { Prefix = hostName + ":" }, commandTimeout: 15,
+            cancellationToken: cancellationToken))).AsList();
+    }
+
     private static RecommendationJobDto ToDto(RecommendationJobRow row) =>
         new(
             row.RecommendationJobId,
@@ -186,7 +230,13 @@ public sealed class SqlServerRecommendationJobRepository : IRecommendationJobRep
             row.CreatedAtUtc,
             row.StartedAtUtc,
             row.UpdatedAtUtc,
-            row.CompletedAtUtc);
+            row.CompletedAtUtc)
+        {
+            CurrentStage = row.CurrentStage,
+            CurrentBatchCompletedMatches = row.CurrentBatchCompletedMatches,
+            CurrentBatchTotalMatches = row.CurrentBatchTotalMatches,
+            LastProgressAtUtc = row.LastProgressAtUtc
+        };
 
     private static IReadOnlyList<string> SplitValues(string values) =>
         values.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -218,5 +268,9 @@ public sealed class SqlServerRecommendationJobRepository : IRecommendationJobRep
         public DateTime? StartedAtUtc { get; init; }
         public DateTime UpdatedAtUtc { get; init; }
         public DateTime? CompletedAtUtc { get; init; }
+        public string? CurrentStage { get; init; }
+        public int CurrentBatchCompletedMatches { get; init; }
+        public int CurrentBatchTotalMatches { get; init; }
+        public DateTime? LastProgressAtUtc { get; init; }
     }
 }

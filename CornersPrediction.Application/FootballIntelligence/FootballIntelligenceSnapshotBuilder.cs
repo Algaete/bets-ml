@@ -35,7 +35,7 @@ public sealed class FootballIntelligenceSnapshotBuilder : IIntelligenceSnapshotB
         var currentFacts = teamFacts.Where(value => value.IsCurrent).ToArray();
         var actionable = currentFacts.Where(IsNegativeAvailability).ToArray();
         var actionableDocumentIds = actionable.Select(value => value.NewsDocumentId).ToHashSet();
-        var playerById = squad.ToDictionary(value => value.PlayerId);
+        var playerById = SquadPlayerLookup.ForTeam(squad, team.TeamId);
         var impacts = actionable.Select(fact => BuildImpact(fact, playerById)).ToArray();
 
         var attackImpact = Sum(impacts.Where(value => value.Group == PositionGroup.Attack));

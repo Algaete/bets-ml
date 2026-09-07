@@ -100,7 +100,7 @@ public sealed class ApiFootballStructuredDataProvider : IStructuredFootballDataP
                     ReadString(player, "photo")));
             }
         }
-        return rows;
+        return SquadPlayerLookup.ForTeam(rows, teamId).Values.ToArray();
     }
 
     public async Task<IReadOnlyCollection<FixtureLineupDto>> GetFixtureLineupsAsync(

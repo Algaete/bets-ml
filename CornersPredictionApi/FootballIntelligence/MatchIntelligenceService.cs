@@ -284,7 +284,7 @@ public sealed class MatchIntelligenceService : IMatchIntelligenceService
         };
         var documentId = await _documentRepository.UpsertAsync(document, cancellationToken);
         counters.DocumentsDownloaded++;
-        var players = squad.ToDictionary(value => value.PlayerId);
+        var players = SquadPlayerLookup.ForTeam(squad, team.TeamId);
         var facts = new List<FootballNewsFact>();
         foreach (var injury in teamInjuries)
         {

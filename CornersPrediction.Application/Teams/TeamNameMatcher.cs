@@ -55,13 +55,31 @@ public static class TeamNameMatcher
     // Exact provider variants observed in official fixture feeds. Keeping these
     // as full-name aliases is intentionally stricter than dropping geographic
     // tokens such as "Boyaca" or "de Cordoba" for every club in the world.
-    private static readonly IReadOnlyDictionary<string, string> KnownTeamAliases =
-        new Dictionary<string, string>(StringComparer.Ordinal)
+    private static readonly string[][] KnownTeamVariants =
+    [
+        ["Chico", "Boyaca Chico"],
+        ["Jaguares", "Jaguares de Cordoba"],
+        ["Vicenza", "Vicenza Virtus", "L.R. Vicenza", "LR Vicenza", "L R Vicenza"],
+        ["Heart of Midlothian", "Hearts"],
+        ["Dundee", "Dundee FC"]
+    ];
+
+    private static readonly IReadOnlyDictionary<string, string> KnownTeamAliases = KnownTeamVariants
+        .SelectMany(group => group.Select(name => new
         {
-            ["boyaca chico"] = "chico",
-            ["jaguares de cordoba"] = "jaguares",
-            ["vicenza virtus"] = "vicenza"
-        };
+            Key = string.Join(' ', Tokenize(name)),
+            Canonical = string.Join(' ', Tokenize(group[0]))
+        }))
+        .DistinctBy(alias => alias.Key)
+        .ToDictionary(alias => alias.Key, alias => alias.Canonical, StringComparer.Ordinal);
+
+    public static IReadOnlyList<string> GetKnownNameVariants(string name)
+    {
+        var identity = CreateIdentity(name);
+        var group = KnownTeamVariants.FirstOrDefault(variants =>
+            CreateIdentity(variants[0]).FullKey == identity.FullKey);
+        return (group ?? []).Prepend(name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
     public static bool AreEquivalent(string? left, string? right)
     {

@@ -162,18 +162,17 @@ La suite cubre estadística ponderada, mediana, varianza, desviación, percentil
 
 ## Prueba productiva controlada
 
-Desde la política `PRODUCTIVE-GATE-2026-08-31-V4`, el único atajo permitido antes de alcanzar el estado `Green` son las cohortes exactas de C y F:
+Desde la política `PRODUCTIVE-GATE-2026-09-06-V5`, la casa de apuestas identifica el origen de la cuota y no restringe la elegibilidad productiva. El rendimiento se valida en el segmento `BotMarketSideVersion`, por bot, mercado, lado y versión. Los segmentos por casa se conservan para diagnóstico. El único atajo permitido antes de alcanzar el estado `Green` son las cohortes de C y F:
 
 - bot `C2026` o `F2026`;
 - familia `GOALS`;
 - mercado `AwayTeamGoals`;
 - lado `Over`;
-- bookmaker `Pinnacle`;
 - línea binaria `.5` y snapshot bilateral, inmutable y fresco;
 - al menos 30 fixtures independientes en la ventana de 30 días;
 - yield/ROI mínimo de 7%, brecha absoluta de calibración no superior a 5 puntos y Brier no peor que el mercado.
 
-La exposición máxima es `0.5u` y el plan conserva una sola señal por fixture. C y F permanecen en ese nivel incluso si el histórico supera 100 fixtures o aparece Green; promoverlos a `1u` exige una revisión manual futura con evidencia prospectiva de la versión vigente. Cualquier cambio de bot, mercado, lado, bookmaker o versión vuelve a pasar por su scorecard exacto y permanece en monitoreo si no está `Green`. La política no reclasifica apuestas históricas ni abre este atajo a A, D o E; Bot A sólo podrá entrar en el futuro mediante el Green general con al menos 100 fixtures independientes.
+La exposición máxima es `0.5u` y el plan conserva una sola señal por fixture. C y F permanecen en ese nivel incluso si el histórico supera 100 fixtures o aparece Green; no se promueven automáticamente a `1u`. Cambiar la casa no exige otro historial independiente, pero cada cuota conserva sus propios controles de precio, vigencia, línea, edge y EV. Un partido ofrecido por varias casas cuenta una sola vez en el rendimiento consolidado, sin sumar muestras ni beneficios duplicados. Los cambios de bot, mercado, lado o versión se validan en su propio segmento. La política no reclasifica apuestas históricas ni abre este atajo a A, D o E; Bot A sólo podrá entrar en el futuro mediante el Green general con al menos 100 fixtures independientes.
 
 ## Archivos principales de esta entrega
 

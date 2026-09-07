@@ -69,26 +69,34 @@ public sealed class BotPicksController : Controller
     public async Task<IActionResult> Selections(
         [FromQuery] BotPickFiltersViewModel filters,
         [FromQuery] string marketFamily = "corners",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] bool includePerformance = true)
     {
         try
         {
             ApplyDefaultMonthRange(filters);
-            var selectionsTask = _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken);
+            marketFamily = ResolveMarket(marketFamily).Key;
+            var selectionsTask = _automatedCornersApiClient.GetSelectionsAsync(filters, cancellationToken, marketFamily);
             var olderPendingTask = BotPickVisibilityPolicy.ShouldLoadOlderPending(filters)
                 ? _automatedCornersApiClient.GetSelectionsAsync(
                     BotPickVisibilityPolicy.CreateOlderPendingFilters(filters),
-                    cancellationToken)
+                    cancellationToken,
+                    marketFamily)
                 : null;
-            var canonicalPendingTask = BotPickProductionExposureGuard.RequiresCanonicalPendingUniverse(
+            var canonicalPendingTask = includePerformance && BotPickProductionExposureGuard.RequiresCanonicalPendingUniverse(
                     filters,
                     marketFamily)
                 ? _automatedCornersApiClient.GetSelectionsAsync(
                     BotPickProductionExposureGuard.CreateCanonicalPendingFilters(filters),
-                    cancellationToken)
+                    cancellationToken,
+                    marketFamily)
                 : null;
-            var definitionsTask = _recommendationAutomationApiClient.GetBotsAsync(cancellationToken);
-            var performanceTask = _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken);
+            var definitionsTask = includePerformance
+                ? _recommendationAutomationApiClient.GetBotsAsync(cancellationToken)
+                : null;
+            var performanceTask = includePerformance
+                ? _automatedCornersApiClient.GetPerformanceScorecardsAsync(cancellationToken)
+                : null;
             var currentSelections = await selectionsTask;
             var completeSelections = olderPendingTask is null
                 ? currentSelections
@@ -97,11 +105,22 @@ public sealed class BotPicksController : Controller
                     await olderPendingTask,
                     filters.DateFrom!.Value);
             var selections = FilterVisibleBots(FilterMarketFamily(completeSelections, marketFamily));
+            if (!includePerformance)
+            {
+                var verifying = new BotPickProductionPlanViewModel(
+                    "verifying", 0m, "Verificando plan",
+                    "Los resultados están disponibles. Falta verificar la evidencia de rendimiento y las reglas del plan productivo.",
+                    "bot-production-monitor", false);
+                foreach (var selection in selections)
+                    selection.ProductionPlan = verifying;
+                return Json(selections);
+            }
+
             IReadOnlyList<RecommendationBotDefinitionViewModel> definitions;
             IReadOnlyList<BotPerformanceScorecardViewModel> performance;
             try
             {
-                definitions = await definitionsTask;
+                definitions = await definitionsTask!;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -113,7 +132,7 @@ public sealed class BotPicksController : Controller
 
             try
             {
-                performance = await performanceTask;
+                performance = await performanceTask!;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -186,6 +205,7 @@ public sealed class BotPicksController : Controller
             return Json(rows.Where(row => row.MarketFamily == family
                 && (row.Dimension == "BotFamily"
                     || row.Dimension == "BotMarketType"
+                    || row.Dimension == "BotMarketSideVersion"
                     || row.Dimension == "BotMarketSideBookmakerVersion")));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -235,6 +255,119 @@ public sealed class BotPicksController : Controller
     }
 
     [HttpGet]
+    public Task<IActionResult> ResearchEvaluations(
+        [FromQuery] BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken = default) =>
+        LoadEvaluationPageAsync(filters, false, cancellationToken);
+
+    [HttpGet]
+    public Task<IActionResult> GeneralPicks(
+        [FromQuery] BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken = default) =>
+        LoadEvaluationPageAsync(filters, true, cancellationToken);
+
+    [HttpGet]
+    public async Task<IActionResult> GeneralPicksLab(
+        [FromQuery] BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken = default)
+    {
+        filters.DateFrom ??= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        filters.DateTo ??= DateTime.Today;
+        filters.MarketFamily = ResolveMarket(filters.MarketFamily).Key.ToUpperInvariant();
+        if (filters.DateFrom.Value.Date > filters.DateTo.Value.Date)
+            return BadRequest(new { error = "La fecha Desde no puede ser posterior a Hasta." });
+
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCancellation.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            return Json(await _automatedCornersApiClient.GetGeneralPickLabAsync(
+                filters, timeoutCancellation.Token));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "La consulta del lab fue cancelada." });
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(StatusCodes.Status504GatewayTimeout,
+                new { error = "El lab tardó más de 60 segundos. La tabla sigue disponible." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not load the General Picks lab for {MarketFamily}", filters.MarketFamily);
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new { error = "No se pudo cargar el lab de aprobadas. La tabla sigue disponible." });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GeneralPickEvidence(long id, CancellationToken cancellationToken)
+    {
+        if (id <= 0) return NotFound();
+        try
+        {
+            var result = await _automatedCornersApiClient.GetGeneralPickEvidenceAsync(id, cancellationToken);
+            return result is null ? NotFound() : Json(result.Value);
+        }
+        catch (HttpRequestException exception)
+        {
+            _logger.LogError(exception, "Could not load evidence for general pick {Id}", id);
+            return StatusCode(502, new { error = "No se pudo cargar la evidencia. Vuelve a abrir el detalle para reintentar." });
+        }
+    }
+
+    private async Task<IActionResult> LoadEvaluationPageAsync(
+        BotResearchEvaluationFiltersViewModel filters,
+        bool generalPicks,
+        CancellationToken cancellationToken)
+    {
+        filters.DateFrom ??= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        filters.DateTo ??= DateTime.Today;
+        filters.MarketFamily = ResolveMarket(filters.MarketFamily).Key.ToUpperInvariant();
+        filters.Page = Math.Max(1, filters.Page);
+        filters.PageSize = Math.Clamp(filters.PageSize, 1, 200);
+
+        if (filters.DateFrom.Value.Date > filters.DateTo.Value.Date)
+        {
+            return BadRequest(new { error = "La fecha Desde no puede ser posterior a Hasta." });
+        }
+
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // Outcome sorting has to classify the complete filtered universe. Give
+        // Azure SQL room for transient robot I/O; the API caches the completed
+        // page so subsequent requests return immediately.
+        timeoutCancellation.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            var page = generalPicks
+                ? await _automatedCornersApiClient.GetGeneralPicksAsync(filters, timeoutCancellation.Token)
+                : await _automatedCornersApiClient.GetResearchEvaluationsAsync(filters, timeoutCancellation.Token);
+            return Json(page);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499, new { error = "La consulta de Bot Picks fue cancelada." });
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(
+                StatusCodes.Status504GatewayTimeout,
+                new { error = "La consulta de Bot Picks tardó más de 60 segundos." });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Could not load {MarketFamily} Bot Picks evaluations",
+                filters.MarketFamily);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "No se pudo cargar la tabla de Bot Picks." });
+        }
+    }
+
+    [HttpGet]
     public async Task<IActionResult> MonthlyHistory(
         [FromQuery] string marketFamily = "corners",
         CancellationToken cancellationToken = default)
@@ -242,50 +375,11 @@ public sealed class BotPicksController : Controller
         try
         {
             var currentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
-            var selections = await _automatedCornersApiClient.GetSelectionsAsync(
-                new BotPickFiltersViewModel
-                {
-                    DateFrom = currentMonth.AddMonths(-11),
-                    DateTo = DateTime.Today
-                },
+            var summaries = await _automatedCornersApiClient.GetMonthlyHistoryAsync(
+                currentMonth.AddMonths(-11),
+                DateTime.Today,
+                ResolveMarket(marketFamily).Key,
                 cancellationToken);
-
-            var summaries = FilterVisibleBots(FilterMarketFamily(selections, marketFamily))
-                .GroupBy(selection => new
-                {
-                    Month = new DateTime(selection.MatchDate.Year, selection.MatchDate.Month, 1),
-                    BotKey = ResolveBotKey(selection)
-                })
-                .OrderByDescending(group => group.Key.Month)
-                .ThenBy(group => BotSortOrder(group.Key.BotKey))
-                .Select(group =>
-                {
-                    var settled = group
-                        .Where(selection =>
-                            string.Equals(selection.Status, "Won", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(selection.Status, "Lost", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(selection.Status, "Push", StringComparison.OrdinalIgnoreCase))
-                        .ToArray();
-                    var settledStake = settled.Sum(selection => selection.Stake);
-                    var profitLoss = group.Sum(selection => selection.ProfitLoss ?? 0m);
-
-                    return new BotPickMonthlySummaryViewModel
-                    {
-                        Month = group.Key.Month,
-                        BotKey = group.Key.BotKey,
-                        BotLabel = ResolveBotLabel(group.Key.BotKey),
-                        Total = group.Count(),
-                        Pending = group.Count(selection => string.Equals(selection.Status, "Pending", StringComparison.OrdinalIgnoreCase)),
-                        Won = group.Count(selection => string.Equals(selection.Status, "Won", StringComparison.OrdinalIgnoreCase)),
-                        Lost = group.Count(selection => string.Equals(selection.Status, "Lost", StringComparison.OrdinalIgnoreCase)),
-                        Push = group.Count(selection => string.Equals(selection.Status, "Push", StringComparison.OrdinalIgnoreCase)),
-                        Void = group.Count(selection => string.Equals(selection.Status, "Void", StringComparison.OrdinalIgnoreCase)),
-                        ProfitLoss = profitLoss,
-                        SettledStake = settledStake,
-                        YieldPct = settledStake > 0 ? profitLoss / settledStake * 100m : null
-                    };
-                })
-                .ToArray();
 
             return Json(summaries);
         }
@@ -393,6 +487,26 @@ public sealed class BotPicksController : Controller
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 new { error = "Bot pick status could not be updated. Check that the API and stored procedure are available." });
+        }
+    }
+
+    [HttpPut]
+    [ValidateAntiForgeryToken]
+    [Authorize(Policy = PlatformPolicies.Admin)]
+    public async Task<IActionResult> SettleGeneralPick([FromQuery] long id,
+        [FromBody] GeneralPickManualSettlementViewModel request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _automatedCornersApiClient.SettleGeneralPickAsync(id, request,
+                User.Identity?.Name ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "",
+                cancellationToken);
+            return Ok(new { saved = true });
+        }
+        catch (HttpRequestException exception)
+        {
+            return StatusCode((int)(exception.StatusCode ?? System.Net.HttpStatusCode.BadGateway),
+                new { error = exception.Message });
         }
     }
 

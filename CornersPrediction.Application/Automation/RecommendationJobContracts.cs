@@ -55,6 +55,11 @@ public sealed record RecommendationJobDto(
     DateTime UpdatedAtUtc,
     DateTime? CompletedAtUtc)
 {
+    public string? CurrentStage { get; init; }
+    public int CurrentBatchCompletedMatches { get; init; }
+    public int CurrentBatchTotalMatches { get; init; }
+    public DateTime? LastProgressAtUtc { get; init; }
+
     public bool IsTerminal =>
         Status is RecommendationJobStatuses.Completed
             or RecommendationJobStatuses.Failed
@@ -69,7 +74,10 @@ public sealed record RecommendationJobBatchProgress(
     int InsertedRows,
     int UpdatedRows,
     int SkippedMatches,
-    int ErrorMatches);
+    int ErrorMatches,
+    string? ErrorSummary = null);
+
+public sealed record RecommendationJobLease(Guid RecommendationJobId, string LeaseOwner);
 
 public interface IRecommendationJobRepository
 {
@@ -106,6 +114,16 @@ public interface IRecommendationJobRepository
         string workerId,
         string error,
         CancellationToken cancellationToken);
+
+    Task ReportActivityAsync(Guid jobId, string workerId, string stage,
+        int? totalBatches, int completedMatches, int totalMatches,
+        CancellationToken cancellationToken) => Task.CompletedTask;
+
+    Task ReleaseAsync(Guid jobId, string workerId, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    Task<IReadOnlyList<RecommendationJobLease>> GetLocalLeasesAsync(string hostName,
+        CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<RecommendationJobLease>>([]);
 }
 
 public interface IRecommendationJobsUseCase

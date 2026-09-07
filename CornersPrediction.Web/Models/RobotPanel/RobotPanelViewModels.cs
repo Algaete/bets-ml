@@ -25,6 +25,8 @@ public sealed class RobotPanelBotsRequestViewModel
     public int BatchSize { get; init; } = 100;
 
     public bool RunAllEnabledBots { get; init; } = true;
+
+    public int UpcomingDays { get; init; } = 7;
 }
 
 public sealed class RobotPanelFullRunRequestViewModel
@@ -105,6 +107,7 @@ public sealed class RobotPanelStepResultViewModel
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<MissingHistoryMatchViewModel> MissingHistoryMatches { get; init; } = Array.Empty<MissingHistoryMatchViewModel>();
     public JsonElement? RawResponse { get; init; }
+    public CornersPrediction.Web.Models.BotAutomation.RecommendationJobViewModel? RecommendationJob { get; init; }
 }
 
 public sealed class MissingHistoryMatchViewModel

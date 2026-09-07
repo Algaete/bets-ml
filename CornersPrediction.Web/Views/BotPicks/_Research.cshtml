@@ -1,0 +1,300 @@
+@model CornersPrediction.Web.Models.BotPicks.BotPicksIndexViewModel
+
+<link rel="stylesheet" href="~/css/bot-picks-general.css" asp-append-version="true" />
+
+@{
+    var language = UiText.GetLanguage(Context);
+    var dateFrom = Model.Filters.DateFrom?.ToString("yyyy-MM-dd");
+    var dateTo = Model.Filters.DateTo?.ToString("yyyy-MM-dd");
+    var selectedMarketType = Model.Filters.MarketType ?? string.Empty;
+}
+
+<section id="BotPicksResearchSurface"
+         class="bot-research-surface"
+         role="tabpanel"
+         aria-labelledby="BotPicksResearchTab"
+         aria-hidden="false"
+         data-endpoint="@Url.Action("GeneralPicks", "BotPicks")"
+         data-lab-endpoint="@Url.Action("GeneralPicksLab", "BotPicks")"
+         data-settlement-endpoint="@Url.Action("SettleGeneralPick", "BotPicks")"
+         data-evidence-endpoint="@Url.Action("GeneralPickEvidence", "BotPicks")"
+         data-can-settle="@(User.IsInRole("Admin") ? "true" : "false")"
+         data-market-family="@Model.Market.Key"
+         data-locale="@(language == "es" ? "es-CL" : "en-US")">
+    <header class="bot-research-hero surface-panel mb-3">
+        <div>
+            <div class="bot-research-eyebrow">Local, visita y total</div>
+            <h2 class="h4 mb-2">Bot Picks generales</h2>
+            <p class="mb-0">
+                Aquí aparecen los picks aprobados por el modelo para local, visita y total, aunque estén pausados,
+                bloqueados o no publicados. El filtro <strong>Estado productivo</strong> empieza en <strong>Todos</strong>.
+            </p>
+        </div>
+        <div class="bot-research-hero-metrics" aria-live="polite">
+            <span>Total de picks y señales</span>
+            <strong id="BotResearchTotalCount">…</strong>
+            <small id="BotResearchPageScope">Esperando consulta</small>
+        </div>
+    </header>
+
+    <div class="alert alert-info bot-research-explainer" role="note">
+        <strong>La pausa sólo afecta al plan productivo.</strong>
+        Las señales permanecen visibles en esta tabla con el motivo de su estado. Puedes filtrar por
+        <strong>Bloqueados</strong> u otro estado cuando quieras. “Decisión del modelo” muestra la evaluación
+        del modelo; las apuestas autorizadas se consultan en la pestaña <strong>Plan productivo</strong>.
+        Los laboratorios G e I tienen sus propias vistas.
+    </div>
+
+    <form id="BotResearchFilters" class="surface-panel mb-3">
+        @Html.AntiForgeryToken()
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+                <h3 class="h6 mb-1">Filtros de Bot Picks generales</h3>
+                <div class="text-muted small">La vista inicia con las aprobadas por el modelo. Puedes elegir “Todas” para revisar la auditoría completa.</div>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button id="BotResearchReset" class="btn btn-sm btn-outline-secondary" type="button">Restablecer</button>
+                <button id="BotResearchRefresh" class="btn btn-sm btn-outline-secondary" type="button">Actualizar</button>
+                <button class="btn btn-sm btn-primary" type="submit">Aplicar</button>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-end">
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchDateFrom">Desde</label>
+                <input id="BotResearchDateFrom" class="form-control" type="date" value="@dateFrom" />
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchDateTo">Hasta</label>
+                <input id="BotResearchDateTo" class="form-control" type="date" value="@dateTo" />
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchMarketType">Mercado</label>
+                <select id="BotResearchMarketType" class="form-select">
+                    <option value="">Todos</option>
+                    @foreach (var marketType in Model.Market.Options)
+                    {
+                        if (selectedMarketType.Equals(marketType.Value, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <option value="@marketType.Value" selected>@marketType.Label</option>
+                        }
+                        else
+                        {
+                            <option value="@marketType.Value">@marketType.Label</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchBotKey">Bot</label>
+                <select id="BotResearchBotKey" class="form-select">
+                    <option value="">Todos</option>
+                    <option value="A">Bot A</option>
+                    <option value="C">Bot C</option>
+                    <option value="D">Bot D</option>
+                    <option value="E">Bot E</option>
+                    <option value="F">Bot F</option>
+                    <option value="H">Bot H Shadow</option>
+                </select>
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchModelDecision">Decisión del modelo</label>
+                <select id="BotResearchModelDecision" class="form-select">
+                    <option value="">Todas</option>
+                    <option value="Approved" selected>Aprobada por modelo</option>
+                    <option value="Rejected">Rechazada por modelo</option>
+                    <option value="Abstain">Abstención</option>
+                    <option value="PendingData">Faltan datos</option>
+                    <option value="Invalid">Inválida</option>
+                    <option value="NotRecorded">Sin registro de decisión</option>
+                </select>
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchPublicationStatus">Estado productivo</label>
+                <select id="BotResearchPublicationStatus" class="form-select">
+                    <option value="">Todos</option>
+                    <option value="ModelRejected">Modelo rechazó</option>
+                    <option value="PendingData">Pendiente de datos</option>
+                    <option value="Eligible">Elegible</option>
+                    <option value="ProductionBlocked">Bloqueados</option>
+                    <option value="Shadow">Shadow</option>
+                    <option value="NotSelected">No seleccionada</option>
+                    <option value="NotPublished">No publicada</option>
+                    <option value="Published">Publicada</option>
+                </select>
+            </div>
+            <div class="col-sm-6 col-xl-2">
+                <label class="form-label" for="BotResearchPageSize">Filas por página</label>
+                <select id="BotResearchPageSize" class="form-select">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+        </div>
+    </form>
+
+    <section class="surface-panel bot-research-lab mb-3" aria-labelledby="BotResearchLabTitle">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <div class="bot-research-eyebrow">Aprobadas por el modelo</div>
+                <h3 id="BotResearchLabTitle" class="h6 mb-1">Data Science Lab</h3>
+                <div class="text-muted small">Evolución y calibración con los mismos filtros de fecha, mercado, bot y estado productivo.</div>
+            </div>
+            <span class="badge text-bg-light border">1 señal independiente por partido y línea</span>
+        </div>
+
+        <div id="BotResearchLabLoading" class="py-4 text-center" role="status" aria-live="polite">
+            <div class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
+            <span class="text-muted small ms-2">Preparando métricas sin frenar la tabla…</span>
+        </div>
+        <div id="BotResearchLabError" class="alert alert-warning d-none mb-0" role="alert"></div>
+        <div id="BotResearchLabEmpty" class="alert alert-light border d-none mb-0">
+            Todavía no hay aprobadas liquidadas para analizar con estos filtros.
+        </div>
+
+        <div id="BotResearchLabContent" class="d-none">
+            <dl class="bot-research-lab-stats mb-3">
+                <div>
+                    <dt>Muestra liquidada</dt>
+                    <dd id="BotResearchLabResolved">—</dd>
+                    <small id="BotResearchLabCoverage" class="text-muted">—</small>
+                </div>
+                <div>
+                    <dt>Resultado a 1u</dt>
+                    <dd id="BotResearchLabProfit">—</dd>
+                    <small id="BotResearchLabPending" class="text-muted">—</small>
+                </div>
+                <div>
+                    <dt>Yield</dt>
+                    <dd id="BotResearchLabYield">—</dd>
+                    <small class="text-muted">sobre señales liquidadas</small>
+                </div>
+                <div>
+                    <dt>Acierto vs modelo</dt>
+                    <dd id="BotResearchLabCalibrationGap">—</dd>
+                    <small id="BotResearchLabBrier" class="text-muted">—</small>
+                </div>
+            </dl>
+
+            <div class="row g-3">
+                <div class="col-xl-7">
+                    <h4 class="h6 mb-1">Resultado acumulado</h4>
+                    <div class="text-muted small mb-2">Una unidad por señal liquidada, ordenada por fecha del partido.</div>
+                    <div id="BotResearchLabTimeline" class="bot-research-lab-chart"></div>
+                </div>
+                <div class="col-xl-5">
+                    <h4 class="h6 mb-1">Calibración</h4>
+                    <div class="text-muted small mb-2">Probabilidad pronosticada frente al acierto observado.</div>
+                    <div id="BotResearchLabCalibration" class="bot-research-lab-chart"></div>
+                </div>
+            </div>
+
+            <div class="table-responsive mt-3">
+                <table class="table table-sm align-middle mb-1 bot-research-lab-segments">
+                    <thead><tr><th>Segmento</th><th class="text-end">N</th><th class="text-end">P/L</th><th class="text-end">Yield</th><th class="text-end">Acierto</th></tr></thead>
+                    <tbody id="BotResearchLabSegments"></tbody>
+                </table>
+            </div>
+            <p id="BotResearchLabFootnote" class="text-muted small mb-0"></p>
+        </div>
+    </section>
+
+    <section class="surface-panel bot-research-results" aria-labelledby="BotResearchResultsTitle">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+                <h3 id="BotResearchResultsTitle" class="h6 mb-1">Picks y señales de todos los bots</h3>
+                <div id="BotResearchVisibleCount" class="text-muted small">Consultando señales del período…</div>
+            </div>
+            <div class="bot-research-legend" aria-label="Leyenda">
+                <span><i class="is-scientific"></i> decisión del modelo</span>
+                <span><i class="is-production"></i> decisión productiva</span>
+            </div>
+        </div>
+
+        <div id="BotResearchLoading" class="py-5 text-center d-none" role="status" aria-live="polite">
+            <div class="spinner-border text-primary" aria-hidden="true"></div>
+            <div class="text-muted small mt-2">Cargando evaluaciones completas…</div>
+        </div>
+        <div id="BotResearchError" class="alert alert-warning d-none" role="alert"></div>
+        <div id="BotResearchEmpty" class="alert alert-light border d-none mb-0">
+            No hay picks ni señales para estos filtros.
+        </div>
+
+        <div id="BotResearchTableWrap" class="table-responsive d-none">
+            <table class="table table-sm align-middle mb-0 bot-research-table">
+                <thead>
+                    <tr>
+                        @foreach (var column in new[] {
+                            ("MatchDate", "Fecha y partido"), ("BotKey", "Bot"), ("MarketType", "Mercado y señal"),
+                            ("SelectedOdds", "Cuota"), ("ModelDecision", "Decisión del modelo"),
+                            ("PublicationStatus", "Estado productivo"), ("FinalProbability", "Probabilidad"),
+                            ("FinalEdge", "Edge"), ("FinalExpectedValue", "EV"), ("SelectionScore", "Score"),
+                            ("OutcomeStatus", "Resultado"), ("EvaluationId", "Evidencia") })
+                        {
+                            <th scope="col" aria-sort="none">
+                                <button type="button" class="bot-research-sort" data-research-sort="@column.Item1">
+                                    @column.Item2 <span data-sort-indicator aria-hidden="true">↕</span>
+                                </button>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody id="BotResearchTableBody"></tbody>
+            </table>
+        </div>
+
+        <nav id="BotResearchPagination" class="bot-picks-pagination d-none" aria-label="Paginación de Bot Picks generales">
+            <div id="BotResearchPaginationSummary" class="bot-picks-pagination-summary"></div>
+            <div id="BotResearchPaginationButtons" class="bot-picks-pagination-buttons"></div>
+        </nav>
+    </section>
+</section>
+
+<div class="modal fade" id="BotResearchDetailModal" tabindex="-1" aria-labelledby="BotResearchDetailTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <div class="small text-uppercase fw-bold text-muted">Feature snapshot científico</div>
+                    <h2 class="modal-title h5" id="BotResearchDetailTitle">Detalle de evaluación</h2>
+                    <div id="BotResearchDetailSubtitle" class="text-muted small"></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div id="BotResearchDetailBody" class="modal-body"></div>
+            <div class="modal-footer">
+                <span class="me-auto small text-muted">La evidencia se conserva aunque Producción decida no apostar.</span>
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (User.IsInRole("Admin"))
+{
+    <div class="modal fade" id="BotResearchSettlementModal" tabindex="-1" aria-labelledby="BotResearchSettlementTitle" aria-hidden="true">
+        <div class="modal-dialog"><form id="BotResearchSettlementForm" class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title h5" id="BotResearchSettlementTitle">Liquidación manual</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <p id="BotResearchSettlementMatch" class="fw-bold mb-1"></p>
+                <p id="BotResearchSettlementSignal" class="text-muted small"></p>
+                <label id="BotResearchSettlementLabel" for="BotResearchActualValue" class="form-label">Resultado real del mercado</label>
+                <input id="BotResearchActualValue" class="form-control" type="number" min="0" max="1000" step="1" required />
+                <div class="form-text">Ingresa la estadística final de este mercado. El 0 es un resultado válido.</div>
+                <label for="BotResearchSettlementReason" class="form-label mt-3">Fuente o motivo</label>
+                <textarea id="BotResearchSettlementReason" class="form-control" rows="2" maxlength="1000" required placeholder="Ej.: resultado confirmado en la web de la liga"></textarea>
+                <div id="BotResearchSettlementPreview" class="alert alert-light border mt-3 mb-2" aria-live="polite"></div>
+                <p class="text-muted small mb-0">Se guardará como liquidación manual con tu usuario y esta nota. Las actualizaciones automáticas no la sobrescribirán. Si es un pick publicado, su liquidación también se actualizará.</p>
+                <div id="BotResearchSettlementError" class="alert alert-danger mt-3 d-none" role="alert"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button id="BotResearchSettlementSave" type="submit" class="btn btn-primary">Guardar liquidación</button>
+            </div>
+        </form></div>
+    </div>
+}

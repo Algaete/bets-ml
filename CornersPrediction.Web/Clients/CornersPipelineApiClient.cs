@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using CornersPrediction.Web.Models.RobotPanel;
+using CornersPrediction.Web.Models.BotAutomation;
 
 namespace CornersPrediction.Web.Clients;
 
@@ -58,6 +59,7 @@ public sealed class CornersPipelineApiClient
         int batchNumber,
         int batchSize,
         bool runAllEnabledBots,
+        int upcomingDays,
         CancellationToken cancellationToken) =>
         PostStepAsync(
             "/api/corners-pipeline/bots",
@@ -66,9 +68,20 @@ public sealed class CornersPipelineApiClient
                 ExcludeExistingSelections = excludeExistingSelections,
                 BatchNumber = batchNumber,
                 BatchSize = batchSize,
-                RunAllEnabledBots = runAllEnabledBots
+                RunAllEnabledBots = runAllEnabledBots,
+                UpcomingDays = upcomingDays
             },
             cancellationToken);
+
+    public async Task<RecommendationJobViewModel?> GetBotJobAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync($"/api/recommendation-jobs/{jobId:D}", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        return await ReadResponseAsync<RecommendationJobViewModel>(response, cancellationToken);
+    }
 
     public async Task<RobotPanelRunResultViewModel> RunFullPipelineAsync(
         int matchHistoryDays,

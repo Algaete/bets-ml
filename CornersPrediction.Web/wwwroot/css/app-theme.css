@@ -690,6 +690,89 @@ label {
   box-shadow: 0 8px 18px rgba(37, 99, 235, 0.26);
 }
 
+:root[data-theme="dark"] .bot-picks-surface-switch {
+  border-color: #334155;
+  background: #0b1220;
+}
+
+:root[data-theme="dark"] .bot-picks-surface-tab {
+  color: #94a3b8;
+}
+
+:root[data-theme="dark"] .bot-picks-surface-tab:hover,
+:root[data-theme="dark"] .bot-picks-surface-tab:focus-visible {
+  border-color: #475569;
+  background: #111827;
+}
+
+:root[data-theme="dark"] .bot-picks-surface-tab.is-active {
+  border-color: #3b82f6;
+  color: #f8fafc;
+  background: #111827;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="dark"] .bot-picks-surface-tab-research.is-active {
+  border-color: #2dd4bf;
+}
+
+:root[data-theme="dark"] .bot-picks-surface-description,
+:root[data-theme="dark"] .bot-research-hero p,
+:root[data-theme="dark"] .bot-research-hero-metrics span,
+:root[data-theme="dark"] .bot-research-hero-metrics small,
+:root[data-theme="dark"] .bot-research-legend,
+:root[data-theme="dark"] .bot-research-reason-preview,
+:root[data-theme="dark"] .bot-research-explanation,
+:root[data-theme="dark"] .bot-research-detail-decisions p,
+:root[data-theme="dark"] .bot-research-detail-decisions article > span,
+:root[data-theme="dark"] .bot-research-detail-grid span {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .bot-research-hero {
+  border-color: rgba(45, 212, 191, 0.34);
+  background:
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.17), transparent 38%),
+    #111827;
+}
+
+:root[data-theme="dark"] .bot-research-eyebrow,
+:root[data-theme="dark"] .bot-research-hero-metrics strong {
+  color: #5eead4;
+}
+
+:root[data-theme="dark"] .bot-research-hero-metrics {
+  border-color: rgba(45, 212, 191, 0.32);
+  background: rgba(15, 118, 110, 0.18);
+}
+
+:root[data-theme="dark"] .bot-research-table thead th,
+:root[data-theme="dark"] .bot-research-snapshot summary {
+  color: #cbd5e1;
+  background: #111827;
+}
+
+:root[data-theme="dark"] .bot-research-selection span,
+:root[data-theme="dark"] .bot-research-detail-decisions article,
+:root[data-theme="dark"] .bot-research-detail-grid > div,
+:root[data-theme="dark"] .bot-research-detail-reasons,
+:root[data-theme="dark"] .bot-research-snapshot {
+  border-color: #334155;
+  color: #e2e8f0;
+  background: #111827;
+}
+
+:root[data-theme="dark"] .bot-research-selection span,
+:root[data-theme="dark"] .bot-research-detail-reasons li code {
+  color: #cbd5e1;
+  background: #1e293b;
+}
+
+:root[data-theme="dark"] .bot-research-winner-badge {
+  color: #ddd6fe;
+  background: #4c1d95;
+}
+
 :root[data-theme="dark"] .bot-production-plan {
   border-color: rgba(52, 211, 153, 0.28);
   background:

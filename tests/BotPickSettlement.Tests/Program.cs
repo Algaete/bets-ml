@@ -55,6 +55,8 @@ var tests = new (string Name, Action Execute)[]
     ,("Bot E and H calibration history preserves legacy base probability", BotEAndHHistoryPreservesBaseProbability)
     ,("Calibration history repository never feeds FinalProbability", CalibrationHistoryRepositoryAvoidsFinalProbability)
     ,("Production decisions use the exact immutable bilateral odds snapshot", ProductionUsesImmutableBilateralOddsSnapshot)
+    ,("Scientific decisions remain separate from publication gates", ScientificDecisionRemainsSeparateFromPublication)
+    ,("Selector evidence is immutable per feature snapshot", SelectorEvidenceIsSnapshotAppendOnly)
     ,("Bot C and D ignore calibration history while Bot E is disabled", BotCAndDRemainUnchangedWhenBotEIsDisabled)
     ,("Bot F legacy source requires version and temporal provenance", BotFLegacySourceRequiresProvenance)
     ,("Football intelligence is exactly neutral without usable evidence", FootballIntelligenceIsNeutralWithoutEvidence)
@@ -102,6 +104,69 @@ static void ProductionUsesImmutableBilateralOddsSnapshot()
         StringComparison.Ordinal));
     Assert(service.Contains(
         "var enforceLiveProductionGate = !effectiveRequest.DryRun && !historicalMode;",
+        StringComparison.Ordinal));
+}
+
+static void ScientificDecisionRemainsSeparateFromPublication()
+{
+    var service = File.ReadAllText(Path.Combine(
+        FindRepositoryRoot(),
+        "CornersPredictionApi",
+        "Robot",
+        "AutomatedCornersBot",
+        "AutomatedCornersSelectionService.cs"));
+
+    Assert(service.Contains("evaluation.Decision,", StringComparison.Ordinal));
+    Assert(service.Contains("productionDecision = \"Blocked\";", StringComparison.Ordinal));
+    Assert(service.Contains("productionDecision = \"LowerRanked\";", StringComparison.Ordinal));
+    Assert(service.Contains("var isResearchWinner = ReferenceEquals(evaluation, researchWinner);", StringComparison.Ordinal));
+    Assert(!service.Contains("REJECTED_LOWER_RANKED_CANDIDATE", StringComparison.Ordinal));
+    Assert(!service.Contains("REJECTED_PRODUCTION_GATE", StringComparison.Ordinal));
+
+    // Selector league filters are evaluated by the production eligibility gate;
+    // they no longer remove the candidate from the scientific collection pass.
+    Assert(service.Contains(
+        "selectorProfiles.Any(profile => profile.MarketFamilies.Contains(currentMarketFamily))",
+        StringComparison.Ordinal));
+    Assert(service.Contains(
+        "var applicableNewGenerationProfiles = newGenerationProfiles\n                    .Where(profile => profile.MarketFamilies.Contains(currentMarketFamily))",
+        StringComparison.Ordinal));
+}
+
+static void SelectorEvidenceIsSnapshotAppendOnly()
+{
+    var root = FindRepositoryRoot();
+    var repository = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPredictionApi",
+        "Robot",
+        "AutomatedCornersBot",
+        "SqlAutomationRepository.cs"));
+    var schema = File.ReadAllText(Path.Combine(
+        root,
+        "CornersPredictionApi",
+        "sql",
+        "20260904_automated_bot_research.sql"));
+
+    Assert(repository.Contains(
+        "SHA256.HashData(Encoding.UTF8.GetBytes(decision.FeatureSnapshotJson))",
+        StringComparison.Ordinal));
+    Assert(repository.Contains("\"@EvidenceSnapshotHash\"", StringComparison.Ordinal));
+    Assert(schema.Contains("EvidenceSnapshotHash CHAR(64)", StringComparison.Ordinal));
+    Assert(schema.Contains("IsResearchWinner BIT", StringComparison.Ordinal));
+    Assert(schema.Contains("SelectionScore DECIMAL(9,6)", StringComparison.Ordinal));
+
+    var procedureStart = schema.IndexOf(
+        "CREATE OR ALTER PROCEDURE dbo.sp_UpsertAutomatedBotPickEvaluation",
+        StringComparison.Ordinal);
+    var matchedStart = schema.IndexOf("WHEN MATCHED THEN UPDATE SET", procedureStart, StringComparison.Ordinal);
+    var insertStart = schema.IndexOf("WHEN NOT MATCHED THEN INSERT", matchedStart, StringComparison.Ordinal);
+    Assert(procedureStart >= 0 && matchedStart > procedureStart && insertStart > matchedStart);
+    var matchedUpdate = schema[matchedStart..insertStart];
+    Assert(!matchedUpdate.Contains("Decision = @Decision", StringComparison.Ordinal));
+    Assert(!matchedUpdate.Contains("FeatureSnapshotJson = @FeatureSnapshotJson", StringComparison.Ordinal));
+    Assert(matchedUpdate.Contains(
+        "PublishedSelectionId = COALESCE(target.PublishedSelectionId, @PublishedSelectionId)",
         StringComparison.Ordinal));
 }
 

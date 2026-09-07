@@ -230,6 +230,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 var app = builder.Build();
 
 var internalApiKey = app.Configuration["ApiSecurity:InternalApiKey"];
+var betanoEnabled = app.Configuration.GetValue<bool>("CornersAutomation:BetanoEnabled");
 if (!app.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(internalApiKey))
 {
     throw new InvalidOperationException("INTERNAL_API_KEY must be configured for non-development API deployments.");
@@ -255,6 +256,16 @@ if (!app.Environment.IsDevelopment())
 
 app.Use(async (context, next) =>
 {
+    if (!betanoEnabled && context.Request.Path.StartsWithSegments("/api/BetanoOddsScrapping"))
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "Betano is disabled because the source is unavailable from the current network."
+        });
+        return;
+    }
+
     if (string.IsNullOrWhiteSpace(internalApiKey) ||
         context.Request.Path.StartsWithSegments("/health"))
     {
@@ -316,7 +327,9 @@ static void LoadDotEnv(string contentRootPath)
     var envPath = candidatePaths.FirstOrDefault(File.Exists);
     if (envPath is not null)
     {
-        Env.Load(envPath);
+        // Explicit process variables must win over local .env defaults. This also
+        // lets operators safely disable individual workers for a local web session.
+        Env.NoClobber().Load(envPath);
     }
 }
 

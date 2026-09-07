@@ -170,7 +170,8 @@ static void MigrationParsesWithScriptDom()
     {
         "automated_corners_bot.sql",
         "20260819_bot_g2026.sql",
-        "20260827_bot_h_shadow_lab.sql"
+        "20260827_bot_h_shadow_lab.sql",
+        "20260904_automated_bot_research.sql"
     };
 
     foreach (var script in scripts)

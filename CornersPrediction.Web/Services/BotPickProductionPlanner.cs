@@ -14,7 +14,7 @@ public static class BotPickProductionPlanner
     private const int MinimumPredictiveFixtures = 100;
     private const int ControlledTrialMinimumPredictiveFixtures = 30;
     private const decimal ControlledTrialMinimumYield = 0.07m;
-    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-08-31-V4";
+    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-09-06-V5";
     private const string LegacyGoalsPolicyVersion = "GOALS-HISTORICAL-RECONSTRUCTION-V1";
     private const string LegacyCornersPolicyVersion = "CORNERS-HISTORICAL-RECONSTRUCTION-V1";
     private static readonly DateTime LegacyGoalsPolicyCutover = new(2026, 8, 27, 0, 0, 0);
@@ -90,13 +90,13 @@ public static class BotPickProductionPlanner
             var ranked = fixture
                 .OrderByDescending(candidate => MarketPriority(candidate.Selection, family))
                 .ThenBy(candidate => Math.Abs(
-                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.Source, candidate.Selection.AutomationVersion)?.CalibrationGap
+                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.AutomationVersion)?.CalibrationGap
                     ?? double.MaxValue))
                 .ThenBy(candidate =>
-                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.Source, candidate.Selection.AutomationVersion)?.DeltaBrier
+                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.AutomationVersion)?.DeltaBrier
                     ?? double.MaxValue)
                 .ThenByDescending(candidate =>
-                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.Source, candidate.Selection.AutomationVersion)?.PredictiveFixtures
+                    ResolvePerformance(scorecards, candidate.BotKey, candidate.Selection.MarketType, candidate.Selection.SelectedSide, candidate.Selection.AutomationVersion)?.PredictiveFixtures
                     ?? 0)
                 .ThenByDescending(candidate => candidate.Selection.ExpectedValue ?? decimal.MinValue)
                 .ThenByDescending(candidate => BotPriority(candidate.BotKey))
@@ -108,7 +108,6 @@ public static class BotPickProductionPlanner
                 winner.BotKey,
                 winner.Selection.MarketType,
                 winner.Selection.SelectedSide,
-                winner.Selection.Source,
                 winner.Selection.AutomationVersion);
             var stakeUnits = ResolveStakeUnits(winner.Selection, winner.BotKey, family, performance);
             var controlledTrial = IsControlledGoalsTrial(
@@ -116,8 +115,7 @@ public static class BotPickProductionPlanner
                 winner.BotKey,
                 family,
                 winner.Selection.MarketType,
-                winner.Selection.SelectedSide,
-                winner.Selection.Source);
+                winner.Selection.SelectedSide);
             var signalKey = SignalKey(winner.Selection);
             var sameSignal = ranked
                 .Where(candidate => SignalKey(candidate.Selection) == signalKey)
@@ -135,7 +133,7 @@ public static class BotPickProductionPlanner
                 ? $" Consenso entre linajes {string.Join('+', consensusBots)}."
                 : string.Empty;
             var source = string.IsNullOrWhiteSpace(winner.Selection.Source)
-                ? "Casa habilitada"
+                ? "Cuota disponible"
                 : winner.Selection.Source.Trim();
 
             winner.Selection.ProductionPlan = new BotPickProductionPlanViewModel(
@@ -143,7 +141,7 @@ public static class BotPickProductionPlanner
                 stakeUnits,
                 controlledTrial ? "Prueba controlada 0.5u" : stakeUnits == 1m ? "Apostar 1u" : "Apostar 0.5u",
                 controlledTrial
-                    ? $"{source}; prueba controlada Bot {DisplayBotKey(winner.BotKey)} de goles visita Over: cohorte exacta con yield >= 7%, calibración <= 5 pp y Brier mejor que mercado ({performance!.PredictiveFixtures} partidos).{consensus}"
+                    ? $"{source}; prueba controlada Bot {DisplayBotKey(winner.BotKey)} de goles visita Over: cohorte consolidada entre casas con yield >= 7%, calibración <= 5 pp y Brier mejor que mercado ({performance!.PredictiveFixtures} partidos).{consensus}"
                     : $"{source}; bot activo y publicable; liga, cuota, edge y EV aprobados. Semáforo {PerformanceLabel(performance)}.{consensus}",
                 stakeUnits == 1m ? "bot-production-primary" : "bot-production-secondary",
                 true,
@@ -339,10 +337,6 @@ public static class BotPickProductionPlanner
         if (!IsLeagueAllowed(definition.LeagueFilters, family, EffectiveLeague(selection)))
             return "Monitoreo: la liga está excluida en el mantenedor del bot";
 
-        var source = selection.Source.Trim();
-        if (!source.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase)
-            && !source.Equals("Betano", StringComparison.OrdinalIgnoreCase))
-            return $"Monitoreo: {source.DefaultIfEmpty("casa desconocida")} no está habilitada para apuestas productivas";
         if (selection.Odds < MinimumOdds || selection.Odds > MaximumOdds)
             return $"Monitoreo: cuota fuera del rango productivo {MinimumOdds:0.00}–{MaximumOdds:0.00}";
         if (selection.ModelProbability is null or <= 0m or >= 1m)
@@ -369,10 +363,9 @@ public static class BotPickProductionPlanner
             botKey,
             selection.MarketType,
             selection.SelectedSide,
-            selection.Source,
             selection.AutomationVersion);
         if (performance is null)
-            return "Monitoreo: la versión actual no tiene scorecard Green de 30 días para este mercado, lado y casa";
+            return "Monitoreo: la versión actual no tiene scorecard consolidado de 30 días para este mercado y lado";
         var green = performance.PredictiveFixtures >= MinimumPredictiveFixtures
             && performance.TrafficLight.Equals("Green", StringComparison.OrdinalIgnoreCase)
             && !performance.ProductionBlocked;
@@ -381,18 +374,16 @@ public static class BotPickProductionPlanner
             botKey,
             family,
             selection.MarketType,
-            selection.SelectedSide,
-            selection.Source);
+            selection.SelectedSide);
         if (IsControlledGoalsCohort(
                 botKey,
                 family,
                 selection.MarketType,
-                selection.SelectedSide,
-                selection.Source)
+                selection.SelectedSide)
             && !controlledTrial)
-            return $"Monitoreo: la cohorte C/F de goles visita Over en Pinnacle sólo entra a 0.5u con >= {ControlledTrialMinimumPredictiveFixtures} partidos, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado; no se promociona automáticamente a 1u con historia anterior a V4";
+            return $"Monitoreo: la cohorte C/F de goles visita Over sólo entra a 0.5u con >= {ControlledTrialMinimumPredictiveFixtures} partidos, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado; no se promociona automáticamente a 1u con historia anterior a V5";
         if (!green && !controlledTrial && performance.PredictiveFixtures < MinimumPredictiveFixtures)
-            return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba C/F de 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures} partidos, goles visita Over en Pinnacle, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado";
+            return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba C/F de 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures} partidos, goles visita Over, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado";
         if (!green && !controlledTrial)
             return $"Monitoreo: semáforo {performance.TrafficLight} 30d; sólo Green puede entrar al plan productivo ({performance.Recommendation})";
 
@@ -594,8 +585,7 @@ public static class BotPickProductionPlanner
                 botKey,
                 family,
                 selection.MarketType,
-                selection.SelectedSide,
-                selection.Source))
+                selection.SelectedSide))
             return 0.5m;
         return family == "CORNERS" && selection.MarketType == "AwayTeamCorners" ? 0.5m : 1m;
     }
@@ -605,10 +595,9 @@ public static class BotPickProductionPlanner
         string botKey,
         string family,
         string marketType,
-        string selectedSide,
-        string bookmaker) =>
+        string selectedSide) =>
         performance is not null
-        && IsControlledGoalsCohort(botKey, family, marketType, selectedSide, bookmaker)
+        && IsControlledGoalsCohort(botKey, family, marketType, selectedSide)
         && performance.PredictiveFixtures >= ControlledTrialMinimumPredictiveFixtures
         && performance.Yield is >= ControlledTrialMinimumYield
         && performance.CalibrationGap.HasValue
@@ -620,13 +609,11 @@ public static class BotPickProductionPlanner
         string botKey,
         string family,
         string marketType,
-        string selectedSide,
-        string bookmaker) =>
+        string selectedSide) =>
         NormalizeBotKey(botKey) is "C2026" or "F2026"
         && family.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
         && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
-        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
-        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase);
+        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHalfLine(decimal line)
     {
@@ -653,14 +640,12 @@ public static class BotPickProductionPlanner
         string botKey,
         string marketType,
         string selectedSide,
-        string bookmaker,
         string automationVersion) => scorecards
         .Where(row => row.WindowDays == 30
-            && row.Dimension == "BotMarketSideBookmakerVersion"
+            && row.Dimension == "BotMarketSideVersion"
             && NormalizeBotKey(row.BotKey) == NormalizeBotKey(botKey)
             && string.Equals(row.MarketType, marketType, StringComparison.OrdinalIgnoreCase)
             && string.Equals(row.SelectedSide, selectedSide, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(row.Bookmaker, bookmaker, StringComparison.OrdinalIgnoreCase)
             && string.Equals(row.AutomationVersion, automationVersion, StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(row => row.PredictiveFixtures)
         .FirstOrDefault();

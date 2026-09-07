@@ -248,4 +248,8 @@ public sealed record RecommendationJobViewModel
     public DateTime? StartedAtUtc { get; init; }
     public DateTime UpdatedAtUtc { get; init; }
     public DateTime? CompletedAtUtc { get; init; }
+    public string? CurrentStage { get; init; }
+    public int CurrentBatchCompletedMatches { get; init; }
+    public int CurrentBatchTotalMatches { get; init; }
+    public DateTime? LastProgressAtUtc { get; init; }
 }

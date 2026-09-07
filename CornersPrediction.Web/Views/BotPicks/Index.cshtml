@@ -27,7 +27,7 @@
         <p class="text-muted mb-0">@Model.Market.Description</p>
     </div>
     <div class="bot-picks-hero-actions">
-        <div class="bot-picks-bankroll-settings" aria-label="Configuración de simulación">
+        <div class="bot-picks-bankroll-settings d-none" data-production-only aria-label="Configuración de simulación">
         <label class="bot-picks-bankroll-control">
             <span>Bankroll inicial (u)</span>
             <input id="BotPicksInitialBankroll" class="form-control form-control-sm" type="number" min="0" step="0.01" value="100" />
@@ -47,7 +47,7 @@
         </div>
         @if (canUpdateResults)
         {
-            <div class="bot-picks-bulk-actions" aria-label="Liquidación automática">
+            <div class="bot-picks-bulk-actions d-none" data-production-only aria-label="Liquidación automática">
                 <button id="SettleLocalBotPicksButton" class="btn btn-primary" type="button"
                         title="Liquida todos los bots y mercados usando únicamente MatchHistory">
                     Liquidar desde MatchHistory
@@ -58,7 +58,7 @@
                 </button>
             </div>
         }
-        <button id="RefreshBotPicksButton" class="btn btn-outline-secondary" type="button">Actualizar</button>
+        <button id="RefreshBotPicksButton" class="btn btn-outline-secondary d-none" data-production-only type="button">Actualizar</button>
     </div>
 </div>
 
@@ -84,13 +84,31 @@
                asp-route-Bookmaker="@selectedBookmaker">@marketLink.Label</a>
         }
     </nav>
-    <nav class="bot-picks-section-nav" aria-label="Secciones de Bot Picks">
+    <nav id="BotPicksProductionSectionNav" class="bot-picks-section-nav d-none" data-production-only aria-label="Secciones del plan productivo">
         <a href="#BotPicksSummary">Resumen</a>
         <a href="#BotPicksRecommendations">Recomendaciones</a>
-        <a href="#BotPicksDataScience">Laboratorio</a>
+        <a href="#BotPicksDataScience">Rendimiento publicado</a>
     </nav>
 </div>
 
+<section class="bot-picks-surface-switch mb-4" role="tablist" aria-label="Bot Picks generales y plan productivo">
+    <button class="bot-picks-surface-tab bot-picks-surface-tab-research is-active" type="button" role="tab"
+            id="BotPicksResearchTab" data-bot-picks-surface="research"
+            aria-controls="BotPicksResearchSurface" aria-selected="true">
+        <span class="bot-picks-surface-name">Bot Picks generales</span>
+        <span class="bot-picks-surface-description">Todos los mercados y estados, incluidos bloqueados</span>
+    </button>
+    <button class="bot-picks-surface-tab" type="button" role="tab"
+            id="BotPicksProductionTab" data-bot-picks-surface="production"
+            aria-controls="BotPicksProductionSurface" aria-selected="false" tabindex="-1">
+        <span class="bot-picks-surface-name">Plan productivo</span>
+        <span class="bot-picks-surface-description">Picks publicados y apuestas autorizadas</span>
+    </button>
+</section>
+
+<partial name="_Research" model="Model" />
+
+<div id="BotPicksProductionSurface" class="d-none" role="tabpanel" aria-labelledby="BotPicksProductionTab" aria-hidden="true">
 <div id="BotPicksError" class="alert alert-danger d-none" role="alert"></div>
 <div id="BotPicksSettlementResult" class="alert alert-success d-none" role="status"></div>
 
@@ -155,6 +173,7 @@
     <span id="BotPicksBotContextSample" class="bot-ds-sample-badge">Sin muestra</span>
 </aside>
 
+<div id="BotPicksPlanVerification" class="alert alert-info d-none" role="status" aria-live="polite"></div>
 <section id="BotPicksProductionPlan" class="bot-production-plan mb-4" aria-label="Plan productivo del bot activo">
     <div class="bot-production-plan-copy">
         <div class="text-uppercase fw-semibold">Plan vigente futuro</div>
@@ -165,7 +184,7 @@
         }
         else if (Model.Market.Key == "goals")
         {
-            <p>Para partidos futuros, Green usa 1u. Además, C o F pueden usar 0.5u únicamente en la cohorte exacta «goles visita · Over · Pinnacle», con 30+ partidos, yield mínimo 7%, calibración ≤ 5 pp y Brier no peor que el mercado. Esta cohorte no sube automáticamente a 1u por tener 100 históricos: primero debe reunir 100 picks prospectivos bajo V4. A no entra en esta prueba. La cartera admite <strong>máximo 2u globales por día</strong>; las señales que exceden ese límite quedan en Monitoreo. El resultado anterior aparece aparte como simulación histórica GOALS V1; no representa apuestas ejecutadas.</p>
+            <p>Para partidos futuros, Green usa 1u. Además, C o F pueden usar 0.5u únicamente en la cohorte exacta «goles visita · Over», con 30+ partidos, yield mínimo 7%, calibración ≤ 5 pp y Brier no peor que el mercado. La evidencia se consolida entre casas por bot, mercado, lado y versión; cada partido cuenta una vez. La casa indica el origen de la cuota y no bloquea el pick. Esta cohorte no sube automáticamente a 1u por tener 100 históricos. A no entra en esta prueba. La cartera admite <strong>máximo 2u globales por día</strong>; las señales que exceden ese límite quedan en Monitoreo. El resultado anterior aparece aparte como simulación histórica GOALS V1; no representa apuestas ejecutadas.</p>
         }
         else
         {
@@ -376,13 +395,13 @@
     <summary>
         <span>
             <strong>Gate vigente para picks futuros</strong>
-            <small>No reconstruye el pasado: Green habilita 1u; sólo C/F en goles visita Over de Pinnacle pueden optar a la prueba de 0.5u</small>
+            <small>No reconstruye el pasado: Green habilita 1u; sólo C/F en goles visita Over pueden optar a la prueba de 0.5u</small>
         </span>
         <span aria-hidden="true">Abrir</span>
     </summary>
     <div class="bot-picks-collapsible-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <p class="text-muted small mb-0">Este gate decide únicamente picks nuevos. Yield y calibración se calculan una vez por partido para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Green genérico exige 100 partidos independientes. La excepción controlada exige Bot C o F, goles visita, Over, Pinnacle, 30+ partidos, yield ≥ 7%, brecha ≤ 5 pp y Δ Brier ≤ 0; permanece en 0.5u hasta acumular 100 picks prospectivos V4. A queda fuera de esa excepción.</p>
+            <p class="text-muted small mb-0">Este gate decide únicamente picks nuevos. La evidencia se consolida por bot, mercado, lado y versión; la casa indica el origen de la cuota. Yield y calibración se calculan una vez por partido entre todas las casas para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Green genérico exige 100 partidos independientes. La excepción controlada exige Bot C o F, goles visita, Over, 30+ partidos, yield ≥ 7%, brecha ≤ 5 pp y Δ Brier ≤ 0; permanece en 0.5u sin promoción automática por muestra histórica. A queda fuera de esa excepción.</p>
             <div class="btn-group btn-group-sm" role="group" aria-label="Ventana del semáforo">
                 <button type="button" class="btn btn-outline-secondary" data-scorecard-window="7">7 días</button>
                 <button type="button" class="btn btn-primary" data-scorecard-window="30">30 días</button>
@@ -400,7 +419,7 @@
     </div>
 </details>
 
-<details class="surface-panel bot-picks-collapsible mb-4">
+<details id="BotPicksMonthlyHistory" class="surface-panel bot-picks-collapsible mb-4">
     <summary>
         <span>
             <strong>Historial mensual</strong>
@@ -437,6 +456,10 @@
 </details>
 
 <div id="BotPicksRecommendations" class="bot-picks-anchor"></div>
+@if (marketFamily == "goals")
+{
+    <partial name="_GoalsCoverage" />
+}
 <form id="BotPicksFilters" class="surface-panel mb-3">
     @Html.AntiForgeryToken()
     <input type="hidden" name="market" value="@marketFamily" />
@@ -566,7 +589,7 @@
     <summary class="d-flex flex-wrap justify-content-between align-items-center gap-2">
         <span>
             <strong>Diagnóstico del motor · no son apuestas</strong>
-            <small class="d-block text-muted">Confirma si los bots analizaron este mercado aunque no hayan publicado un pick.</small>
+            <small class="d-block text-muted">Separa Total, Local y Visita para mostrar qué analizaron los bots aunque no hayan publicado un pick.</small>
         </span>
         <span id="BotPicksMonitoringBadge" class="badge text-bg-light">Cargando…</span>
     </summary>
@@ -583,6 +606,7 @@
                 <thead>
                     <tr>
                         <th>Bot</th>
+                        <th>Mercado</th>
                         <th class="text-end">Partidos</th>
                         <th class="text-end">Evaluaciones</th>
                         <th class="text-end">Gate productivo</th>
@@ -600,6 +624,7 @@
 </details>
 
 <section class="surface-panel bot-picks-recommendations-panel">
+    <div id="BotPicksPlanVerificationTable" class="alert alert-info d-none mb-3" role="status"></div>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
         <div>
             <h2 id="BotPicksTableTitle" class="h6 mb-1">Recomendaciones de todos los bots</h2>
@@ -688,17 +713,17 @@
 <details id="BotPicksDataScience" class="bot-data-science bot-picks-collapsible mt-4" aria-labelledby="BotPicksDataScienceTitle">
     <summary>
         <span>
-            <strong>Laboratorio de rendimiento</strong>
-            <small>Análisis exploratorio de todas las recomendaciones visibles</small>
+            <strong>Analítica de picks publicados</strong>
+            <small>Rendimiento exploratorio de las recomendaciones visibles en Producción</small>
         </span>
         <span aria-hidden="true">Abrir</span>
     </summary>
     <div class="bot-picks-collapsible-body">
     <div class="bot-data-science-header">
         <div>
-            <div class="bot-data-science-eyebrow">Data Science en vivo</div>
-            <h2 id="BotPicksDataScienceTitle">Laboratorio de rendimiento</h2>
-            <p>Analisis descriptivo de las recomendaciones visibles. Se actualiza con los filtros y cada resultado liquidado.</p>
+            <div class="bot-data-science-eyebrow">Analítica de producción</div>
+            <h2 id="BotPicksDataScienceTitle">Rendimiento de picks publicados</h2>
+            <p>Analiza sólo las recomendaciones visibles de Producción. Para estudiar rechazados, Shadow y bloqueados por el gate, usa la pestaña Investigación.</p>
         </div>
         <div class="bot-data-science-sample">
             <span id="BotPicksDsSampleBadge" class="bot-ds-sample-badge">Sin muestra</span>
@@ -877,6 +902,7 @@
     </p>
     </div>
 </details>
+</div>
 
 <div class="modal fade" id="BotPickDetailModal" tabindex="-1" aria-labelledby="BotPickDetailModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -995,6 +1021,11 @@
             const intelligenceModal = bootstrap.Modal.getOrCreateInstance(intelligenceModalElement);
             const intelligenceSubtitle = document.getElementById('BotPickIntelligenceSubtitle');
             const intelligenceBody = document.getElementById('BotPickIntelligenceBody');
+            const monthlyHistorySection = document.getElementById('BotPicksMonthlyHistory');
+            const scorecardSection = document.getElementById('BotPicksServerMonitoring');
+            const monitoringSection = document.getElementById('BotPicksMonitoringAudit');
+            const dataScienceSection = document.getElementById('BotPicksDataScience');
+            const productionSurface = document.getElementById('BotPicksProductionSurface');
             const monthlyHistoryLoading = document.getElementById('BotPicksMonthlyHistoryLoading');
             const monthlyHistoryEmpty = document.getElementById('BotPicksMonthlyHistoryEmpty');
             const monthlyHistoryWrap = document.getElementById('BotPicksMonthlyHistoryWrap');
@@ -1020,6 +1051,10 @@
             const leaguePerformanceSearch = document.getElementById('BotPicksDsLeagueSearch');
             const leaguePerformanceSort = document.getElementById('BotPicksDsLeagueSort');
             const productionPlanSection = document.getElementById('BotPicksProductionPlan');
+            const planVerificationNotices = [
+                document.getElementById('BotPicksPlanVerification'),
+                document.getElementById('BotPicksPlanVerificationTable')
+            ];
             const perBotSummarySection = document.getElementById('BotPicksPerBotSummary');
             const selectBotSummaryNotice = document.getElementById('BotPicksSelectBotSummary');
             const summaryTitle = document.getElementById('BotPicksSummaryTitle');
@@ -1038,6 +1073,18 @@
             let filteredSelections = [];
             let tableSelections = [];
             let monthlyHistoryItems = [];
+            let monthlyHistoryLoaded = false;
+            let scorecardsLoaded = false;
+            let monitoringLoaded = false;
+            let monthlyHistoryController;
+            let scorecardController;
+            let monitoringController;
+            let productionLoaded = false;
+            let productionLoading = false;
+            let productionVerificationState = 'idle';
+            let selectionsRevision = 0;
+            let dataScienceItems = [];
+            let dataScienceDirty = true;
             let performanceScorecards = [];
             let monitoringSummary = [];
             let activeDetailRequest = 0;
@@ -1120,7 +1167,17 @@
                 }
             };
 
-            const getDecisionReason = item => parseDecisionReason(getValue(item, 'DecisionReason'));
+            // A decision can contain a large feature snapshot. Reuse its parsed
+            // value across summaries, filters and rows without retaining old loads.
+            const decisionReasons = new WeakMap();
+            const getDecisionReason = item => {
+                const raw = getValue(item, 'DecisionReason');
+                const cached = decisionReasons.get(item);
+                if (cached && cached.raw === raw) return cached.value;
+                const value = parseDecisionReason(raw);
+                decisionReasons.set(item, { raw, value });
+                return value;
+            };
 
             const getFootballIntelligenceState = item => {
                 const fixtureId = getValue(item, 'ApiFootballFixtureId');
@@ -1426,11 +1483,13 @@
                     const id = String(getValue(item, 'AutomatedCornerBetSelectionId'));
                     const serverPlan = getValue(item, 'ProductionPlan');
                     const stakeUnits = number(getValue(serverPlan, 'StakeUnits')) ?? 0;
+                    const verificationFailed = getValue(serverPlan, 'Key') === 'verifying'
+                        && productionVerificationState === 'error';
                     planMap.set(id, {
-                        key: getValue(serverPlan, 'Key') || 'monitor',
+                        key: verificationFailed ? 'unverified' : getValue(serverPlan, 'Key') || 'monitor',
                         stakeUnits,
-                        label: getValue(serverPlan, 'Label') || 'Monitoreo',
-                        reason: getValue(serverPlan, 'Reason') || 'El backend no habilitó esta señal para producción',
+                        label: verificationFailed ? 'Plan sin verificar' : getValue(serverPlan, 'Label') || 'Monitoreo',
+                        reason: verificationFailed ? 'No se pudo completar la verificación. Actualiza para reintentar; las apuestas siguen deshabilitadas.' : getValue(serverPlan, 'Reason') || 'El backend no habilitó esta señal para producción',
                         rowClass: getValue(serverPlan, 'RowClass') || 'bot-production-monitor',
                         isProductive: getValue(serverPlan, 'IsProductive') === true && stakeUnits > 0,
                         policyVersion: getValue(serverPlan, 'PolicyVersion') || '',
@@ -1462,6 +1521,11 @@
                 };
 
             const updateProductionPlanSummary = items => {
+                if (productionVerificationState !== 'ready') {
+                    ['BotPicksPlanOneUnit', 'BotPicksPlanHalfUnit', 'BotPicksPlanMonitoring'].forEach(id =>
+                        document.getElementById(id).textContent = productionVerificationState === 'error' ? '—' : '…');
+                    return;
+                }
                 const pendingItems = items.filter(item =>
                     String(getValue(item, 'Status') ?? '').toLowerCase() === 'pending' &&
                     new Date(getValue(item, 'MatchDate')).getTime() > Date.now());
@@ -2053,7 +2117,7 @@
                 if (botKey === 'F') {
                     return {
                         title: 'Legacy ML + calibración empírica',
-                        text: 'Usa como señal base los modelos anteriores y calibración walk-forward. Un ROI histórico verde no autoriza apuestas por sí solo: únicamente el plan vigente futuro puede abrir la prueba exacta F de goles visita Over en Pinnacle a 0.5u.'
+                        text: 'Usa como señal base los modelos anteriores y calibración walk-forward. Un ROI histórico verde no autoriza apuestas por sí solo: únicamente el plan vigente futuro puede abrir la prueba exacta F de goles visita Over a 0.5u.'
                     };
                 }
 
@@ -2097,6 +2161,9 @@
             };
 
             const matchesStrategyPlan = item => {
+                // A pending classification must not hide every row under a
+                // previously selected stake or monitoring filter.
+                if (productionVerificationState !== 'ready') return true;
                 const selectedPlan = strategyPlanSelect.value;
                 const plan = getProductionPlan(item);
                 if (!selectedPlan) {
@@ -2122,7 +2189,12 @@
                     && matchesIntelligence(item));
 
             const updateBotTabs = baseItems => {
-                const countByBot = botKey => baseItems.filter(item => getBotInfo(item).key === botKey).length;
+                const counts = new Map();
+                baseItems.forEach(item => {
+                    const key = getBotInfo(item).key;
+                    counts.set(key, (counts.get(key) ?? 0) + 1);
+                });
+                const countByBot = botKey => counts.get(botKey) ?? 0;
                 const retiredBCount = countByBot('B');
                 const retiredBOption = document.getElementById('BotPicksRetiredBOption');
                 if (retiredBOption) {
@@ -2579,19 +2651,19 @@
                 });
             };
 
-            const applyLocalFilters = () => {
+            const applyLocalFilters = baseItems => {
                 const intelligenceAppliedCount = selections.filter(item =>
                     getFootballIntelligenceState(item).applied).length;
                 intelligenceAppliedOption.textContent = `Aplicada al pick (${intelligenceAppliedCount})`;
-                const baseItems = getSearchFilteredSelections();
                 updateBotTabs(baseItems);
                 filteredSelections = activeBotTab
                     ? baseItems.filter(item => getBotInfo(item).key === activeBotTab)
-                    : baseItems;
+                    : baseItems.slice();
 
+                const sortValues = new Map(baseItems.map(item => [item, sortValue(item)]));
                 filteredSelections.sort((left, right) => {
-                    const leftValue = sortValue(left);
-                    const rightValue = sortValue(right);
+                    const leftValue = sortValues.get(left);
+                    const rightValue = sortValues.get(right);
                     return sortDirection === 'asc'
                         ? leftValue - rightValue
                         : rightValue - leftValue;
@@ -2631,8 +2703,8 @@
                     tableTitle.textContent += ` · ${activeReason?.querySelector('span')?.textContent ?? 'Pendientes'}`;
                 }
                 tableSelections.sort((left, right) => {
-                    const leftValue = sortValue(left);
-                    const rightValue = sortValue(right);
+                    const leftValue = sortValues.get(left);
+                    const rightValue = sortValues.get(right);
                     return sortDirection === 'asc'
                         ? leftValue - rightValue
                         : rightValue - leftValue;
@@ -2674,6 +2746,8 @@
 		                    const edgeClass = highValueClass(getValue(item, 'ProbabilityEdge'));
 		                    const evClass = highValueClass(getValue(item, 'ExpectedValue'));
                         const productionPlan = getProductionPlan(item);
+                        const productionBadgeClass = ['verifying', 'unverified'].includes(productionPlan.key)
+                            ? 'monitor' : productionPlan.key;
 
 		                    const yieldPct = getValue(item, 'YieldPct');
 		                    const isPending = String(status).toLowerCase() === 'pending';
@@ -2713,7 +2787,7 @@
 
                         const bettingAction = productionPlan.stakeUnits > 0 && isPending && isUpcoming
                             ? `<a class="btn btn-sm bot-production-bet-button" href="${escapeHtml(buildBettingCreateUrl(item, 'Flat', productionPlan.stakeUnits))}">${escapeHtml(productionPlan.label)}</a>`
-                            : `<span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${productionPlan.isHistoricalReconstruction ? 'Simulación histórica' : productionPlan.stakeUnits > 0 ? 'Plan vigente registrado' : 'Sólo monitoreo'}</span>`;
+                            : `<span class="badge bot-production-action-${escapeHtml(productionBadgeClass)}">${['verifying', 'unverified'].includes(productionPlan.key) ? escapeHtml(productionPlan.label) : productionPlan.isHistoricalReconstruction ? 'Simulación histórica' : productionPlan.stakeUnits > 0 ? 'Plan vigente registrado' : 'Sólo monitoreo'}</span>`;
 
                         const shortNote = settlementNote && String(settlementNote).length > 105
                             ? `${String(settlementNote).slice(0, 102)}...`
@@ -2753,7 +2827,7 @@
                                     </div>
                                 </td>
 			                    <td>
-                                    <span class="badge bot-production-action-${escapeHtml(productionPlan.key)}">${escapeHtml(productionPlanLabel)}</span>
+                                    <span class="badge bot-production-action-${escapeHtml(productionBadgeClass)}">${escapeHtml(productionPlanLabel)}</span>
                                     <div class="small mt-1" title="${escapeHtml(productionPlan.reason)}">${escapeHtml(shortPlanReason)}</div>
                                     ${productionPlan.stakeUnits > 0
                                         ? `<div class="text-muted small">Stake: ${escapeHtml(formatCompact(productionPlan.stakeUnits))} × base configurada</div>`
@@ -2834,18 +2908,32 @@
                 `;
             };
 
+            let dataScienceTimer;
+            const scheduleDataScience = () => {
+                clearTimeout(dataScienceTimer);
+                if (!dataScienceSection.open || !dataScienceDirty) return;
+                dataScienceTimer = setTimeout(() => {
+                    if (!dataScienceSection.open || !dataScienceDirty) return;
+                    renderDataScience(dataScienceItems);
+                    dataScienceDirty = false;
+                }, 0);
+            };
+
             const render = (resetPage = false) => {
                 if (resetPage) {
                     currentPage = 1;
                 }
                 buildProductionPlans(selections);
-                applyLocalFilters();
+                const baseItems = getSearchFilteredSelections();
+                applyLocalFilters(baseItems);
                 buildProductionPlans(filteredSelections, summaryProductionPlansById);
+                renderRows();
                 updateProductionPlanSummary(filteredSelections);
-                summarize(filteredSelections, getSearchFilteredSelections());
-		        renderDataScience(getSearchFilteredSelections());
-				    renderMonthlyHistory();
-			        renderRows();
+                summarize(filteredSelections, baseItems);
+                if (monthlyHistoryLoaded) renderMonthlyHistory();
+                dataScienceItems = baseItems;
+                dataScienceDirty = true;
+                scheduleDataScience();
 	            };
 
                 const showSettlementResult = (message, tone = 'success', shouldScroll = true) => {
@@ -2911,7 +2999,8 @@
 
 	            const replaceSelection = updatedSelection => {
 	                const updatedId = String(getValue(updatedSelection, 'AutomatedCornerBetSelectionId'));
-	                selections = selections.map(item => {
+	                selectionsRevision += 1;
+                selections = selections.map(item => {
 	                    if (String(getValue(item, 'AutomatedCornerBetSelectionId')) !== updatedId) {
 	                        return item;
 	                    }
@@ -3164,6 +3253,7 @@
 	                        throw new Error(error.error ?? 'No se pudo eliminar la predicción.');
 	                    }
 
+                        selectionsRevision += 1;
 	                    selections = selections.filter(item =>
 	                        String(getValue(item, 'AutomatedCornerBetSelectionId')) !== String(id));
 	                    render();
@@ -3174,10 +3264,60 @@
 	                }
 	            };
 
+            const setPlanVerificationState = state => {
+                productionVerificationState = state;
+                strategyPlanSelect.disabled = state !== 'ready';
+                const visible = state === 'loading' || state === 'error';
+                const message = state === 'error'
+                    ? 'La tabla sigue disponible, pero no se pudo verificar el plan productivo. Las apuestas y el filtro por plan siguen deshabilitados. Actualiza para reintentar.'
+                    : 'La tabla y sus resultados ya están disponibles. Verificando el plan productivo; las apuestas y el filtro por plan se habilitarán al terminar.';
+                planVerificationNotices.forEach(notice => {
+                    notice.textContent = message;
+                    notice.classList.toggle('d-none', !visible);
+                    notice.classList.toggle('alert-info', state !== 'error');
+                    notice.classList.toggle('alert-warning', state === 'error');
+                });
+            };
+
+            const verifyProductionPlans = async (query, currentController) => {
+                const revision = selectionsRevision;
+                try {
+                    const response = await fetch(`${endpointUrl}${query}`, { signal: currentController.signal });
+                    if (!response.ok) throw new Error('No se pudo verificar el plan productivo.');
+                    const verifiedSelections = await response.json();
+                    if (requestController !== currentController || currentController.signal.aborted) return;
+                    if (selectionsRevision !== revision) {
+                        // A result was edited/deleted while the full request was
+                        // running. Re-read before applying any productive plan.
+                        void verifyProductionPlans(query, currentController);
+                        return;
+                    }
+                    selections = verifiedSelections;
+                    setPlanVerificationState('ready');
+                    render();
+                } catch (error) {
+                    if (error.name === 'AbortError' || requestController !== currentController) return;
+                    setPlanVerificationState('error');
+                    render();
+                } finally {
+                    if (requestController === currentController && productionVerificationState !== 'loading') {
+                        loadSupportingPanels();
+                    }
+                }
+            };
+
             const loadSelections = async () => {
                 requestController?.abort();
                 const currentController = new AbortController();
                 requestController = currentController;
+                const query = buildQuery();
+                const initialQuery = new URLSearchParams(query.replace(/^\?/, ''));
+                initialQuery.set('includePerformance', 'false');
+                productionLoading = true;
+                setPlanVerificationState('idle');
+                monitoringLoaded = false;
+                monitoringController?.abort();
+                monitoringController = null;
                 currentPage = 1;
                 setError('');
                 filteredSelections = [];
@@ -3186,7 +3326,7 @@
                 visibleCount.textContent = 'Cargando...';
 
                 try {
-                    const response = await fetch(`${endpointUrl}${buildQuery()}`, {
+                    const response = await fetch(`${endpointUrl}?${initialQuery.toString()}`, {
                         signal: currentController.signal
                     });
 
@@ -3195,23 +3335,31 @@
                         throw new Error(error.error ?? 'Bot picks could not be loaded.');
                     }
 
+                    const loadedSelections = await response.json();
+                    if (requestController !== currentController || currentController.signal.aborted) return;
                     robustEvaluationsById.clear();
-                    selections = await response.json();
-                    const browserQuery = new URLSearchParams(buildQuery().replace(/^\?/, ''));
+                    selections = loadedSelections;
+                    selectionsRevision += 1;
+                    productionLoaded = true;
+                    setPlanVerificationState(selections.length > 0 ? 'loading' : 'ready');
+                    const browserQuery = new URLSearchParams(query.replace(/^\?/, ''));
                     browserQuery.delete('marketFamily');
                     browserQuery.set('market', marketFamily);
-                    window.history.replaceState(null, '', `${window.location.pathname}?${browserQuery.toString()}`);
-                    render();
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        return;
+                    if (!productionSurface.classList.contains('d-none')) {
+                        browserQuery.set('surface', 'production');
+                        window.history.replaceState(null, '', `${window.location.pathname}?${browserQuery.toString()}`);
                     }
-
+                    render();
+                    if (selections.length > 0) void verifyProductionPlans(query, currentController);
+                } catch (error) {
+                    if (error.name === 'AbortError' || requestController !== currentController) return;
                     selections = [];
                     filteredSelections = [];
                     tableSelections = [];
                     summarize(filteredSelections);
-                    renderDataScience(filteredSelections);
+                    dataScienceItems = [];
+                    dataScienceDirty = true;
+                    scheduleDataScience();
                     tableWrap.classList.add('d-none');
                     emptyState.classList.add('d-none');
                     pagination.classList.add('d-none');
@@ -3219,7 +3367,11 @@
                     setError(error.message);
                 } finally {
                     if (requestController === currentController) {
+                        productionLoading = false;
                         setLoading(false);
+                        // Background scorecards reuse the completed validation;
+                        // no second expensive calculation races the table.
+                        if (productionVerificationState !== 'loading') loadSupportingPanels();
                     }
                 }
             };
@@ -3279,20 +3431,29 @@
             };
 
             const loadMonthlyHistory = async () => {
+                monthlyHistoryLoaded = false;
+                if (!monthlyHistorySection.open) return;
+                monthlyHistoryController?.abort();
+                const currentController = new AbortController();
+                monthlyHistoryController = currentController;
                 monthlyHistoryLoading.classList.remove('d-none');
                 monthlyHistoryWrap.classList.add('d-none');
                 monthlyHistoryEmpty.classList.add('d-none');
 
                 try {
-                    const response = await fetch(monthlyHistoryUrl);
+                    const response = await fetch(monthlyHistoryUrl, { signal: currentController.signal });
                     if (!response.ok) {
                         throw new Error('No se pudo cargar el historial mensual.');
                     }
 
-                    monthlyHistoryItems = (await response.json())
+                    const months = await response.json();
+                    if (monthlyHistoryController !== currentController || currentController.signal.aborted) return;
+                    monthlyHistoryItems = months
                         .filter(month => String(getValue(month, 'BotKey') ?? '').toUpperCase() !== 'B');
+                    monthlyHistoryLoaded = true;
                     renderMonthlyHistory();
                 } catch (error) {
+                    if (error.name === 'AbortError' || monthlyHistoryController !== currentController) return;
                     monthlyHistoryItems = [];
                     monthlyHistoryBody.innerHTML = '';
                     monthlyHistoryEmpty.textContent = error instanceof Error
@@ -3300,14 +3461,17 @@
                         : 'No se pudo cargar el historial mensual.';
                     monthlyHistoryEmpty.classList.remove('d-none');
                 } finally {
-                    monthlyHistoryLoading.classList.add('d-none');
+                    if (monthlyHistoryController === currentController) {
+                        monthlyHistoryController = null;
+                        monthlyHistoryLoading.classList.add('d-none');
+                    }
                 }
             };
 
             const renderPerformanceScorecards = () => {
                 const rows = performanceScorecards
                     .filter(row => Number(getValue(row, 'WindowDays')) === performanceWindow
-                        && getValue(row, 'Dimension') === 'BotMarketSideBookmakerVersion')
+                        && getValue(row, 'Dimension') === 'BotMarketSideVersion')
                     .sort((left, right) => {
                         const order = { Red: 0, Amber: 1, Gray: 2, Green: 3 };
                         return (order[getValue(left, 'TrafficLight')] ?? 4) - (order[getValue(right, 'TrafficLight')] ?? 4)
@@ -3334,12 +3498,10 @@
                         const marketType = String(getValue(row, 'MarketType') ?? '');
                         const botKey = String(getValue(row, 'BotKey') ?? '').toUpperCase();
                         const selectedSide = String(getValue(row, 'SelectedSide') ?? '');
-                        const bookmaker = String(getValue(row, 'Bookmaker') ?? '');
                         const controlledTrial = Number(getValue(row, 'WindowDays')) === 30
                             && (botKey === 'C2026' || botKey === 'F2026')
                             && marketType === 'AwayTeamGoals'
                             && selectedSide.toLowerCase() === 'over'
-                            && bookmaker.toLowerCase() === 'pinnacle'
                             && fixtures >= 30
                             && yieldValue !== null && yieldValue >= 0.07
                             && gap !== null && Math.abs(gap) <= 0.05
@@ -3350,7 +3512,7 @@
                             : getValue(row, 'Recommendation') ?? '';
                         return `<tr>
                             <td class="fw-semibold">${escapeHtml(getValue(row, 'BotKey') ?? '-')}</td>
-                            <td title="${escapeHtml(getValue(row, 'AutomationVersion') ?? '')}">${escapeHtml(marketLabel(getValue(row, 'MarketType') ?? ''))} · ${escapeHtml(getValue(row, 'SelectedSide') ?? '-')} · ${escapeHtml(getValue(row, 'Bookmaker') ?? '-')}</td>
+                            <td title="${escapeHtml(getValue(row, 'AutomationVersion') ?? '')}">${escapeHtml(marketLabel(getValue(row, 'MarketType') ?? ''))} · ${escapeHtml(getValue(row, 'SelectedSide') ?? '-')}</td>
                             <td class="text-end">${escapeHtml(getValue(row, 'PredictiveResolved') ?? 0)} / ${escapeHtml(getValue(row, 'PredictiveFixtures') ?? 0)}</td>
                             <td class="text-end ${signedClass(yieldValue)}">${yieldValue === null ? '-' : escapeHtml(formatPercent(yieldValue))}</td>
                             <td class="text-end">${model === null || observed === null ? '-' : `${escapeHtml(formatPercent(model))} / ${escapeHtml(formatPercent(observed))}`}</td>
@@ -3364,20 +3526,31 @@
             };
 
             const loadPerformanceScorecards = async () => {
+                if (!scorecardSection.open) return;
+                scorecardController?.abort();
+                const currentController = new AbortController();
+                scorecardController = currentController;
                 scorecardLoading.classList.remove('d-none');
                 scorecardError.classList.add('d-none');
                 try {
-                    const response = await fetch(performanceScorecardsUrl);
+                    const response = await fetch(performanceScorecardsUrl, { signal: currentController.signal });
                     if (!response.ok) throw new Error('No se pudo cargar el semáforo del servidor.');
-                    performanceScorecards = await response.json();
+                    const scorecards = await response.json();
+                    if (scorecardController !== currentController || currentController.signal.aborted) return;
+                    performanceScorecards = scorecards;
+                    scorecardsLoaded = true;
                     renderPerformanceScorecards();
                 } catch (error) {
+                    if (error.name === 'AbortError' || scorecardController !== currentController) return;
                     performanceScorecards = [];
                     scorecardWrap.classList.add('d-none');
                     scorecardError.textContent = error instanceof Error ? error.message : 'No se pudo cargar el semáforo.';
                     scorecardError.classList.remove('d-none');
                 } finally {
-                    scorecardLoading.classList.add('d-none');
+                    if (scorecardController === currentController) {
+                        scorecardController = null;
+                        scorecardLoading.classList.add('d-none');
+                    }
                 }
             };
 
@@ -3388,12 +3561,14 @@
                 }), { fixtures: 0, rows: 0 });
                 monitoringBadge.textContent = monitoringSummary.length === 0
                     ? 'Sin evaluaciones'
-                    : `${totals.fixtures} casos bot-partido · ${totals.rows} evaluaciones`;
+                    : `${totals.fixtures} casos bot-mercado-partido · ${totals.rows} evaluaciones`;
                 monitoringBody.innerHTML = monitoringSummary.map(row => {
                     const key = String(getValue(row, 'BotKey') ?? '-').toUpperCase();
                     const label = key === 'A' ? 'Bot A' : `Bot ${key.replace('2026', '')}`;
+                    const type = String(getValue(row, 'MarketType') ?? '');
                     return `<tr>
                         <td><span class="fw-semibold">${escapeHtml(label)}</span><div class="small text-muted">${escapeHtml(key)}</div></td>
+                        <td><span class="fw-semibold">${escapeHtml(marketLabel(type))}</span><div class="small text-muted">${escapeHtml(type)}</div></td>
                         <td class="text-end">${escapeHtml(getValue(row, 'EvaluatedFixtures') ?? 0)}</td>
                         <td class="text-end">${escapeHtml(getValue(row, 'EvaluatedRows') ?? 0)}</td>
                         <td class="text-end"><span class="badge text-bg-warning">${escapeHtml(getValue(row, 'ProductionGateBlockedRows') ?? 0)}</span></td>
@@ -3409,18 +3584,27 @@
             };
 
             const loadMonitoringSummary = async () => {
+                if (!monitoringSection.open) return;
+                monitoringController?.abort();
+                const currentController = new AbortController();
+                monitoringController = currentController;
                 monitoringLoading.classList.remove('d-none');
                 monitoringError.classList.add('d-none');
                 const query = new URLSearchParams();
                 if (dateFromInput.value) query.set('DateFrom', dateFromInput.value);
                 if (dateToInput.value) query.set('DateTo', dateToInput.value);
                 query.set('marketFamily', marketFamily);
+                if (marketTypeSelect.value) query.set('MarketType', marketTypeSelect.value);
                 try {
-                    const response = await fetch(`${monitoringSummaryUrl}?${query.toString()}`);
+                    const response = await fetch(`${monitoringSummaryUrl}?${query.toString()}`, { signal: currentController.signal });
                     if (!response.ok) throw new Error('No se pudo cargar el diagnóstico del motor.');
-                    monitoringSummary = await response.json();
+                    const summary = await response.json();
+                    if (monitoringController !== currentController || currentController.signal.aborted) return;
+                    monitoringSummary = summary;
+                    monitoringLoaded = true;
                     renderMonitoringSummary();
                 } catch (error) {
+                    if (error.name === 'AbortError' || monitoringController !== currentController) return;
                     monitoringSummary = [];
                     monitoringBody.innerHTML = '';
                     monitoringTableWrap.classList.add('d-none');
@@ -3431,8 +3615,18 @@
                         : 'No se pudo cargar el diagnóstico del motor.';
                     monitoringError.classList.remove('d-none');
                 } finally {
-                    monitoringLoading.classList.add('d-none');
+                    if (monitoringController === currentController) {
+                        monitoringController = null;
+                        monitoringLoading.classList.add('d-none');
+                    }
                 }
+            };
+
+            const loadSupportingPanels = () => {
+                if (productionLoading || productionVerificationState === 'loading' || productionSurface.classList.contains('d-none')) return;
+                if (!monthlyHistoryLoaded && !monthlyHistoryController) void loadMonthlyHistory();
+                if (!scorecardsLoaded && !scorecardController) void loadPerformanceScorecards();
+                if (!monitoringLoaded && !monitoringController) void loadMonitoringSummary();
             };
 
             const renderReason = raw => {
@@ -4438,8 +4632,7 @@
 
             filtersForm.addEventListener('submit', event => {
                 event.preventDefault();
-                loadSelections();
-                loadMonitoringSummary();
+                void loadSelections();
             });
 
             const syncFlatStakeStep = () => {
@@ -4513,10 +4706,14 @@
             });
 
 	            refreshButton.addEventListener('click', () => {
-                loadSelections();
-                loadMonthlyHistory();
-                loadPerformanceScorecards();
-                loadMonitoringSummary();
+                monthlyHistoryLoaded = false;
+                scorecardsLoaded = false;
+                monitoringLoaded = false;
+                monthlyHistoryController?.abort();
+                monthlyHistoryController = null;
+                scorecardController?.abort();
+                scorecardController = null;
+                void loadSelections();
             });
             scorecardWindowButtons.forEach(button => button.addEventListener('click', () => {
                 performanceWindow = Number(button.dataset.scorecardWindow) || 30;
@@ -4660,10 +4857,22 @@
             nextMonthButton.disabled =
                 initialMonth.getFullYear() === today.getFullYear() &&
                 initialMonth.getMonth() === today.getMonth();
-            loadSelections();
-            loadMonthlyHistory();
-            loadPerformanceScorecards();
-            loadMonitoringSummary();
+            [monthlyHistorySection, scorecardSection, monitoringSection].forEach(section =>
+                section.addEventListener('toggle', () => {
+                    if (section.open && productionLoaded) loadSupportingPanels();
+                }));
+            dataScienceSection.addEventListener('toggle', scheduleDataScience);
+            document.addEventListener('bot-picks-surface-change', event => {
+                if (event.detail?.surface !== 'production') return;
+                if (!productionLoaded && !productionLoading) void loadSelections();
+                else loadSupportingPanels();
+            });
+            document.addEventListener('bot-pick-manually-settled', () => {
+                productionLoaded = false;
+            });
+            // The surface controller dispatches the initial selection. General
+            // picks are the default and must not query hidden production history.
         })();
     </script>
+    <script src="~/js/bot-picks-research.js" asp-append-version="true"></script>
 }

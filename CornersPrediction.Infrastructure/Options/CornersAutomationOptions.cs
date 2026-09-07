@@ -26,6 +26,8 @@ public sealed class CornersAutomationOptions
 
     public int PinnacleTake { get; init; } = 100;
 
+    public bool BetanoEnabled { get; init; }
+
     public int BetanoTake { get; init; } = 32;
 
     public int DefaultUpcomingDays { get; init; } = 7;

@@ -105,16 +105,41 @@ public sealed class RobotPanelController : Controller
                 Math.Max(1, request?.BatchNumber ?? 1),
                 NormalizeBatchSize(request?.BatchSize ?? 100),
                 request?.RunAllEnabledBots ?? true,
+                NormalizeDays(request?.UpcomingDays),
                 cancellationToken),
             "bot execution",
             cancellationToken);
+
+    [HttpGet]
+    public async Task<IActionResult> BotJobStatus(Guid jobId, CancellationToken cancellationToken)
+    {
+        if (jobId == Guid.Empty)
+        {
+            return BadRequest(new { error = "La ejecución no es válida." });
+        }
+        try
+        {
+            var job = await _cornersPipelineApiClient.GetBotJobAsync(jobId, cancellationToken);
+            return job is null ? NotFound(new { error = "No se encontró la ejecución." }) : Json(job);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not load robot panel job {JobId}", jobId);
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new { error = "No se pudo actualizar el avance. La ejecución continúa en segundo plano." });
+        }
+    }
 
     [HttpGet]
     public async Task<IActionResult> BotAvailability(CancellationToken cancellationToken)
     {
         try
         {
-            return Json(await _cornersPipelineApiClient.GetBotAvailabilityAsync(100, cancellationToken));
+            return Json(await _cornersPipelineApiClient.GetBotAvailabilityAsync(10, cancellationToken));
         }
         catch (Exception exception)
         {

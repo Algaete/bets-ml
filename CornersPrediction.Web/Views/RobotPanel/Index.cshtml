@@ -81,19 +81,15 @@
             <strong id="RobotPanelAvailableOdds">...</strong>
         </div>
         <div class="robot-batch-metric">
-            <span>Partidos</span>
+            <span>Partidos/mercado</span>
             <strong id="RobotPanelAvailableMatches">...</strong>
         </div>
         <div class="robot-batch-metric">
-            <span>Lotes de 100</span>
+            <span>Lotes de 10 partidos/mercado</span>
             <strong id="RobotPanelTotalBatches">...</strong>
         </div>
-        <label class="robot-batch-picker">
-            <span>Lote a ejecutar</span>
-            <input id="RobotPanelBatchNumber" class="form-control form-control-sm" type="number" min="1" value="1">
-        </label>
         <div class="robot-batch-range">
-            <span>Rango seleccionado</span>
+            <span>Se procesará todo el rango</span>
             <strong id="RobotPanelBatchRange">Consultando cuotas...</strong>
         </div>
         <button id="RobotPanelRefreshAvailability" type="button" class="btn btn-sm btn-outline-secondary">
@@ -111,7 +107,20 @@
     </div>
     <div class="text-muted small mt-2">
         La lista se obtiene en cada ejecución desde el mantenedor. Si habilitas, deshabilitas o creas un bot, el panel respetará ese cambio automáticamente.
+        Se procesarán todos los partidos/mercados del rango en segundo plano, en lotes de 10. Puedes cerrar esta página mientras trabaja.
     </div>
+</section>
+
+<section id="RobotPanelJob" class="surface-panel mb-4 d-none" aria-live="polite">
+    <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+        <strong>Ejecución de bots en segundo plano</strong>
+        <a href="@Url.Action("Index", "BotAutomation")" class="btn btn-sm btn-outline-primary">Ver en Bots y procesos</a>
+    </div>
+    <div id="RobotPanelJobStage"></div>
+    <div class="progress my-2" role="progressbar" aria-label="Avance de los bots" id="RobotPanelJobProgress">
+        <div id="RobotPanelJobBar" class="progress-bar"></div>
+    </div>
+    <div id="RobotPanelJobDetail" class="small text-muted"></div>
 </section>
 
 <section class="surface-panel api-football-history-panel mb-4">
@@ -226,6 +235,7 @@
 </details>
 
 @section Scripts {
+    <script src="~/js/robot-panel-job.js" asp-append-version="true"></script>
     <script>
         (() => {
             const urls = {
@@ -237,6 +247,7 @@
                 apiFootballHistoricalStatus: '@Url.Action("ApiFootballHistoricalStatus", "RobotPanel")',
                 startApiFootballHistorical: '@Url.Action("StartApiFootballHistorical", "RobotPanel")',
                 runBots: '@Url.Action("RunBots", "RobotPanel")',
+                botJobStatus: '@Url.Action("BotJobStatus", "RobotPanel")',
                 fullRun: '@Url.Action("RunFullPipeline", "RobotPanel")'
             };
 
@@ -247,17 +258,20 @@
                 { key: 'upcoming-matches', title: 'Próximos partidos', subtitle: 'Sincroniza los próximos 7 días' },
                 { key: 'pinnacle-odds', title: 'Pinnacle', subtitle: 'Busqueda de cuotas con persistencia' },
                 { key: 'betano-odds', title: 'Betano', subtitle: 'Busqueda de cuotas con timeout extendido' },
-                { key: 'run-bots', title: labels.actionBots, subtitle: 'Respeta el mantenedor · lotes de hasta 100 cuotas' }
+                { key: 'run-bots', title: labels.actionBots, subtitle: 'Todo el rango · en segundo plano · lotes de 10' }
             ];
 
             const state = {
                 activeAction: null,
                 latestPayload: null,
                 latestSteps: [],
-                availability: null
+                availability: null,
+                jobId: null,
+                jobPending: false
             };
-            const botBatchSize = 100;
-            const batchStorageKey = 'robot-panel-next-batch-v2';
+            const botBatchSize = 10;
+            const jobStorageKey = 'robot-panel-recommendation-job-v1';
+            let jobPollTimer = null;
 
             const statusElement = document.getElementById('RobotPanelStatus');
             const stepGrid = document.getElementById('RobotPanelStepGrid');
@@ -275,7 +289,6 @@
             const availableOddsElement = document.getElementById('RobotPanelAvailableOdds');
             const availableMatchesElement = document.getElementById('RobotPanelAvailableMatches');
             const totalBatchesElement = document.getElementById('RobotPanelTotalBatches');
-            const batchNumberInput = document.getElementById('RobotPanelBatchNumber');
             const batchRangeElement = document.getElementById('RobotPanelBatchRange');
             const refreshAvailabilityButton = document.getElementById('RobotPanelRefreshAvailability');
             const historicalStatusElement = document.getElementById('ApiFootballHistoryStatus');
@@ -333,6 +346,7 @@
 
             const statusClass = status => {
                 switch (status) {
+                    case 'Queued': return 'text-bg-primary';
                     case 'Success': return 'text-bg-success';
                     case 'PartialSuccess': return 'text-bg-warning';
                     case 'Skipped': return 'text-bg-secondary';
@@ -343,6 +357,7 @@
 
             const statusText = status => {
                 switch (status) {
+                    case 'Queued': return 'En segundo plano';
                     case 'Success': return labels.success;
                     case 'PartialSuccess': return labels.partial;
                     case 'Skipped': return labels.skipped;
@@ -368,7 +383,7 @@
             const setBusyState = actionKey => {
                 state.activeAction = actionKey;
                 buttons.forEach(button => {
-                    button.disabled = Boolean(actionKey);
+                    button.disabled = Boolean(actionKey) || (state.jobPending && ['run-bots', 'full-run'].includes(button.dataset.action));
                 });
                 if (actionKey) {
                     statusElement.className = 'alert alert-info mb-4';
@@ -558,13 +573,9 @@
                     ? 'alert alert-danger mb-4'
                     : status === 'PartialSuccess'
                         ? 'alert alert-warning mb-4'
+                        : status === 'Queued' ? 'alert alert-info mb-4'
                         : 'alert alert-success mb-4';
                 statusElement.textContent = message;
-            };
-
-            const normalizeBatchNumber = value => {
-                const parsed = Number.parseInt(value, 10);
-                return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
             };
 
             const renderBatchAvailability = () => {
@@ -580,19 +591,12 @@
                 const totalOdds = Number(getValue(availability, 'TotalOddsRows') || 0);
                 const totalMatches = Number(getValue(availability, 'TotalMatches') || 0);
                 const totalBatches = Number(getValue(availability, 'TotalBatches') || 0);
-                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
-                const start = totalOdds === 0 || batchNumber > totalBatches
-                    ? 0
-                    : ((batchNumber - 1) * botBatchSize) + 1;
-                const end = start === 0 ? 0 : Math.min(batchNumber * botBatchSize, totalOdds);
-
                 availableOddsElement.textContent = totalOdds.toLocaleString();
                 availableMatchesElement.textContent = totalMatches.toLocaleString();
                 totalBatchesElement.textContent = totalBatches.toLocaleString();
-                batchNumberInput.max = Math.max(1, totalBatches);
-                batchRangeElement.textContent = start === 0
-                    ? `El lote ${batchNumber} no tiene cuotas`
-                    : `Cuotas ${start}-${end} de ${totalOdds}`;
+                batchRangeElement.textContent = totalMatches === 0
+                    ? 'No hay partidos/mercados con cuotas'
+                    : `Todos los ${totalMatches} partidos/mercados · lotes automáticos de 10`;
             };
 
             const loadBotAvailability = async () => {
@@ -605,11 +609,6 @@
                     }
 
                     state.availability = json;
-                    const savedBatch = normalizeBatchNumber(localStorage.getItem(batchStorageKey));
-                    const totalBatches = Number(getValue(json, 'TotalBatches') || 0);
-                    batchNumberInput.value = totalBatches > 0
-                        ? Math.min(savedBatch, totalBatches)
-                        : 1;
                     renderBatchAvailability();
                 } catch (error) {
                     state.availability = null;
@@ -620,22 +619,68 @@
                 }
             };
 
-            const advanceBatch = () => {
-                const currentBatch = normalizeBatchNumber(batchNumberInput.value);
-                const totalBatches = Number(getValue(state.availability, 'TotalBatches') || 0);
-                if (currentBatch < totalBatches) {
-                    batchNumberInput.value = currentBatch + 1;
-                    localStorage.setItem(batchStorageKey, String(currentBatch + 1));
-                } else {
-                    localStorage.setItem(batchStorageKey, String(currentBatch));
+            const renderBotJob = job => {
+                const model = window.robotPanelJobState(job);
+                state.jobId = model.id;
+                state.jobPending = !model.terminal;
+                document.getElementById('RobotPanelJob').classList.remove('d-none');
+                document.getElementById('RobotPanelJobStage').textContent = model.message;
+                document.getElementById('RobotPanelJobDetail').textContent = `${model.percent == null ? 'Preparando' : `${model.percent}%`} · ${model.progress}`;
+                const bar = document.getElementById('RobotPanelJobBar');
+                bar.style.width = `${model.percent ?? 100}%`;
+                bar.className = model.percent == null
+                    ? 'progress-bar progress-bar-striped progress-bar-animated' : 'progress-bar';
+                const progress = document.getElementById('RobotPanelJobProgress');
+                if (model.percent == null) progress.removeAttribute('aria-valuenow');
+                else progress.setAttribute('aria-valuenow', String(model.percent));
+                const steps = state.latestSteps.filter(step => getValue(step, 'StepKey') !== 'run-bots');
+                steps.push(model.result);
+                renderSummary({ Steps: steps, Status: model.result.Status });
+                if (!state.activeAction) showSuccess(model.result);
+                buttons.forEach(button => {
+                    button.disabled = Boolean(state.activeAction) || (state.jobPending && ['run-bots', 'full-run'].includes(button.dataset.action));
+                });
+                if (model.terminal) localStorage.removeItem(jobStorageKey);
+                else localStorage.setItem(jobStorageKey, model.id);
+                return model;
+            };
+
+            const pollBotJob = async () => {
+                const jobId = state.jobId;
+                if (!jobId) return;
+                let retry = true;
+                try {
+                    const response = await fetch(`${urls.botJobStatus}?jobId=${encodeURIComponent(jobId)}`);
+                    const job = await response.json();
+                    if (state.jobId !== jobId) return;
+                    if (!response.ok) {
+                        if (response.status === 404 || response.status === 400) {
+                            localStorage.removeItem(jobStorageKey);
+                            state.jobPending = false;
+                            retry = false;
+                            setBusyState(state.activeAction);
+                        }
+                        throw new Error(getValue(job, 'error') || 'No se pudo actualizar el avance. La ejecución continúa en segundo plano.');
+                    }
+                    retry = !renderBotJob(job).terminal;
+                } catch (error) {
+                    document.getElementById('RobotPanelJob').classList.remove('d-none');
+                    document.getElementById('RobotPanelJobStage').textContent = error instanceof Error
+                        ? error.message : 'Reintentando la consulta de avance…';
+                } finally {
+                    if (retry && state.jobId === jobId) jobPollTimer = setTimeout(pollBotJob, 5000);
                 }
-                renderBatchAvailability();
+            };
+
+            const followBotJob = job => {
+                if (jobPollTimer) clearTimeout(jobPollTimer);
+                const model = renderBotJob(job);
+                if (!model.terminal) jobPollTimer = setTimeout(pollBotJob, 2000);
             };
 
             const requestPayload = actionKey => {
                 const days = Number(daysSelect.value || 7);
                 const upcomingDays = Number(upcomingDaysSelect.value || 7);
-                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
 
                 switch (actionKey) {
                     case 'match-history':
@@ -644,7 +689,7 @@
                     case 'run-bots':
                         return {
                             excludeExistingSelections: false,
-                            batchNumber,
+                            upcomingDays,
                             batchSize: botBatchSize,
                             runAllEnabledBots: true
                         };
@@ -653,7 +698,6 @@
                             matchHistoryDays: days,
                             upcomingDays,
                             excludeExistingSelections: false,
-                            botBatchNumber: batchNumber,
                             botBatchSize,
                             runAllEnabledBots: true
                         };
@@ -697,14 +741,12 @@
 
                     showSuccess(json);
                     renderSummary(json);
-                    if (actionKey === 'run-bots' && Boolean(getValue(json, 'IsSuccess'))) {
-                        advanceBatch();
-                    } else if (actionKey === 'full-run') {
-                        const steps = getValue(json, 'Steps') || [];
-                        const botStep = steps.find(step => getValue(step, 'StepKey') === 'run-bots');
-                        if (Boolean(getValue(botStep, 'IsSuccess'))) {
-                            advanceBatch();
-                        }
+                    const botStep = actionKey === 'full-run'
+                        ? (getValue(json, 'Steps') || []).find(step => getValue(step, 'StepKey') === 'run-bots')
+                        : actionKey === 'run-bots' ? json : null;
+                    const job = getValue(botStep, 'RecommendationJob');
+                    if (job) {
+                        followBotJob(job);
                     }
 
                     if (['upcoming-matches', 'pinnacle-odds', 'betano-odds', 'full-run'].includes(actionKey)) {
@@ -721,13 +763,6 @@
                 button.addEventListener('click', () => {
                     invokeAction(button.dataset.action);
                 });
-            });
-
-            batchNumberInput.addEventListener('change', () => {
-                const batchNumber = normalizeBatchNumber(batchNumberInput.value);
-                batchNumberInput.value = batchNumber;
-                localStorage.setItem(batchStorageKey, String(batchNumber));
-                renderBatchAvailability();
             });
 
             refreshAvailabilityButton.addEventListener('click', loadBotAvailability);
@@ -751,6 +786,13 @@
             jsonElement.textContent = labels.jsonWaiting;
             loadBotAvailability();
             loadHistoricalBatch();
+            const savedJobId = localStorage.getItem(jobStorageKey);
+            if (savedJobId) {
+                state.jobId = savedJobId;
+                state.jobPending = true;
+                setBusyState(null);
+                pollBotJob();
+            }
         })();
     </script>
 }

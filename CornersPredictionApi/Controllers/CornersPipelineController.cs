@@ -49,18 +49,21 @@ public sealed class CornersPipelineController : ControllerBase
 
     [HttpPost("bots")]
     [ProducesResponseType(typeof(CornersPipelineStepResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(CornersPipelineStepResult), StatusCodes.Status202Accepted)]
     public async Task<IActionResult> RunBots(
         [FromBody] RunBotsRequest? request,
         CancellationToken cancellationToken = default)
     {
-        return Ok(await _cornersPipelineService.RunBotsAsync(
+        var result = await _cornersPipelineService.RunBotsAsync(
             new RunBotsCommand(
                 ExcludeExistingSelections: request?.ExcludeExistingSelections ?? false,
                 BatchNumber: request?.BatchNumber ?? 1,
                 BatchSize: request?.BatchSize ?? 100,
                 RunBotC: request?.RunBotC ?? true,
-                RunAllEnabledBots: request?.RunAllEnabledBots ?? true),
-            cancellationToken));
+                RunAllEnabledBots: request?.RunAllEnabledBots ?? true,
+                UpcomingDays: request?.UpcomingDays ?? 7),
+            cancellationToken);
+        return result.RecommendationJob is null ? Ok(result) : Accepted(result);
     }
 
     [HttpGet("bots/availability")]
@@ -74,6 +77,7 @@ public sealed class CornersPipelineController : ControllerBase
 
     [HttpPost("full-run")]
     [ProducesResponseType(typeof(CornersPipelineRunResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(CornersPipelineRunResult), StatusCodes.Status202Accepted)]
     public async Task<IActionResult> RunFullPipeline(
         [FromBody] RunFullPipelineRequest? request,
         CancellationToken cancellationToken = default)
@@ -87,6 +91,7 @@ public sealed class CornersPipelineController : ControllerBase
             RunBotC: request?.RunBotC ?? true,
             RunAllEnabledBots: request?.RunAllEnabledBots ?? true);
 
-        return Ok(await _cornersPipelineService.RunFullPipelineAsync(command, cancellationToken));
+        var result = await _cornersPipelineService.RunFullPipelineAsync(command, cancellationToken);
+        return result.Steps.Any(step => step.RecommendationJob is not null) ? Accepted(result) : Ok(result);
     }
 }

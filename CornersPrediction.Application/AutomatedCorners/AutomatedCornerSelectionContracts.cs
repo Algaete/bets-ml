@@ -71,7 +71,8 @@ public sealed record AutomatedCornerSelectionsFilterRequest(
     string? League,
     string? Source,
     string? MarketType,
-    bool OnlyPending);
+    bool OnlyPending,
+    string? MarketFamily = null);
 
 public sealed record UpdateAutomatedCornerSelectionStatusRequest(
     string Status,
@@ -213,7 +214,8 @@ public sealed class GetAutomatedCornerSelectionsUseCase : IGetAutomatedCornerSel
             string.IsNullOrWhiteSpace(filters.League) ? null : filters.League.Trim(),
             string.IsNullOrWhiteSpace(filters.Source) ? null : filters.Source.Trim(),
             marketType,
-            filters.OnlyPending);
+            filters.OnlyPending,
+            AutomatedBotMarketScope.Normalize(filters.MarketFamily));
     }
 }
 

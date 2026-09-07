@@ -16,13 +16,25 @@ public sealed class AutomatedCornersApiClient
 
     public async Task<IReadOnlyList<BotPickSelectionViewModel>> GetSelectionsAsync(
         BotPickFiltersViewModel filters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? marketFamily = null)
     {
         var selections = await _httpClient.GetFromJsonAsync<IReadOnlyList<BotPickSelectionViewModel>>(
-            $"/api/automated-corners/selections{BuildQuery(filters)}",
+            $"/api/automated-corners/selections{BuildQuery(filters, marketFamily)}",
             cancellationToken);
 
         return selections ?? Array.Empty<BotPickSelectionViewModel>();
+    }
+
+    public async Task<IReadOnlyList<BotPickMonthlySummaryViewModel>> GetMonthlyHistoryAsync(
+        DateTime dateFrom,
+        DateTime dateTo,
+        string marketFamily,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildQuery(new BotPickFiltersViewModel { DateFrom = dateFrom, DateTo = dateTo }, marketFamily);
+        return await _httpClient.GetFromJsonAsync<IReadOnlyList<BotPickMonthlySummaryViewModel>>(
+            $"/api/automated-corners/monthly-history{query}", cancellationToken) ?? [];
     }
 
     public async Task<IReadOnlyList<BotPerformanceScorecardViewModel>> GetPerformanceScorecardsAsync(
@@ -45,11 +57,79 @@ public sealed class AutomatedCornersApiClient
         if (filters.DateTo.HasValue)
             query.Add($"dateTo={Uri.EscapeDataString(filters.DateTo.Value.ToString("yyyy-MM-dd"))}");
         query.Add($"marketFamily={Uri.EscapeDataString(marketFamily.Trim().ToUpperInvariant())}");
+        if (!string.IsNullOrWhiteSpace(filters.MarketType))
+            query.Add($"marketType={Uri.EscapeDataString(filters.MarketType.Trim())}");
 
         var rows = await _httpClient.GetFromJsonAsync<IReadOnlyList<BotMonitoringSummaryViewModel>>(
             $"/api/automated-corners/monitoring-summary?{string.Join('&', query)}",
             cancellationToken);
         return rows ?? [];
+    }
+
+    public Task<BotResearchEvaluationPageViewModel> GetResearchEvaluationsAsync(
+        BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken) =>
+        GetEvaluationPageAsync("research-evaluations", filters, cancellationToken);
+
+    public Task<BotResearchEvaluationPageViewModel> GetGeneralPicksAsync(
+        BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken) =>
+        GetEvaluationPageAsync("general-picks", filters, cancellationToken);
+
+    public async Task<GeneralPickLabViewModel> GetGeneralPickLabAsync(
+        BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken)
+    {
+        var lab = await _httpClient.GetFromJsonAsync<GeneralPickLabViewModel>(
+            $"/api/automated-corners/general-picks/lab{BuildResearchQuery(filters, includePaging: false, includeDecision: false)}",
+            cancellationToken);
+        return lab ?? new GeneralPickLabViewModel();
+    }
+
+    public async Task SettleGeneralPickAsync(long recordId, GeneralPickManualSettlementViewModel request,
+        string actor, CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Put,
+            $"/api/automated-corners/general-picks/{recordId}/settlement")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("X-Acting-User", actor);
+        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var text = "No se pudo guardar la liquidación manual.";
+            if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
+            {
+                using var body = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (body.RootElement.TryGetProperty("error", out var error)) text = error.GetString() ?? text;
+            }
+            throw new HttpRequestException(text, null, response.StatusCode);
+        }
+    }
+
+    public async Task<System.Text.Json.JsonElement?> GetGeneralPickEvidenceAsync(long id, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync($"/api/automated-corners/general-picks/{id}/evidence", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(cancellationToken: cancellationToken);
+    }
+
+    private async Task<BotResearchEvaluationPageViewModel> GetEvaluationPageAsync(
+        string endpoint,
+        BotResearchEvaluationFiltersViewModel filters,
+        CancellationToken cancellationToken)
+    {
+        var page = await _httpClient.GetFromJsonAsync<BotResearchEvaluationPageViewModel>(
+            $"/api/automated-corners/{endpoint}{BuildResearchQuery(filters)}",
+            cancellationToken);
+
+        return page ?? new BotResearchEvaluationPageViewModel
+        {
+            Page = filters.Page,
+            PageSize = filters.PageSize
+        };
     }
 
     public async Task<BotPickRobustEvaluationDetailViewModel?> GetRobustEvaluationAsync(
@@ -245,7 +325,7 @@ public sealed class AutomatedCornersApiClient
         }
     }
 
-    private static string BuildQuery(BotPickFiltersViewModel filters)
+    private static string BuildQuery(BotPickFiltersViewModel filters, string? marketFamily = null)
     {
         var query = new List<string>();
         Add(query, "dateFrom", filters.DateFrom?.ToString("yyyy-MM-dd"));
@@ -254,6 +334,7 @@ public sealed class AutomatedCornersApiClient
         Add(query, "league", filters.League);
         Add(query, "source", filters.Bookmaker);
         Add(query, "marketType", filters.MarketType);
+        Add(query, "marketFamily", marketFamily?.Trim().ToUpperInvariant());
 
         if (filters.OnlyPending)
         {
@@ -261,6 +342,33 @@ public sealed class AutomatedCornersApiClient
         }
 
         return query.Count == 0 ? string.Empty : "?" + string.Join("&", query);
+    }
+
+    private static string BuildResearchQuery(
+        BotResearchEvaluationFiltersViewModel filters,
+        bool includePaging = true,
+        bool includeDecision = true)
+    {
+        var query = new List<string>();
+        if (includePaging)
+        {
+            Add(query, "sortBy", filters.SortBy);
+            Add(query, "sortDirection", filters.SortDirection);
+        }
+        Add(query, "dateFrom", filters.DateFrom?.ToString("yyyy-MM-dd"));
+        Add(query, "dateTo", filters.DateTo?.ToString("yyyy-MM-dd"));
+        Add(query, "marketFamily", filters.MarketFamily);
+        Add(query, "marketType", filters.MarketType);
+        Add(query, "botKey", filters.BotKey);
+        if (includeDecision)
+            Add(query, "modelDecision", filters.ModelDecision);
+        Add(query, "publicationStatus", filters.PublicationStatus);
+        if (includePaging)
+        {
+            query.Add($"page={Math.Max(1, filters.Page)}");
+            query.Add($"pageSize={Math.Clamp(filters.PageSize, 1, 200)}");
+        }
+        return "?" + string.Join("&", query);
     }
 
     private static void Add(List<string> query, string key, string? value)

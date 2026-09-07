@@ -5,4 +5,5 @@ public sealed record RunBotsRequest(
     int BatchNumber = 1,
     int BatchSize = 100,
     bool RunBotC = true,
-    bool RunAllEnabledBots = true);
+    bool RunAllEnabledBots = true,
+    int UpcomingDays = 7);

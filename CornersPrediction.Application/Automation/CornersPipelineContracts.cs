@@ -8,6 +8,7 @@ public static class CornersPipelineStatuses
     public const string PartialSuccess = "PartialSuccess";
     public const string Failed = "Failed";
     public const string Skipped = "Skipped";
+    public const string Queued = "Queued";
 }
 
 public sealed record RunPipelineStepCommand(int Days = 7);
@@ -17,7 +18,8 @@ public sealed record RunBotsCommand(
     int BatchNumber = 1,
     int BatchSize = 100,
     bool RunBotC = true,
-    bool RunAllEnabledBots = true);
+    bool RunAllEnabledBots = true,
+    int UpcomingDays = 7);
 
 public sealed record RunFullPipelineCommand(
     int MatchHistoryDays = 7,
@@ -65,6 +67,7 @@ public sealed record CornersPipelineStepResult
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<MissingHistoryMatch> MissingHistoryMatches { get; init; } = Array.Empty<MissingHistoryMatch>();
     public JsonElement? RawResponse { get; init; }
+    public RecommendationJobDto? RecommendationJob { get; init; }
 }
 
 public sealed record MissingHistoryMatch(

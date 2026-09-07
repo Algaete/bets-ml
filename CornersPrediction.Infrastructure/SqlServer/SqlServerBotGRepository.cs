@@ -111,19 +111,29 @@ public sealed class SqlServerBotGRepository : IBotGCandidateRepository, IBotGCan
         parameters.Add("StakeUnits", candidate.StakeUnits, DbType.Decimal, precision: 9, scale: 4);
 
         await using var connection = new SqlConnection(_connectionString);
-        var candidateId = await connection.QuerySingleAsync<long>(new CommandDefinition(
-            "dbo.sp_UpsertBotG2026Candidate",
-            parameters,
-            commandType: CommandType.StoredProcedure,
-            commandTimeout: 60,
-            cancellationToken: cancellationToken));
-
         var persisted = await connection.QuerySingleAsync<CandidateRow>(new CommandDefinition(
-            "SELECT * FROM dbo.vw_BotG2026Candidates WHERE CandidateId = @CandidateId;",
-            new { CandidateId = candidateId },
+            BuildUpsertAndReadSql(parameters.ParameterNames),
+            parameters,
             commandTimeout: 60,
             cancellationToken: cancellationToken));
         return ToDomain(persisted);
+    }
+
+    private static string BuildUpsertAndReadSql(IEnumerable<string> parameterNames)
+    {
+        var assignments = string.Join(", ", parameterNames.Select(name => $"@{name} = @{name}"));
+        // Read the stored row, including immutable evidence and any earlier publication
+        // linkage, in the same request as the upsert. Retrying must not return the input
+        // object when the idempotent procedure preserved an existing value instead.
+        return $"""
+            SET NOCOUNT ON;
+            DECLARE @PersistedId TABLE (CandidateId BIGINT NOT NULL);
+            INSERT INTO @PersistedId (CandidateId)
+            EXEC dbo.sp_UpsertBotG2026Candidate {assignments};
+            SELECT candidate.*
+            FROM dbo.vw_BotG2026Candidates candidate
+            INNER JOIN @PersistedId persisted ON persisted.CandidateId = candidate.CandidateId;
+            """;
     }
 
     public async Task<IReadOnlyList<BotGCandidate>> GetByFixtureAsync(

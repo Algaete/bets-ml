@@ -6,7 +6,7 @@ public sealed class RecommendationJobOptions
 
     public bool Enabled { get; set; } = true;
     public int PollIntervalSeconds { get; set; } = 5;
-    public int LeaseMinutes { get; set; } = 60;
+    public int LeaseMinutes { get; set; } = 5;
     public int HeartbeatSeconds { get; set; } = 15;
     public bool ReconcileBotPicksAfterCompletion { get; set; } = true;
     public int ReconciliationMaxSelections { get; set; } = 20000;

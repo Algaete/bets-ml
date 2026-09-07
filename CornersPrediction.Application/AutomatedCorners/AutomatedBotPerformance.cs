@@ -19,6 +19,9 @@ public sealed record AutomatedBotPerformanceScorecard
     public int Resolved { get; init; }
     public int PredictiveResolved { get; init; }
     public int PredictiveFixtures { get; init; }
+    public int ScientificPredictiveResolved { get; init; }
+    public int PublishedPredictiveResolved { get; init; }
+    public string EvidenceBasis { get; init; } = "PublishedSelections";
     public decimal SettledStake { get; init; }
     public decimal ProfitLoss { get; init; }
     public decimal? Yield { get; init; }
@@ -82,7 +85,6 @@ public static class AutomatedBotProductionEligibilityPolicy
         marketFamily = marketFamily.Trim().ToUpperInvariant();
         marketType = marketType.Trim();
         selectedSide = selectedSide.Trim();
-        bookmaker = bookmaker.Trim();
         automationVersion = automationVersion.Trim();
 
         if (marketType.Equals("HomeTeamCorners", StringComparison.OrdinalIgnoreCase))
@@ -103,16 +105,15 @@ public static class AutomatedBotProductionEligibilityPolicy
 
         var market = scorecards
             .Where(row => row.WindowDays == RequiredWindowDays
-                && row.Dimension.Equals("BotMarketSideBookmakerVersion", StringComparison.OrdinalIgnoreCase)
+                && row.Dimension.Equals("BotMarketSideVersion", StringComparison.OrdinalIgnoreCase)
                 && NormalizeBotKey(row.BotKey) == botKey
                 && string.Equals(row.MarketType, marketType, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(row.SelectedSide, selectedSide, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(row.Bookmaker, bookmaker, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(row.AutomationVersion, automationVersion, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(row => row.PredictiveFixtures)
             .FirstOrDefault();
         if (market is null)
-            return Block("No existe scorecard productivo de 30 días para esta versión del bot/mercado/lado/casa.");
+            return Block("No existe scorecard productivo de 30 días para esta versión del bot/mercado/lado.");
 
         var family = scorecards
             .Where(row => row.WindowDays == RequiredWindowDays
@@ -122,7 +123,9 @@ public static class AutomatedBotProductionEligibilityPolicy
             .OrderByDescending(row => row.PredictiveFixtures)
             .FirstOrDefault();
 
-        // GOALS is evaluated by the exact market/side/bookmaker/version segment.
+        // Bookmaker is diagnostic only: the actual odds still pass the model's
+        // price/EV checks, freshness and immutable-snapshot requirements.
+        // GOALS is evaluated by the exact market/side/version segment.
         // A BotFamily aggregate can otherwise mix a damaged TotalGoals segment with
         // a healthy HomeTeamGoals/AwayTeamGoals segment and veto the latter.
         if (!marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
@@ -134,8 +137,7 @@ public static class AutomatedBotProductionEligibilityPolicy
             botKey,
             marketFamily,
             marketType,
-            selectedSide,
-            bookmaker);
+            selectedSide);
         if (isControlledTrialSignal)
         {
             if (market.PredictiveFixtures >= MinimumControlledTrialFixtures
@@ -171,11 +173,14 @@ public static class AutomatedBotProductionEligibilityPolicy
                 family);
         }
 
-        if (market.PredictiveFixtures < MinimumControlledTrialFixtures)
-            return Block($"Muestra insuficiente ({market.PredictiveFixtures}/{MinimumControlledTrialFixtures} partidos para prueba controlada; {MinimumPredictiveFixtures} para Green).", market, family);
+        // The only controlled-trial cohort returned above. Every other market,
+        // including home goals, needs its own 100-fixture Green segment; suggesting
+        // a 30-fixture trial here made the missing market coverage misleading.
+        if (market.PredictiveFixtures < MinimumPredictiveFixtures)
+            return Block($"Muestra insuficiente ({market.PredictiveFixtures}/{MinimumPredictiveFixtures} partidos independientes para Green). Este segmento no pertenece a la prueba controlada de goles visita.", market, family);
 
         return Block(
-            $"Semáforo {market.TrafficLight}: el segmento exacto no cumple Green ni la prueba controlada GOALS.",
+            $"Semáforo {market.TrafficLight}: el segmento exacto no cumple los criterios Green.",
             market,
             family);
     }
@@ -197,14 +202,12 @@ public static class AutomatedBotProductionEligibilityPolicy
         string botKey,
         string marketFamily,
         string marketType,
-        string selectedSide,
-        string bookmaker) =>
+        string selectedSide) =>
         (botKey.Equals("C2026", StringComparison.OrdinalIgnoreCase)
             || botKey.Equals("F2026", StringComparison.OrdinalIgnoreCase))
         && marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
         && marketType.Equals("AwayTeamGoals", StringComparison.OrdinalIgnoreCase)
-        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
-        && bookmaker.Equals("Pinnacle", StringComparison.OrdinalIgnoreCase);
+        && selectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHalfLine(decimal line)
     {
@@ -229,15 +232,29 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
 {
     private static readonly int[] Windows = [7, 30, 90];
     private readonly IAutomatedCornerSelectionsRepository _repository;
+    private readonly IAutomatedBotPerformanceEvidenceRepository? _evidenceRepository;
 
     public AutomatedBotPerformanceService(IAutomatedCornerSelectionsRepository repository) =>
         _repository = repository;
+
+    public AutomatedBotPerformanceService(
+        IAutomatedCornerSelectionsRepository repository,
+        IAutomatedBotPerformanceEvidenceRepository evidenceRepository)
+    {
+        _repository = repository;
+        _evidenceRepository = evidenceRepository;
+    }
 
     public async Task<IReadOnlyList<AutomatedBotPerformanceScorecard>> GetScorecardsAsync(
         CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
-        var rows = await _repository.GetSelectionsAsync(
+        var selectionsTask = _repository is IAutomatedBotPerformanceSelectionsRepository performanceSelections
+            ? performanceSelections.GetPerformanceSelectionsAsync(
+                now.Date.AddDays(-Windows.Max()),
+                now.Date.AddDays(1),
+                cancellationToken)
+            : _repository.GetSelectionsAsync(
             new AutomatedCornerSelectionsFilterRequest(
                 now.Date.AddDays(-Windows.Max()),
                 now.Date.AddDays(1),
@@ -247,18 +264,41 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
                 null,
                 false),
             cancellationToken);
+        var evidenceTask = _evidenceRepository?.GetSettledEvidenceAsync(
+            now.Date.AddDays(-Windows.Max()),
+            now,
+            now,
+            cancellationToken) ?? Task.FromResult<IReadOnlyList<AutomatedBotPerformanceEvidence>>([]);
 
-        var enriched = rows.Select(row => new PerformanceRow(
+        await Task.WhenAll(selectionsTask, evidenceTask);
+
+        var selectionRows = selectionsTask.Result.Select(row => new PerformanceRow(
             row,
             ResolveBotKey(row),
             ResolveFamily(row.MarketType),
-            ResolveMarketProbability(row))).ToArray();
+            ResolveMarketProbability(row),
+            false)).ToArray();
+        var scientificRows = evidenceTask.Result
+            .Where(row => IsSafeScientificEvidence(row, now))
+            .Select(ToPerformanceRow)
+            .ToArray();
+        var enriched = selectionRows.Concat(scientificRows).ToArray();
         var output = new List<AutomatedBotPerformanceScorecard>();
 
         foreach (var window in Windows)
         {
             var from = now.AddDays(-window);
-            var scoped = enriched.Where(row => row.Selection.MatchDate >= from && row.Selection.MatchDate <= now).ToArray();
+            var rawScoped = enriched
+                .Where(row => row.Selection.MatchDate >= from && row.Selection.MatchDate <= now)
+                .ToArray();
+            var scientificSegments = rawScoped
+                .Where(row => row.IsScientificEvidence)
+                .Select(ExactSegmentKey)
+                .ToHashSet(StringComparer.Ordinal);
+            var scoped = rawScoped
+                .Where(row => row.IsScientificEvidence
+                    || !scientificSegments.Contains(ExactSegmentKey(row)))
+                .ToArray();
             Add(output, window, from, now, "Overall", "Todos los bots", null, null, null, scoped);
 
             foreach (var group in scoped.GroupBy(row => row.BotKey).OrderBy(group => group.Key))
@@ -288,6 +328,37 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
                     group.Key.MarketType,
                     group,
                     group.Key.SelectedSide);
+            }
+            foreach (var group in scoped
+                         .Where(row => IsProductCompatibleHalfLine(row.Selection.LineValue))
+                         .GroupBy(row => (
+                             row.BotKey,
+                             row.Selection.MarketType,
+                             row.Selection.SelectedSide,
+                             row.Selection.AutomationVersion))
+                         .OrderBy(group => group.Key.BotKey)
+                         .ThenBy(group => group.Key.MarketType)
+                         .ThenBy(group => group.Key.SelectedSide)
+                         .ThenBy(group => group.Key.AutomationVersion))
+            {
+                // Build from observations, never by adding bookmaker scorecards.
+                // Scientific coverage is independent of publication at every house.
+                var evidence = group.Any(row => row.IsScientificEvidence)
+                    ? group.Where(row => row.IsScientificEvidence)
+                    : group;
+                Add(
+                    output,
+                    window,
+                    from,
+                    now,
+                    "BotMarketSideVersion",
+                    $"{group.Key.BotKey} · {group.Key.MarketType} · {group.Key.SelectedSide} · {group.Key.AutomationVersion}",
+                    group.Key.BotKey,
+                    ResolveFamily(group.Key.MarketType),
+                    group.Key.MarketType,
+                    evidence,
+                    group.Key.SelectedSide,
+                    automationVersion: group.Key.AutomationVersion);
             }
             foreach (var group in scoped
                          .Where(row => IsProductCompatibleHalfLine(row.Selection.LineValue))
@@ -365,17 +436,32 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
         string? automationVersion = null)
     {
         var rawRows = source.ToArray();
+        var isProductionSegment = dimension.Equals("BotMarketSideVersion", StringComparison.Ordinal);
         var rows = dimension.StartsWith("Bot", StringComparison.OrdinalIgnoreCase)
             ? rawRows
                 .GroupBy(PerformanceFixtureKey, StringComparer.Ordinal)
-                .Select(group => group
-                    .OrderByDescending(row => row.Selection.UpdatedAtUtc)
-                    .ThenByDescending(row => row.Selection.AutomatedCornerBetSelectionId)
-                    .First())
+                .Select(group => isProductionSegment
+                    // Freeze the first decision, with a stable identity tie-break.
+                    // Later retries, prices and settlement order cannot choose a
+                    // more favorable observation for the production scorecard.
+                    ? group.OrderBy(row => row.Selection.CreatedAtUtc)
+                        .ThenBy(row => row.Selection.AutomatedCornerBetSelectionId)
+                        .First()
+                    : group.OrderByDescending(row => row.Selection.UpdatedAtUtc)
+                        .ThenByDescending(row => row.Selection.AutomatedCornerBetSelectionId)
+                        .First())
                 .ToArray()
             : rawRows;
-        var rawPredictiveResolved = rawRows.Count(row => IsBinaryResolved(row.Selection.Status)
+        // The production segment reports independent observations throughout.
+        // Existing diagnostic dimensions retain their raw observation counters.
+        // Selecting a whole row also keeps its odds, line, outcome and P/L together.
+        var countRows = isProductionSegment ? rows : rawRows;
+        var rawPredictiveResolved = countRows.Count(row => IsBinaryResolved(row.Selection.Status)
             && row.Selection.ModelProbability is > 0m and < 1m);
+        var scientificPredictiveResolved = countRows.Count(row => row.IsScientificEvidence
+            && IsBinaryResolved(row.Selection.Status)
+            && row.Selection.ModelProbability is > 0m and < 1m);
+        var publishedPredictiveResolved = rawPredictiveResolved - scientificPredictiveResolved;
         var resolved = rows.Where(row => IsResolved(row.Selection.Status)).ToArray();
         var predictive = rows.Where(row => IsBinaryResolved(row.Selection.Status)
             && row.Selection.ModelProbability is > 0m and < 1m).ToArray();
@@ -421,10 +507,13 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
             SelectedSide = selectedSide,
             Bookmaker = bookmaker,
             AutomationVersion = automationVersion,
-            Total = rawRows.Length,
-            Resolved = rawRows.Count(row => IsResolved(row.Selection.Status)),
+            Total = countRows.Length,
+            Resolved = countRows.Count(row => IsResolved(row.Selection.Status)),
             PredictiveResolved = rawPredictiveResolved,
             PredictiveFixtures = predictiveFixtures,
+            ScientificPredictiveResolved = scientificPredictiveResolved,
+            PublishedPredictiveResolved = publishedPredictiveResolved,
+            EvidenceBasis = ResolveEvidenceBasis(scientificPredictiveResolved, publishedPredictiveResolved),
             SettledStake = stake,
             ProfitLoss = profitLoss,
             Yield = yield,
@@ -497,6 +586,75 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
             .Trim()
             .ToUpperInvariant()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+    private static string ExactSegmentKey(PerformanceRow row) => string.Join('|',
+        NormalizeBotKey(row.BotKey),
+        NormalizeIdentity(row.Selection.MarketType),
+        NormalizeIdentity(row.Selection.SelectedSide),
+        NormalizeIdentity(row.Selection.Source),
+        NormalizeIdentity(row.Selection.AutomationVersion));
+
+    private static string ResolveEvidenceBasis(int scientific, int published) =>
+        (scientific > 0, published > 0) switch
+        {
+            (true, false) => "ScientificEvaluations",
+            (false, true) => "PublishedSelections",
+            (true, true) => "MixedSegments",
+            _ => "NoPredictiveEvidence"
+        };
+
+    private static bool IsSafeScientificEvidence(
+        AutomatedBotPerformanceEvidence evidence,
+        DateTime asOfUtc) =>
+        evidence.ModelDecision.Equals("Approved", StringComparison.OrdinalIgnoreCase)
+        && evidence.ApiFootballFixtureId is > 0
+        && evidence.DecisionAtUtc < evidence.FixtureDateUtc
+        && evidence.OutcomeAvailableAtUtc > evidence.DecisionAtUtc
+        && evidence.OutcomeAvailableAtUtc <= asOfUtc
+        && IsResolved(evidence.Result)
+        && (evidence.SelectedSide.Equals("Over", StringComparison.OrdinalIgnoreCase)
+            || evidence.SelectedSide.Equals("Under", StringComparison.OrdinalIgnoreCase))
+        && evidence.Odds > 1m
+        && evidence.StakeUnits > 0m;
+
+    private static PerformanceRow ToPerformanceRow(AutomatedBotPerformanceEvidence evidence)
+    {
+        var selection = new AutomatedCornerSelectionDto
+        {
+            AutomatedCornerBetSelectionId = evidence.EvidenceId,
+            BotKey = NormalizeBotKey(evidence.BotKey),
+            AutomationVersion = evidence.AutomationVersion,
+            Source = evidence.Bookmaker,
+            ApiFootballFixtureId = evidence.ApiFootballFixtureId,
+            MatchDate = evidence.FixtureDateUtc,
+            League = evidence.League,
+            HomeTeam = evidence.HomeTeam,
+            AwayTeam = evidence.AwayTeam,
+            MarketType = evidence.MarketType,
+            SelectedSide = evidence.SelectedSide,
+            LineValue = evidence.LineValue,
+            Odds = evidence.Odds,
+            Stake = evidence.StakeUnits,
+            Status = evidence.Result,
+            SettlementFactor = evidence.SettlementFactor,
+            ProfitLoss = evidence.ProfitLoss,
+            ModelProbability = evidence.ModelProbability,
+            ImpliedProbability = evidence.MarketProbability,
+            ProbabilityEdge = evidence.ProbabilityEdge,
+            CreatedAtUtc = evidence.DecisionAtUtc,
+            UpdatedAtUtc = evidence.OutcomeAvailableAtUtc,
+            SettledAtUtc = evidence.OutcomeAvailableAtUtc
+        };
+
+        return new PerformanceRow(
+            selection,
+            NormalizeBotKey(evidence.BotKey),
+            ResolveFamily(evidence.MarketType),
+            evidence.MarketProbability is > 0m and < 1m
+                ? (double)evidence.MarketProbability.Value
+                : null,
+            true);
+    }
 
     private static string ResolveFamily(string marketType) => marketType switch
     {
@@ -578,5 +736,6 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
         AutomatedCornerSelectionDto Selection,
         string BotKey,
         string Family,
-        double? MarketProbability);
+        double? MarketProbability,
+        bool IsScientificEvidence);
 }

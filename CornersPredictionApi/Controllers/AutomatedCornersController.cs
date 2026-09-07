@@ -10,6 +10,7 @@ namespace CornersPredictionApi.Controllers;
 public sealed class AutomatedCornersController : ControllerBase
 {
     private const string PerformanceScorecardsCacheKey = "automated-bot-performance-scorecards-v1";
+    private static readonly SemaphoreSlim PerformanceScorecardsGate = new(1, 1);
     private readonly IGetAutomatedCornerSelectionsUseCase _getSelectionsUseCase;
     private readonly IUpdateAutomatedCornerSelectionStatusUseCase _updateSelectionStatusUseCase;
     private readonly IResolveAutomatedCornerSelectionUseCase _resolveSelectionUseCase;
@@ -55,14 +56,26 @@ public sealed class AutomatedCornersController : ControllerBase
     {
         try
         {
-            var scorecards = await _cache.GetOrCreateAsync(
-                PerformanceScorecardsCacheKey,
-                async entry =>
-                {
-                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
-                    return await _performanceService.GetScorecardsAsync(cancellationToken);
-                });
-            return Ok(scorecards ?? []);
+            if (_cache.TryGetValue<IReadOnlyList<AutomatedBotPerformanceScorecard>>(
+                PerformanceScorecardsCacheKey, out var cached))
+                return Ok(cached);
+
+            // The picks and statistics panels request this same data together.
+            // IMemoryCache.GetOrCreateAsync alone runs both expensive factories.
+            await PerformanceScorecardsGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (_cache.TryGetValue<IReadOnlyList<AutomatedBotPerformanceScorecard>>(
+                    PerformanceScorecardsCacheKey, out cached))
+                    return Ok(cached);
+                var scorecards = await _performanceService.GetScorecardsAsync(cancellationToken);
+                _cache.Set(PerformanceScorecardsCacheKey, scorecards, TimeSpan.FromMinutes(1));
+                return Ok(scorecards);
+            }
+            finally
+            {
+                PerformanceScorecardsGate.Release();
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -151,7 +164,8 @@ public sealed class AutomatedCornersController : ControllerBase
         [FromQuery] string? source,
         [FromQuery] string? marketType,
         [FromQuery] bool onlyPending = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] string? marketFamily = null)
     {
         try
         {
@@ -162,7 +176,8 @@ public sealed class AutomatedCornersController : ControllerBase
                 league,
                 source,
                 marketType,
-                onlyPending);
+                onlyPending,
+                marketFamily);
             var selections = await _getSelectionsUseCase.GetAsync(filters, cancellationToken);
             return Ok(selections);
         }
@@ -187,6 +202,7 @@ public sealed class AutomatedCornersController : ControllerBase
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] string marketFamily = "CORNERS",
+        [FromQuery] string? marketType = null,
         CancellationToken cancellationToken = default)
     {
         if (dateFrom.HasValue && dateTo.HasValue && dateTo.Value.Date < dateFrom.Value.Date)
@@ -201,7 +217,12 @@ public sealed class AutomatedCornersController : ControllerBase
                 dateFrom.HasValue ? DateOnly.FromDateTime(dateFrom.Value) : null,
                 dateTo.HasValue ? DateOnly.FromDateTime(dateTo.Value) : null,
                 marketFamily,
+                marketType,
                 cancellationToken));
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -6,10 +6,11 @@ using Microsoft.Extensions.Configuration;
 
 namespace CornersPrediction.Infrastructure.SqlServer;
 
-public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCornerSelectionsRepository
+public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCornerSelectionsRepository,
+    IAutomatedBotMonthlyHistoryRepository, IAutomatedBotPerformanceSelectionsRepository
 {
     private readonly string _connectionString;
-    private const string SelectSelectionByIdSql = """
+    private const string SelectSelectionSql = """
         SELECT
             s.AutomatedCornerBetSelectionId,
             s.RunId,
@@ -72,8 +73,8 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
             s.UpdatedAtUtc,
             s.SettledAtUtc
         FROM dbo.AutomatedCornerBetSelections s
-        WHERE s.AutomatedCornerBetSelectionId = @Id;
         """;
+    private const string SelectSelectionByIdSql = SelectSelectionSql + " WHERE s.AutomatedCornerBetSelectionId = @Id;";
 
     public SqlServerAutomatedCornerSelectionsRepository(IConfiguration configuration)
     {
@@ -81,10 +82,172 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
             throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
     }
 
+    public async Task<IReadOnlyList<AutomatedCornerSelectionDto>> GetPerformanceSelectionsAsync(
+        DateTime dateFrom,
+        DateTime dateTo,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        // Older deployed procedures omit these identity columns. Introducing
+        // them here would change bot cohorts and fixture deduplication while
+        // ostensibly only optimizing the read. Preserve that existing contract.
+        var columns = (await connection.QueryAsync<string>(new CommandDefinition(
+            """
+            SELECT name
+            FROM sys.dm_exec_describe_first_result_set_for_object(
+                OBJECT_ID(N'dbo.sp_GetAutomatedCornerBetSelections'), 0)
+            WHERE is_hidden = 0 AND name IN (N'BotKey', N'ApiFootballFixtureId', N'MatchHistoryId');
+            """, commandTimeout: 30, cancellationToken: cancellationToken)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var botKey = columns.Contains("BotKey") ? "s.BotKey" : "N'' AS BotKey";
+        var fixtureId = columns.Contains("ApiFootballFixtureId")
+            ? "s.ApiFootballFixtureId" : "CAST(NULL AS BIGINT) AS ApiFootballFixtureId";
+        var historyId = columns.Contains("MatchHistoryId")
+            ? "s.MatchHistoryId" : "CAST(NULL AS BIGINT) AS MatchHistoryId";
+        var sql = $$"""
+            SELECT s.AutomatedCornerBetSelectionId, {{botKey}}, s.AutomationVersion,
+                s.Source, {{fixtureId}}, {{historyId}}, s.MatchDate,
+                s.League, s.StandardizedLeague, s.HomeTeam, s.AwayTeam,
+                s.StandardizedHomeTeam, s.StandardizedAwayTeam,
+                s.MarketType, s.SelectedSide, s.LineValue, s.Stake,
+                s.ImpliedProbability, s.ModelProbability, s.ProbabilityEdge,
+                s.Status, s.ProfitLoss, s.UpdatedAtUtc,
+                DecisionReason = COALESCE(evidence.DecisionReason, N'{}')
+            FROM dbo.AutomatedCornerBetSelections AS s
+            OUTER APPLY
+            (
+                -- Keep raw numeric literals and JSON value types unchanged so
+                -- the shared C# bot/probability fallback rules remain identical.
+                SELECT DecisionReason = N'{' + STRING_AGG(CONVERT(NVARCHAR(MAX),
+                    N'"' + j.[key] + N'":' + CASE j.[type]
+                        WHEN 0 THEN N'null'
+                        WHEN 1 THEN N'"' + STRING_ESCAPE(j.[value], 'json') + N'"'
+                        ELSE j.[value] END) COLLATE DATABASE_DEFAULT, N',') + N'}'
+                FROM OPENJSON(CASE WHEN ISJSON(s.DecisionReason) = 1
+                    THEN s.DecisionReason ELSE N'{}' END) AS j
+                WHERE j.[key] COLLATE Latin1_General_100_BIN2 IN
+                    (N'botProfile', N'marketNoVigProbability', N'MarketNoVigProbability')
+            ) AS evidence
+            WHERE s.MatchDate >= @DateFrom AND s.MatchDate < @DateToExclusive
+            ORDER BY s.MatchDate DESC, s.UpdatedAtUtc DESC, s.AutomatedCornerBetSelectionId DESC
+            OPTION (RECOMPILE);
+            """;
+        return (await connection.QueryAsync<AutomatedCornerSelectionDto>(new CommandDefinition(
+            sql,
+            new { DateFrom = dateFrom.Date, DateToExclusive = dateTo.Date.AddDays(1) },
+            commandTimeout: 30,
+            cancellationToken: cancellationToken))).AsList();
+    }
+
+    public async Task<IReadOnlyList<AutomatedBotMonthlySummary>> GetMonthlyHistoryAsync(
+        DateTime dateFrom, DateTime dateTo, string marketFamily, CancellationToken cancellationToken)
+    {
+        // Aggregate on the server: the dashboard needs counts and returns, not
+        // a year of feature snapshots, explanations and individual selections.
+        const string sql = """
+            WITH Scoped AS
+            (
+                SELECT
+                    Month = DATEFROMPARTS(YEAR(s.MatchDate), MONTH(s.MatchDate), 1),
+                    s.Status, s.Stake, s.ProfitLoss,
+                    StoredBotKey = UPPER(LTRIM(RTRIM(s.BotKey))),
+                    Version = UPPER(LTRIM(RTRIM(s.AutomationVersion))),
+                    DecisionProfile = UPPER(LTRIM(RTRIM(JSON_VALUE(
+                        CASE WHEN ISJSON(s.DecisionReason) = 1 THEN s.DecisionReason ELSE N'{}' END,
+                        '$.botProfile')))),
+                    HasDecisionProfile = CASE WHEN EXISTS
+                    (
+                        SELECT 1 FROM OPENJSON(
+                            CASE WHEN ISJSON(s.DecisionReason) = 1 THEN s.DecisionReason ELSE N'{}' END)
+                        WHERE [key] COLLATE Latin1_General_100_BIN2 = N'botProfile'
+                    ) THEN 1 ELSE 0 END
+                FROM dbo.AutomatedCornerBetSelections AS s
+                WHERE s.MatchDate >= @DateFrom AND s.MatchDate < @DateToExclusive
+                  AND s.MarketType IN @MarketTypes
+            ), Classified AS
+            (
+                SELECT *, BotKey = CASE
+                    WHEN Version LIKE N'%-A' THEN N'A'
+                    WHEN Version LIKE N'%-B' THEN N'B'
+                    WHEN Version LIKE N'%-C2026' THEN N'C'
+                    WHEN Version LIKE N'%-D2026' THEN N'D'
+                    WHEN Version LIKE N'%-E2026' THEN N'E'
+                    WHEN Version LIKE N'%-F2026' THEN N'F'
+                    WHEN DecisionProfile IN (N'A', N'B') THEN DecisionProfile
+                    WHEN DecisionProfile IN (N'C', N'C2026') THEN N'C'
+                    WHEN DecisionProfile IN (N'D', N'D2026') THEN N'D'
+                    WHEN DecisionProfile IN (N'E', N'E2026') THEN N'E'
+                    WHEN DecisionProfile IN (N'F', N'F2026') THEN N'F'
+                    WHEN HasDecisionProfile = 1 THEN N'Legacy'
+                    ELSE N'A' END
+                FROM Scoped
+                WHERE Status = N'Pending'
+                   OR (ISNULL(StoredBotKey, N'') <> N'B'
+                       AND Version NOT LIKE N'%-B'
+                       AND ISNULL(DecisionProfile, N'') <> N'B')
+            )
+            SELECT Month, BotKey, Total = COUNT(*),
+                Pending = SUM(CASE WHEN Status = N'Pending' THEN 1 ELSE 0 END),
+                Won = SUM(CASE WHEN Status = N'Won' THEN 1 ELSE 0 END),
+                Lost = SUM(CASE WHEN Status = N'Lost' THEN 1 ELSE 0 END),
+                Push = SUM(CASE WHEN Status = N'Push' THEN 1 ELSE 0 END),
+                Void = SUM(CASE WHEN Status = N'Void' THEN 1 ELSE 0 END),
+                ProfitLoss = SUM(COALESCE(ProfitLoss, 0)),
+                SettledStake = SUM(CASE WHEN Status IN (N'Won', N'Lost', N'Push') THEN Stake ELSE 0 END)
+            FROM Classified
+            GROUP BY Month, BotKey
+            ORDER BY Month DESC, CASE BotKey
+                WHEN N'A' THEN 1 WHEN N'B' THEN 2 WHEN N'C' THEN 3
+                WHEN N'D' THEN 4 WHEN N'E' THEN 5 WHEN N'F' THEN 6 ELSE 7 END
+            OPTION (RECOMPILE);
+            """;
+        await using var connection = new SqlConnection(_connectionString);
+        return (await connection.QueryAsync<AutomatedBotMonthlySummary>(new CommandDefinition(
+            sql,
+            new
+            {
+                DateFrom = dateFrom.Date,
+                DateToExclusive = dateTo.Date.AddDays(1),
+                MarketTypes = AutomatedBotMarketScope.MarketTypes(marketFamily)
+            },
+            commandTimeout: 30,
+            cancellationToken: cancellationToken))).AsList();
+    }
+
     public async Task<IReadOnlyList<AutomatedCornerSelectionDto>> GetSelectionsAsync(
         AutomatedCornerSelectionsFilterRequest filters,
         CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(filters.MarketFamily))
+        {
+            // Push the family and the date window into SQL before reading the
+            // large decision evidence used by the visible picks.
+            const string sql = SelectSelectionSql + " " + """
+                WHERE (@DateFrom IS NULL OR s.MatchDate >= @DateFrom)
+                  AND (@DateToExclusive IS NULL OR s.MatchDate < @DateToExclusive)
+                  AND (@Status IS NULL OR s.Status = @Status)
+                  AND (@League IS NULL OR COALESCE(s.StandardizedLeague, s.League) = @League)
+                  AND (@Source IS NULL OR s.Source = @Source)
+                  AND (@MarketType IS NULL OR s.MarketType = @MarketType)
+                  AND s.MarketType IN @MarketTypes
+                  AND (@OnlyPending = 0 OR s.Status = N'Pending')
+                ORDER BY s.MatchDate DESC, s.UpdatedAtUtc DESC, s.AutomatedCornerBetSelectionId DESC
+                OPTION (RECOMPILE);
+                """;
+            await using var scopedConnection = new SqlConnection(_connectionString);
+            return (await scopedConnection.QueryAsync<AutomatedCornerSelectionDto>(new CommandDefinition(
+                sql,
+                new
+                {
+                    DateFrom = filters.DateFrom?.Date,
+                    DateToExclusive = filters.DateTo?.Date.AddDays(1),
+                    filters.Status, filters.League, filters.Source, filters.MarketType, filters.OnlyPending,
+                    MarketTypes = AutomatedBotMarketScope.MarketTypes(filters.MarketFamily)
+                },
+                commandTimeout: 30,
+                cancellationToken: cancellationToken))).AsList();
+        }
+
         await using var connection = new SqlConnection(_connectionString);
         var supportedParameters = await GetStoredProcedureParametersAsync(
             connection,

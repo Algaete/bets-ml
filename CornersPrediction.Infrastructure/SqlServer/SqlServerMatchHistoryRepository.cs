@@ -343,7 +343,7 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
             ((needsHomeResolution && homeMatch is null) ||
              (needsAwayResolution && awayMatch is null)))
         {
-            var allLeagueCandidates = await QueryTeamNameCandidatesAsync(
+            var allLeagueCandidates = await GetCachedTeamNameCandidatesAsync(
                 connection,
                 null,
                 teamGender,
@@ -459,14 +459,14 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
     WHERE mh.MatchDate < @BeforeDate
       AND mh.HomeCorners IS NOT NULL
       AND mh.AwayCorners IS NOT NULL
-      AND mh.StandardizedHomeTeam IN (@HomeTeam, @AwayTeam)
+      AND mh.StandardizedHomeTeam IN @TeamNames
     UNION
     SELECT mh.Id
     FROM dbo.MatchHistory mh
     WHERE mh.MatchDate < @BeforeDate
       AND mh.HomeCorners IS NOT NULL
       AND mh.AwayCorners IS NOT NULL
-      AND mh.StandardizedAwayTeam IN (@HomeTeam, @AwayTeam)
+      AND mh.StandardizedAwayTeam IN @TeamNames
     UNION
     SELECT mh.Id
     FROM dbo.MatchHistory mh
@@ -474,7 +474,7 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
       AND mh.HomeCorners IS NOT NULL
       AND mh.AwayCorners IS NOT NULL
       AND NULLIF(mh.StandardizedHomeTeam, N'') IS NULL
-      AND mh.HomeTeam IN (@HomeTeam, @AwayTeam)
+      AND mh.HomeTeam IN @TeamNames
     UNION
     SELECT mh.Id
     FROM dbo.MatchHistory mh
@@ -482,7 +482,7 @@ public sealed class SqlServerMatchHistoryRepository : IMatchHistoryRepository
       AND mh.HomeCorners IS NOT NULL
       AND mh.AwayCorners IS NOT NULL
       AND NULLIF(mh.StandardizedAwayTeam, N'') IS NULL
-      AND mh.AwayTeam IN (@HomeTeam, @AwayTeam)
+      AND mh.AwayTeam IN @TeamNames
 ),
 BaseRows AS
 (
@@ -534,23 +534,23 @@ FROM
         TipoHistorial = CAST(NULL AS NVARCHAR(30)),
         RnHistorial = ROW_NUMBER() OVER (ORDER BY MatchDate DESC, Id DESC),
         EquipoCondicion = CAST(N'HOME' AS NVARCHAR(10)),
-        CondicionReal = CASE WHEN HomeTeam = @HomeTeam THEN N'LOCAL' ELSE N'VISITA' END,
+        CondicionReal = CASE WHEN HomeTeam IN @HomeTeamNames THEN N'LOCAL' ELSE N'VISITA' END,
         Id, League, Season, MatchDate,
-        Equipo = CASE WHEN HomeTeam = @HomeTeam THEN HomeTeam ELSE AwayTeam END,
-        Rival = CASE WHEN HomeTeam = @HomeTeam THEN AwayTeam ELSE HomeTeam END,
-        GolesEquipo = CASE WHEN HomeTeam = @HomeTeam THEN HomeGoals ELSE AwayGoals END,
-        GolesRival = CASE WHEN HomeTeam = @HomeTeam THEN AwayGoals ELSE HomeGoals END,
-        CornersEquipo = CASE WHEN HomeTeam = @HomeTeam THEN HomeCorners ELSE AwayCorners END,
-        CornersRival = CASE WHEN HomeTeam = @HomeTeam THEN AwayCorners ELSE HomeCorners END,
-        TirosEquipo = CASE WHEN HomeTeam = @HomeTeam THEN HomeShots ELSE AwayShots END,
-        TirosRival = CASE WHEN HomeTeam = @HomeTeam THEN AwayShots ELSE HomeShots END,
-        TirosPuertaEquipo = CASE WHEN HomeTeam = @HomeTeam THEN HomeShotsOnGoal ELSE AwayShotsOnGoal END,
-        TirosPuertaRival = CASE WHEN HomeTeam = @HomeTeam THEN AwayShotsOnGoal ELSE HomeShotsOnGoal END,
-        PosesionEquipo = CASE WHEN HomeTeam = @HomeTeam THEN HomePossession ELSE AwayPossession END,
-        PosesionRival = CASE WHEN HomeTeam = @HomeTeam THEN AwayPossession ELSE HomePossession END,
+        Equipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomeTeam ELSE AwayTeam END,
+        Rival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayTeam ELSE HomeTeam END,
+        GolesEquipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomeGoals ELSE AwayGoals END,
+        GolesRival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayGoals ELSE HomeGoals END,
+        CornersEquipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomeCorners ELSE AwayCorners END,
+        CornersRival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayCorners ELSE HomeCorners END,
+        TirosEquipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomeShots ELSE AwayShots END,
+        TirosRival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayShots ELSE HomeShots END,
+        TirosPuertaEquipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomeShotsOnGoal ELSE AwayShotsOnGoal END,
+        TirosPuertaRival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayShotsOnGoal ELSE HomeShotsOnGoal END,
+        PosesionEquipo = CASE WHEN HomeTeam IN @HomeTeamNames THEN HomePossession ELSE AwayPossession END,
+        PosesionRival = CASE WHEN HomeTeam IN @HomeTeamNames THEN AwayPossession ELSE HomePossession END,
         IsKnockout, HomeFormation, AwayFormation, CreatedAtUtc
     FROM DistinctRows
-    WHERE HomeTeam = @HomeTeam OR AwayTeam = @HomeTeam
+    WHERE HomeTeam IN @HomeTeamNames OR AwayTeam IN @HomeTeamNames
     ORDER BY MatchDate DESC, Id DESC
 ) homeHistory
 UNION ALL
@@ -561,34 +561,37 @@ FROM
         TipoHistorial = CAST(NULL AS NVARCHAR(30)),
         RnHistorial = ROW_NUMBER() OVER (ORDER BY MatchDate DESC, Id DESC),
         EquipoCondicion = CAST(N'AWAY' AS NVARCHAR(10)),
-        CondicionReal = CASE WHEN HomeTeam = @AwayTeam THEN N'LOCAL' ELSE N'VISITA' END,
+        CondicionReal = CASE WHEN HomeTeam IN @AwayTeamNames THEN N'LOCAL' ELSE N'VISITA' END,
         Id, League, Season, MatchDate,
-        Equipo = CASE WHEN HomeTeam = @AwayTeam THEN HomeTeam ELSE AwayTeam END,
-        Rival = CASE WHEN HomeTeam = @AwayTeam THEN AwayTeam ELSE HomeTeam END,
-        GolesEquipo = CASE WHEN HomeTeam = @AwayTeam THEN HomeGoals ELSE AwayGoals END,
-        GolesRival = CASE WHEN HomeTeam = @AwayTeam THEN AwayGoals ELSE HomeGoals END,
-        CornersEquipo = CASE WHEN HomeTeam = @AwayTeam THEN HomeCorners ELSE AwayCorners END,
-        CornersRival = CASE WHEN HomeTeam = @AwayTeam THEN AwayCorners ELSE HomeCorners END,
-        TirosEquipo = CASE WHEN HomeTeam = @AwayTeam THEN HomeShots ELSE AwayShots END,
-        TirosRival = CASE WHEN HomeTeam = @AwayTeam THEN AwayShots ELSE HomeShots END,
-        TirosPuertaEquipo = CASE WHEN HomeTeam = @AwayTeam THEN HomeShotsOnGoal ELSE AwayShotsOnGoal END,
-        TirosPuertaRival = CASE WHEN HomeTeam = @AwayTeam THEN AwayShotsOnGoal ELSE HomeShotsOnGoal END,
-        PosesionEquipo = CASE WHEN HomeTeam = @AwayTeam THEN HomePossession ELSE AwayPossession END,
-        PosesionRival = CASE WHEN HomeTeam = @AwayTeam THEN AwayPossession ELSE HomePossession END,
+        Equipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomeTeam ELSE AwayTeam END,
+        Rival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayTeam ELSE HomeTeam END,
+        GolesEquipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomeGoals ELSE AwayGoals END,
+        GolesRival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayGoals ELSE HomeGoals END,
+        CornersEquipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomeCorners ELSE AwayCorners END,
+        CornersRival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayCorners ELSE HomeCorners END,
+        TirosEquipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomeShots ELSE AwayShots END,
+        TirosRival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayShots ELSE HomeShots END,
+        TirosPuertaEquipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomeShotsOnGoal ELSE AwayShotsOnGoal END,
+        TirosPuertaRival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayShotsOnGoal ELSE HomeShotsOnGoal END,
+        PosesionEquipo = CASE WHEN HomeTeam IN @AwayTeamNames THEN HomePossession ELSE AwayPossession END,
+        PosesionRival = CASE WHEN HomeTeam IN @AwayTeamNames THEN AwayPossession ELSE HomePossession END,
         IsKnockout, HomeFormation, AwayFormation, CreatedAtUtc
     FROM DistinctRows
-    WHERE HomeTeam = @AwayTeam OR AwayTeam = @AwayTeam
+    WHERE HomeTeam IN @AwayTeamNames OR AwayTeam IN @AwayTeamNames
     ORDER BY MatchDate DESC, Id DESC
 ) awayHistory
 OPTION (RECOMPILE);
 """;
 
+        var homeTeamNames = TeamNameMatcher.GetKnownNameVariants(homeTeam);
+        var awayTeamNames = TeamNameMatcher.GetKnownNameVariants(awayTeam);
         var command = new CommandDefinition(
             sql,
             new
             {
-                HomeTeam = homeTeam.Trim(),
-                AwayTeam = awayTeam.Trim(),
+                HomeTeamNames = homeTeamNames,
+                AwayTeamNames = awayTeamNames,
+                TeamNames = homeTeamNames.Concat(awayTeamNames).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 TeamGender = teamGender,
                 BeforeDate = beforeDate.ToDateTime(TimeOnly.MinValue)
             },

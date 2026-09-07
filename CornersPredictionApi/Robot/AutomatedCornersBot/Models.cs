@@ -64,6 +64,9 @@ public sealed record RunAutomatedCornersRequest(
     string? BotKeys = null,
     bool RunAllEnabledBots = false);
 
+public sealed record AutomatedRunProgress(string Stage, int? TotalBatches = null,
+    int CompletedMatches = 0, int TotalMatches = 0);
+
 public sealed record AutomatedOddsAvailabilityResponse(
     DateOnly DateFrom,
     DateOnly DateTo,
@@ -352,6 +355,7 @@ public sealed record SkippedMatchResult(
 public sealed record AutomatedBotMonitoringSummary
 {
     public string MarketFamily { get; init; } = string.Empty;
+    public string MarketType { get; init; } = string.Empty;
     public string BotKey { get; init; } = string.Empty;
     public long EvaluatedRows { get; init; }
     public long EvaluatedFixtures { get; init; }
@@ -473,7 +477,11 @@ public sealed record PersistBotCEvaluationCommand(
     string BaseModelVersion,
     BotCPickDecision Decision,
     DateTime? BaseModelTrainedThroughUtc = null,
-    long? PublishedSelectionId = null);
+    long? PublishedSelectionId = null,
+    string PublicationStatus = "NotSelected",
+    string ProductionDecision = "ModelRejected",
+    string? ProductionReason = null,
+    bool IsResearchWinner = false);
 
 public sealed class PersistSelectionCommand
 {

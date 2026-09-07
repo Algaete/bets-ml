@@ -1,5 +1,37 @@
 IF OBJECT_ID(N'dbo.MatchHistory', N'U') IS NOT NULL
 BEGIN
+    -- Scientific scorecards and research pages resolve official outcomes by the
+    -- immutable API-Football fixture id. Keep the latest snapshot and every
+    -- settlement field covered so each candidate is one bounded index seek.
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM sys.indexes
+        WHERE object_id = OBJECT_ID(N'dbo.MatchHistory', N'U')
+          AND name = N'IX_MatchHistory_ApiFootballFixtureEvidence'
+    )
+    BEGIN
+        CREATE INDEX IX_MatchHistory_ApiFootballFixtureEvidence
+        ON dbo.MatchHistory(ApiFootballFixtureId, ApiFootballUpdatedAtUtc DESC, Id DESC)
+        INCLUDE
+        (
+            FixtureStatus,
+            ApiFootballGoalsAvailable,
+            ApiFootballCornersAvailable,
+            ApiFootballShotsAvailable,
+            ApiFootballShotsOnGoalAvailable,
+            HomeGoals,
+            AwayGoals,
+            HomeCorners,
+            AwayCorners,
+            HomeShots,
+            AwayShots,
+            HomeShotsOnGoal,
+            AwayShotsOnGoal
+        )
+        WHERE ApiFootballFixtureId IS NOT NULL;
+    END;
+
     IF NOT EXISTS
     (
         SELECT 1

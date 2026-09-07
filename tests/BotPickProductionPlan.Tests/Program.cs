@@ -592,6 +592,94 @@ var tests = new (string Name, Action Body)[]
         Contains("no tiene scorecard", missing.ProductionPlan.Reason);
         Contains("cinco estados", quarter.ProductionPlan.Reason);
     }),
+    ("current production is invariant when only bookmaker changes", () =>
+    {
+        foreach (var source in new[] { "Pinnacle", "Betano", "Another bookmaker", string.Empty })
+        foreach (var scenario in new[]
+        {
+            (Bot: "C2026", Market: "HomeTeamGoals", Family: "GOALS", Stake: 1m),
+            (Bot: "C2026", Market: "AwayTeamCorners", Family: "CORNERS", Stake: 0.5m),
+            (Bot: "C2026", Market: "AwayTeamGoals", Family: "GOALS", Stake: 0.5m),
+            (Bot: "F2026", Market: "AwayTeamGoals", Family: "GOALS", Stake: 0.5m)
+        })
+        {
+            var pick = Pick(1, scenario.Bot, scenario.Market, source: source);
+            BotPickProductionPlanner.Apply([pick], [Definition(scenario.Bot, scenario.Family)], scenario.Family,
+                [Scorecard(scenario.Bot, scenario.Market, "Green", false, 150, yield: 0.12m)]);
+            Equal(scenario.Stake, pick.ProductionPlan!.StakeUnits);
+            Contains("PRODUCTIVE-GATE-2026-09-06-V5", pick.ProductionPlan.PolicyVersion);
+        }
+    }),
+    ("current production requires consolidated evidence for the exact model and side", () =>
+    {
+        foreach (var scorecard in new[]
+        {
+            Scorecard("C2026", "HomeTeamGoals", "Green", false, 150,
+                dimension: "BotMarketSideBookmakerVersion", bookmaker: "Pinnacle"),
+            Scorecard("C2026", "HomeTeamGoals", "Green", false, 150,
+                automationVersion: "PreviousVersion-C2026"),
+            Scorecard("C2026", "HomeTeamGoals", "Green", false, 150, side: "Under")
+        })
+        {
+            var pick = Pick(1, "C2026", "HomeTeamGoals");
+            BotPickProductionPlanner.Apply([pick], [Definition("C2026", "GOALS")], "goals", [scorecard]);
+            Equal(0m, pick.ProductionPlan!.StakeUnits);
+            Contains("scorecard consolidado", pick.ProductionPlan.Reason);
+        }
+        var rejected = Pick(2, "C2026", "HomeTeamGoals");
+        BotPickProductionPlanner.Apply([rejected], [Definition("C2026", "GOALS")], "goals",
+            [Scorecard("C2026", "HomeTeamGoals", "Red", true, 150),
+             Scorecard("C2026", "HomeTeamGoals", "Green", false, 150,
+                 dimension: "BotMarketSideBookmakerVersion", bookmaker: "Pinnacle")]);
+        Equal(0m, rejected.ProductionPlan!.StakeUnits);
+    }),
+    ("removing bookmaker restrictions preserves quote controls and market pauses", () =>
+    {
+        var picks = new[]
+        {
+            Pick(1, "F2026", "AwayTeamGoals", source: "Another bookmaker", odds: 1.59m),
+            Pick(2, "F2026", "AwayTeamGoals", source: "Another bookmaker", odds: 2.31m),
+            Pick(3, "F2026", "AwayTeamGoals", source: "Another bookmaker", expectedValue: 0.02m),
+            Pick(4, "F2026", "AwayTeamGoals", source: "Another bookmaker", line: 1.25m),
+            Pick(5, "F2026", "TotalGoals", source: "Another bookmaker")
+        };
+        BotPickProductionPlanner.Apply(picks, [Definition("F2026", "GOALS")], "goals",
+            [Scorecard("F2026", "AwayTeamGoals", "Green", false, 150, yield: 0.12m),
+             Scorecard("F2026", "TotalGoals", "Green", false, 150, yield: 0.12m)]);
+        True(picks.All(pick => pick.ProductionPlan!.StakeUnits == 0m));
+        Contains("cuota fuera", picks[0].ProductionPlan!.Reason);
+        Contains("cuota fuera", picks[1].ProductionPlan!.Reason);
+        Contains("EV menor", picks[2].ProductionPlan!.Reason);
+        Contains("cinco estados", picks[3].ProductionPlan!.Reason);
+        Contains("pausado", picks[4].ProductionPlan!.Reason);
+    }),
+    ("quotes from multiple bookmakers do not duplicate daily exposure", () =>
+    {
+        var picks = Enumerable.Range(1, 5).SelectMany(fixture => new[]
+        {
+            Pick(fixture * 10, "F2026", "AwayTeamGoals", home: $"Home {fixture}", source: "Pinnacle"),
+            Pick(fixture * 10 + 1, "F2026", "AwayTeamGoals", home: $"Home {fixture}", source: "Another bookmaker")
+        }).ToArray();
+        BotPickProductionPlanner.Apply(picks, [Definition("F2026", "GOALS")], "goals",
+            [Scorecard("F2026", "AwayTeamGoals", "Amber", false, 48, yield: 0.12m)]);
+        Equal(2.5m, picks.Sum(pick => pick.ProductionPlan!.StakeUnits));
+        BotPickProductionExposureGuard.Apply(picks, "goals");
+        Equal(2m, picks.Sum(pick => pick.ProductionPlan!.StakeUnits));
+        Equal(4m, picks.Count(pick => pick.ProductionPlan!.IsProductive));
+    }),
+    ("bookmaker-neutral current policy does not rewrite frozen historical cohorts", () =>
+    {
+        foreach (var family in new[] { "GOALS", "CORNERS" })
+        {
+            var market = family == "GOALS" ? "AwayTeamGoals" : "AwayTeamCorners";
+            var pick = Pick(1, "C2026", market, source: "Another bookmaker", status: "Won",
+                matchDate: new DateTime(2026, 8, 20, 15, 0, 0), profitLoss: 0.90m);
+            BotPickProductionPlanner.Apply([pick], [Definition("C2026", family)], family,
+                [Scorecard("C2026", market, "Green", false, 150, yield: 0.12m)]);
+            Equal(0m, pick.ProductionPlan!.StakeUnits);
+            Contains("Reconstrucción histórica: casa fuera", pick.ProductionPlan.Reason);
+        }
+    }),
     ("GOALS portfolio guard caps daily exposure without changing history", BotPickProductionExposureGuardTests.RunAll),
     ("Bot Picks default dates keep next month's pending picks visible", BotPickPendingVisibilityTests.RunAll),
     ("Bot Picks filters and renders every CORNERS, SHOTS and SOG market", () =>
@@ -686,7 +774,17 @@ var tests = new (string Name, Action Body)[]
         var monitoringMethod = repository[methodStart..methodEnd];
         True(monitoringMethod.Contains("IX_AutomatedBotPickEvaluations_MonitoringWindow", StringComparison.Ordinal));
         True(monitoringMethod.Contains("evaluation.BotKey <> N'G2026'", StringComparison.Ordinal));
+        True(monitoringMethod.Contains("scoped.MarketType", StringComparison.Ordinal));
+        True(monitoringMethod.Contains("@MarketType IS NULL OR evaluation.MarketType = @MarketType", StringComparison.Ordinal));
         True(!monitoringMethod.Contains("DecisionReasonsJson", StringComparison.Ordinal));
+
+        var monitoringView = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "CornersPrediction.Web",
+            "Views",
+            "BotPicks",
+            "Index.cshtml"));
+        True(monitoringView.Contains("query.set('MarketType', marketTypeSelect.value)", StringComparison.Ordinal));
 
         var indexes = File.ReadAllText(Path.Combine(
             directory.FullName,
@@ -695,6 +793,48 @@ var tests = new (string Name, Action Body)[]
             "BotAutomationReadIndexes.sql"));
         True(indexes.Contains("ON dbo.AutomatedBotPickEvaluations(MatchDate, MarketType, BotKey, Decision)", StringComparison.Ordinal));
         True(indexes.Contains("IX_PartidosProximosCuotas_AutomationWindow", StringComparison.Ordinal));
+    }),
+    ("robot execution batches complete fixtures and panel resumes background jobs", () =>
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CornersPrediction.sln")))
+            directory = directory.Parent;
+        True(directory is not null);
+
+        var service = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "CornersPredictionApi",
+            "Robot",
+            "AutomatedCornersBot",
+            "AutomatedCornersSelectionService.cs"));
+        True(service.Contains("Math.Min(requestedBatchNumber, totalBatches)", StringComparison.Ordinal));
+        True(service.Contains("const bool batchCompleteFixtures = true", StringComparison.Ordinal));
+        True(service.Contains("TotalBatches: CalculateTotalBatches(totalMatches, effectiveBatchSize)", StringComparison.Ordinal));
+
+        // The all-enabled panel now tracks a persistent job instead of a manual
+        // batch number. Reuse the real-script tests for progress, reload recovery,
+        // transient HTTP failures and completed-with-errors presentation.
+        var startInfo = new System.Diagnostics.ProcessStartInfo("node")
+        {
+            WorkingDirectory = directory.FullName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add(Path.Combine(
+            directory.FullName, "tests", "RobotPanelExecution.Tests", "job-progress.test.mjs"));
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Could not start the robot panel script tests.");
+        if (!process.WaitForExit(10_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new InvalidOperationException("Robot panel script tests timed out.");
+        }
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"Robot panel script tests failed: {output} {error}");
+        Contains("PASS real panel script resumes saved job", output);
     }),
     ("H2026 is permanently classified as a shadow-only challenger", () =>
     {
@@ -739,12 +879,15 @@ static BotPickSelectionViewModel Pick(
     DateTime? matchDate = null,
     decimal stake = 1m,
     decimal? profitLoss = null,
-    DateTime? createdAtUtc = null) => new()
+    DateTime? createdAtUtc = null,
+    string source = "Pinnacle",
+    decimal odds = 1.90m,
+    string side = "Over") => new()
 {
     AutomatedCornerBetSelectionId = id,
     BotKey = botKey,
     AutomationVersion = $"AutomatedCornersBotV1.0-{botKey}",
-    Source = "Pinnacle",
+    Source = source,
     MatchDate = matchDate ?? new DateTime(2026, 9, 22, 15, 0, 0),
     League = league,
     StandardizedLeague = league,
@@ -753,9 +896,9 @@ static BotPickSelectionViewModel Pick(
     StandardizedHomeTeam = home,
     StandardizedAwayTeam = "Away",
     MarketType = market,
-    SelectedSide = "Over",
+    SelectedSide = side,
     LineValue = line,
-    Odds = 1.90m,
+    Odds = odds,
     Stake = stake,
     ModelProbability = 0.62m,
     ProbabilityEdge = edge,
@@ -787,17 +930,21 @@ static BotPerformanceScorecardViewModel Scorecard(
     int sample,
     double? calibrationGap = 0.01,
     double? deltaBrier = -0.01,
-    decimal? yield = null) => new()
+    decimal? yield = null,
+    string dimension = "BotMarketSideVersion",
+    string? bookmaker = null,
+    string? automationVersion = null,
+    string side = "Over") => new()
 {
     WindowDays = 30,
-    Dimension = "BotMarketSideBookmakerVersion",
-    Segment = $"{botKey} · {marketType} · Over · Pinnacle · AutomatedCornersBotV1.0-{botKey}",
+    Dimension = dimension,
+    Segment = $"{botKey} · {marketType} · Over · AutomatedCornersBotV1.0-{botKey}",
     BotKey = botKey,
     MarketFamily = marketType.Contains("Goals", StringComparison.Ordinal) ? "GOALS" : "CORNERS",
     MarketType = marketType,
-    SelectedSide = "Over",
-    Bookmaker = "Pinnacle",
-    AutomationVersion = $"AutomatedCornersBotV1.0-{botKey}",
+    SelectedSide = side,
+    Bookmaker = bookmaker,
+    AutomationVersion = automationVersion ?? $"AutomatedCornersBotV1.0-{botKey}",
     PredictiveResolved = sample,
     PredictiveFixtures = sample,
     Yield = yield,

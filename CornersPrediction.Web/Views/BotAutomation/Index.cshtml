@@ -604,15 +604,25 @@
         renderBotOptions();
     };
 
-    const progressPercent = job => job.totalBatches && job.totalBatches > 0
-        ? Math.min(100, Math.round(job.processedBatches * 100 / job.totalBatches)) : 0;
+    const progressPercent = job => {
+        if (job.status === 'Completed') return 100;
+        if (!(job.totalBatches > 0)) return null;
+        const fraction = job.status === 'Running' && job.currentBatchTotalMatches > 0
+            ? Math.min(1, job.currentBatchCompletedMatches / job.currentBatchTotalMatches) : 0;
+        return Math.min(99.9, Math.round((job.processedBatches + fraction) * 1000 / job.totalBatches) / 10);
+    };
+    const jobStatusLabel = job => job.status === 'Completed' && job.errorMatches > 0 ? 'Finalizado con errores' : job.status;
     const statusClass = status => `job-status job-status-${String(status || 'queued').toLowerCase()}`;
+    const utcDate = value => {
+        const stamp = String(value || '');
+        return new Date(/(?:Z|[+-]\d\d:\d\d)$/i.test(stamp) ? stamp : `${stamp}Z`);
+    };
     const activityText = job => {
-        const seconds = Math.max(0, Math.floor((Date.now() - new Date(job.updatedAtUtc).getTime()) / 1000));
+        const seconds = Math.max(0, Math.floor((Date.now() - utcDate(job.updatedAtUtc).getTime()) / 1000));
         if (job.status === 'Running') {
             return seconds <= 45
-                ? `Activo · heartbeat hace ${seconds}s`
-                : `Sin heartbeat hace ${Math.floor(seconds / 60)} min`;
+                ? `Activo · actividad hace ${seconds}s`
+                : `Sin actividad hace ${Math.floor(seconds / 60)} min · esperando recuperación`;
         }
         if (job.status === 'Queued') return 'En cola · iniciará al terminar el lote activo';
         return '';
@@ -621,6 +631,8 @@
         const body = document.getElementById('JobsTableBody');
         body.innerHTML = jobs.length ? jobs.map(job => {
             const progress = progressPercent(job);
+            const preparing = progress === null && job.status === 'Running';
+            const progressLabel = progress === null ? (preparing ? 'Preparando' : '—') : `${progress}%`;
             const canCancel = !terminalStatuses.has(job.status);
             return `<tr>
                 <td>
@@ -628,13 +640,14 @@
                     <div class="small text-body-secondary">${escapeHtml(job.mode)} · ${escapeHtml(job.dateFrom)} a ${escapeHtml(job.dateTo)}</div>
                     <div class="small">${(job.botKeys || []).map(value => `<span class="bot-key me-1">${escapeHtml(value)}</span>`).join('')}</div>
                 </td>
-                <td><span class="${statusClass(job.status)}">${escapeHtml(job.status)}</span>${activityText(job) ? `<div class="small text-body-secondary mt-1">${escapeHtml(activityText(job))}</div>` : ''}${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
+                <td><span class="${statusClass(job.status === 'Completed' && job.errorMatches > 0 ? 'Failed' : job.status)}">${escapeHtml(jobStatusLabel(job))}</span>${activityText(job) ? `<div class="small text-body-secondary mt-1">${escapeHtml(activityText(job))}</div>` : ''}${job.lastError ? `<div class="small text-danger mt-1" title="${escapeHtml(job.lastError)}">${escapeHtml(job.lastError.slice(0,100))}</div>` : ''}</td>
                 <td>
-                    <div class="d-flex align-items-center gap-2"><div class="progress job-progress flex-grow-1"><div class="progress-bar" style="width:${progress}%"></div></div><span class="small">${progress}%</span></div>
+                    <div class="d-flex align-items-center gap-2"><div class="progress job-progress flex-grow-1"><div class="progress-bar ${preparing ? 'progress-bar-striped progress-bar-animated' : ''}" style="width:${preparing ? 100 : progress ?? 0}%"></div></div><span class="small">${progressLabel}</span></div>
                     <div class="small text-body-secondary">${job.processedBatches}/${job.totalBatches ?? '?'} lotes · siguiente ${job.nextBatchNumber}</div>
+                    ${job.status === 'Running' ? `<div class="small mt-1">${escapeHtml(job.currentStage || 'Preparando lote')}</div>${job.currentBatchTotalMatches > 0 ? `<div class="small text-body-secondary">${job.currentBatchCompletedMatches}/${job.currentBatchTotalMatches} partidos del lote</div>` : ''}` : ''}
                 </td>
-                <td class="small"><strong>${job.selectedMatches}</strong> picks<br>${job.insertedRows} nuevos · ${job.updatedRows} actualizados<br>${job.errorMatches} errores</td>
-                <td class="small">${new Date(job.updatedAtUtc).toLocaleString('es-CL')}</td>
+                <td class="small"><strong>${job.selectedMatches}</strong> picks publicados<br>${job.insertedRows} nuevos · ${job.updatedRows} actualizados<br>${job.errorMatches} errores</td>
+                <td class="small">${utcDate(job.updatedAtUtc).toLocaleString('es-CL')}</td>
                 <td>${canCancel ? `<button class="btn btn-sm btn-outline-danger" type="button" data-cancel-job="${job.recommendationJobId}">Cancelar</button>` : ''}</td>
             </tr>`;
         }).join('') : '<tr><td colspan="6" class="text-center text-body-secondary py-4">No hay procesos guardados.</td></tr>';

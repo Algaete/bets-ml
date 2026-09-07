@@ -25,15 +25,21 @@ public sealed class CornersPipelineService : ICornersPipelineService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly CornersAutomationOptions _options;
     private readonly ILogger<CornersPipelineService> _logger;
+    private readonly IRecommendationJobsUseCase _recommendationJobs;
+    private readonly IRecommendationBotDefinitionsUseCase _botDefinitions;
 
     public CornersPipelineService(
         IHttpClientFactory httpClientFactory,
         IOptions<CornersAutomationOptions> options,
-        ILogger<CornersPipelineService> logger)
+        ILogger<CornersPipelineService> logger,
+        IRecommendationJobsUseCase recommendationJobs,
+        IRecommendationBotDefinitionsUseCase botDefinitions)
     {
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
         _logger = logger;
+        _recommendationJobs = recommendationJobs;
+        _botDefinitions = botDefinitions;
     }
 
     public Task<CornersPipelineStepResult> RunMatchHistoryAsync(int days, CancellationToken cancellationToken)
@@ -156,6 +162,14 @@ public sealed class CornersPipelineService : ICornersPipelineService
 
     public Task<CornersPipelineStepResult> RunBetanoOddsAsync(CancellationToken cancellationToken)
     {
+        if (!_options.BetanoEnabled)
+        {
+            return Task.FromResult(CreateSkippedStep(
+                "betano-odds",
+                "BetanoOdds",
+                "Betano is disabled by configuration."));
+        }
+
         var query = BuildQueryString(
             ("take", _options.BetanoTake),
             ("persist", true));
@@ -213,6 +227,11 @@ public sealed class CornersPipelineService : ICornersPipelineService
         RunBotsCommand command,
         CancellationToken cancellationToken)
     {
+        if (command.RunAllEnabledBots)
+        {
+            return QueueEnabledBotsAsync(command.UpcomingDays, cancellationToken);
+        }
+
         var batchNumber = Math.Max(1, command.BatchNumber);
         var batchSize = NormalizeBotBatchSize(command.BatchSize);
         var request = new
@@ -259,9 +278,17 @@ public sealed class CornersPipelineService : ICornersPipelineService
 
                 return new CornersPipelineStepResult
                 {
+                    Status = response.Model.ErrorMatches > 0
+                        ? response.Model.ErrorMatches >= response.Model.TotalMatches
+                            ? CornersPipelineStatuses.Failed
+                            : CornersPipelineStatuses.PartialSuccess
+                        : CornersPipelineStatuses.Success,
+                    ErrorMessage = response.Model.ErrorMatches > 0
+                        ? $"{response.Model.ErrorMatches} partidos/mercado no se pudieron procesar. Revisa el detalle de la ejecución."
+                        : null,
                     Message = response.Model.TotalOddsRows == 0
                         ? $"Lote {batchNumber} sin cuotas. Disponibles: {response.Model.AvailableOddsRows}."
-                        : $"Lote {response.Model.BatchNumber}/{response.Model.TotalBatches}: cuotas {response.Model.BatchStart}-{response.Model.BatchEnd} de {response.Model.AvailableOddsRows}. Bots habilitados: {botSummary}. RunId: {response.Model.RunId}",
+                        : $"Lote {response.Model.BatchNumber}/{response.Model.TotalBatches}: partidos/mercado {response.Model.BatchStart}-{response.Model.BatchEnd}; {response.Model.TotalOddsRows} cuotas procesadas de {response.Model.AvailableOddsRows}. Bots habilitados: {botSummary}. RunId: {response.Model.RunId}",
                     Discovered = response.Model.AvailableOddsRows,
                     Processed = response.Model.TotalMatches,
                     Inserted = response.Model.InsertedRows,
@@ -279,6 +306,41 @@ public sealed class CornersPipelineService : ICornersPipelineService
             },
             cancellationToken);
     }
+
+    private Task<CornersPipelineStepResult> QueueEnabledBotsAsync(int upcomingDays, CancellationToken cancellationToken) =>
+        ExecuteStepAsync(
+            "run-bots", "Todos los bots habilitados", null, TimeSpan.FromSeconds(60),
+            async token =>
+            {
+                var definitions = await _botDefinitions.GetAllAsync(token);
+                var botKeys = definitions
+                    .Where(bot => bot.IsEnabled && bot.SupportsRecommendationJobs && !bot.IsRetired)
+                    .Select(bot => bot.BotKey)
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (botKeys.Length == 0)
+                {
+                    return new CornersPipelineStepResult
+                    {
+                        Status = CornersPipelineStatuses.Skipped,
+                        Message = "No hay bots habilitados para ejecutar recomendaciones."
+                    };
+                }
+
+                var chileNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, "America/Santiago");
+                var dateFrom = DateOnly.FromDateTime(chileNow);
+                var dateTo = dateFrom.AddDays(NormalizeDays(upcomingDays, _options.DefaultUpcomingDays));
+                var job = await _recommendationJobs.EnqueueAsync(
+                    new CreateRecommendationJobCommand(
+                        dateFrom, dateTo, $"Panel del robot {dateFrom:yyyy-MM-dd}", botKeys,
+                        Mode: RecommendationJobModes.Live, BatchSize: 10), token);
+                return new CornersPipelineStepResult
+                {
+                    Status = CornersPipelineStatuses.Queued,
+                    Message = $"Ejecución guardada. Se procesarán todos los partidos/mercados del {dateFrom:dd-MM-yyyy} al {dateTo:dd-MM-yyyy} en segundo plano, en lotes de 10. Puedes seguir el avance en Bots y procesos.",
+                    RecommendationJob = job
+                };
+            }, cancellationToken);
 
     public async Task<CornersPipelineRunResult> RunFullPipelineAsync(
         RunFullPipelineCommand command,
@@ -322,7 +384,8 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 command.BotBatchNumber,
                 command.BotBatchSize,
                 command.RunBotC,
-                command.RunAllEnabledBots),
+                command.RunAllEnabledBots,
+                upcomingDays),
             cancellationToken));
         return BuildPipelineResult(startedAtUtc, matchHistoryDays, upcomingDays, steps);
     }
@@ -344,9 +407,9 @@ public sealed class CornersPipelineService : ICornersPipelineService
             var result = await operation(timeoutSource.Token);
             var completedAtUtc = DateTime.UtcNow;
 
-            var reportedStatus = result.Status == CornersPipelineStatuses.PartialSuccess
+            var reportedStatus = result.Status == CornersPipelineStatuses.Success && result.Errors > 0
                 ? CornersPipelineStatuses.PartialSuccess
-                : CornersPipelineStatuses.Success;
+                : result.Status;
 
             return result with
             {
@@ -354,7 +417,7 @@ public sealed class CornersPipelineService : ICornersPipelineService
                 StepName = stepName,
                 Days = days,
                 Status = reportedStatus,
-                IsSuccess = true,
+                IsSuccess = reportedStatus is CornersPipelineStatuses.Success or CornersPipelineStatuses.PartialSuccess,
                 TimedOut = false,
                 StartedAtUtc = startedAtUtc,
                 CompletedAtUtc = completedAtUtc,
@@ -507,11 +570,14 @@ public sealed class CornersPipelineService : ICornersPipelineService
         var failedSteps = steps.Count(step => step.Status == CornersPipelineStatuses.Failed);
         var timedOutSteps = steps.Count(step => step.TimedOut);
         var skippedSteps = steps.Count(step => step.Status == CornersPipelineStatuses.Skipped);
+        var partialSteps = steps.Count(step => step.Status == CornersPipelineStatuses.PartialSuccess);
+        var queuedSteps = steps.Count(step => step.Status == CornersPipelineStatuses.Queued);
         var successfulSteps = steps.Count(step => step.IsSuccess);
 
         var status = failedSteps switch
         {
-            0 when skippedSteps == 0 => CornersPipelineStatuses.Success,
+            0 when skippedSteps == 0 && partialSteps == 0 && queuedSteps > 0 => CornersPipelineStatuses.Queued,
+            0 when skippedSteps == 0 && partialSteps == 0 => CornersPipelineStatuses.Success,
             0 => CornersPipelineStatuses.PartialSuccess,
             _ when successfulSteps > 0 => CornersPipelineStatuses.PartialSuccess,
             _ => CornersPipelineStatuses.Failed
