@@ -69,7 +69,7 @@ public sealed class AutomatedCornersController : ControllerBase
                     PerformanceScorecardsCacheKey, out cached))
                     return Ok(cached);
                 var scorecards = await _performanceService.GetScorecardsAsync(cancellationToken);
-                _cache.Set(PerformanceScorecardsCacheKey, scorecards, TimeSpan.FromMinutes(1));
+                _cache.Set(PerformanceScorecardsCacheKey, scorecards, TimeSpan.FromMinutes(30));
                 return Ok(scorecards);
             }
             finally

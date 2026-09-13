@@ -2,8 +2,9 @@ namespace CornersPrediction.Application.AutomatedCorners;
 
 /// <summary>
 /// Reads only the selection fields consumed by performance calculations.
-/// DecisionReason retains the original JSON types of botProfile and both
-/// spellings of marketNoVigProbability; full feature snapshots stay in storage.
+/// The projection stays on covering scalar columns. Scorecards use the stored
+/// implied probability fallback, while scientific evaluations provide their
+/// bookmaker-neutral market probability separately.
 /// </summary>
 public interface IAutomatedBotPerformanceSelectionsRepository
 {

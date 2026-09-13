@@ -3478,7 +3478,10 @@ public sealed class AutomatedCornersSelectionService
                 PerformanceScorecardsCacheKey,
                 async entry =>
                 {
-                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+                    // A live job can spend several minutes on one batch. Keep the
+                    // same production evidence for the complete run window instead
+                    // of rebuilding the 90-day scorecards before every batch.
+                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30);
                     return await _performanceService.GetScorecardsAsync(cancellationToken);
                 }) ?? [];
         }

@@ -37,6 +37,68 @@ BEGIN
         );
 END;
 
+-- Most live odds rows carry the provider match id. Resolve their newest
+-- immutable snapshot through that narrow identity instead of comparing team
+-- names against the complete snapshot history for every batch.
+IF OBJECT_ID(N'dbo.CornerOddsSnapshots', N'U') IS NOT NULL
+AND NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.CornerOddsSnapshots')
+      AND name = N'IX_CornerOddsSnapshots_SourceMatchMarketCapture'
+)
+BEGIN
+    CREATE INDEX IX_CornerOddsSnapshots_SourceMatchMarketCapture
+        ON dbo.CornerOddsSnapshots
+           (Source, SourceMatchId, MarketType, LineValue, CapturedAtUtc DESC)
+        INCLUDE
+        (
+            MatchDate, StandardizedHomeTeam, StandardizedAwayTeam,
+            OverOdds, UnderOdds
+        )
+        WHERE SourceMatchId IS NOT NULL;
+END;
+
+-- Fixture ids are resolved only after the current odds rows have been reduced.
+-- This date-leading index bounds the remaining normalized-team lookup.
+IF OBJECT_ID(N'dbo.PartidosProximos', N'U') IS NOT NULL
+AND NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.PartidosProximos')
+      AND name = N'IX_PartidosProximos_AutomationFixtureLookup'
+)
+BEGIN
+    CREATE INDEX IX_PartidosProximos_AutomationFixtureLookup
+        ON dbo.PartidosProximos(FechaPartido)
+        INCLUDE (EquipoLocal, EquipoVisita, ExternalFixtureId)
+        WHERE ExternalFixtureId IS NOT NULL;
+END;
+
+-- Scorecards are shared by the dashboard and every live recommendation batch.
+-- Keep their 90-day projection on a date seek; the compact market probability
+-- is still read from DecisionReason without copying the full JSON into an index.
+IF OBJECT_ID(N'dbo.AutomatedCornerBetSelections', N'U') IS NOT NULL
+AND NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.AutomatedCornerBetSelections')
+      AND name = N'IX_AutomatedCornerBetSelections_PerformanceWindow'
+)
+BEGIN
+    CREATE INDEX IX_AutomatedCornerBetSelections_PerformanceWindow
+        ON dbo.AutomatedCornerBetSelections
+           (MatchDate, UpdatedAtUtc DESC, AutomatedCornerBetSelectionId DESC)
+        INCLUDE
+        (
+            BotKey, AutomationVersion, Source, ApiFootballFixtureId,
+            MatchHistoryId, League, StandardizedLeague, HomeTeam, AwayTeam,
+            StandardizedHomeTeam, StandardizedAwayTeam, MarketType,
+            SelectedSide, LineValue, Stake, ImpliedProbability,
+            ModelProbability, ProbabilityEdge, Status, ProfitLoss, CreatedAtUtc
+        );
+END;
+
 IF OBJECT_ID(N'dbo.AutomatedBotPickEvaluations', N'U') IS NULL
     THROW 52311, 'Bot automation read indexes require dbo.AutomatedBotPickEvaluations.', 1;
 

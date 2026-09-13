@@ -443,6 +443,14 @@ Contains(
     "IX_AutomatedBotPickEvaluations_PerformanceCandidates",
     "scientific candidate ranking has an always-initialized covering index");
 Contains(
+    botReadIndexes,
+    "IX_AutomatedCornerBetSelections_PerformanceWindow",
+    "published scorecards have a covering 90-day read index");
+Contains(
+    botReadIndexes,
+    "IX_CornerOddsSnapshots_SourceMatchMarketCapture",
+    "live odds resolve snapshots by provider match identity");
+Contains(
     evidenceRepositorySource,
     "evaluation.PerformanceLegacyPublicationRejection = 1",
     "legacy scorecard candidates seek the stored compatibility predicate");

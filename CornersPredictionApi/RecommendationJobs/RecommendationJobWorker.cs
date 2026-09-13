@@ -12,6 +12,8 @@ public sealed class RecommendationJobWorker : BackgroundService
     private readonly ILogger<RecommendationJobWorker> _logger;
     private readonly string _workerId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
     private DateTime _nextRecurringAtUtc = DateTime.MinValue;
+    private DateTime _lastSuccessfulOddsRefreshUtc = DateTime.MinValue;
+    private readonly SemaphoreSlim _oddsRefreshGate = new(1, 1);
     private readonly IHostEnvironment _environment;
     private bool _recoveredLocalLeases;
 
@@ -70,9 +72,6 @@ public sealed class RecommendationJobWorker : BackgroundService
                     job,
                     leaseDuration,
                     stoppingToken);
-                // Finish the queued run before refreshing quotes for future work.
-                // Refreshing between its batches adds minutes and changes the
-                // ordered input while the job is still paging through it.
                 var updatedJob = await repository.GetAsync(job.RecommendationJobId, stoppingToken);
                 if (updatedJob?.IsTerminal == true)
                     await EnqueueRecurringJobIfDueAsync(scope.ServiceProvider, stoppingToken);
@@ -139,6 +138,18 @@ public sealed class RecommendationJobWorker : BackgroundService
             var historicalBackfill = job.Mode.Equals(
                 RecommendationJobModes.HistoricalBackfill,
                 StringComparison.OrdinalIgnoreCase);
+            if (!historicalBackfill && ShouldRefreshLiveOdds(DateTime.UtcNow))
+            {
+                await repository.ReportActivityAsync(
+                    job.RecommendationJobId,
+                    _workerId,
+                    "Actualizando cuotas antes del lote",
+                    job.TotalBatches,
+                    0,
+                    job.BatchSize,
+                    batchCancellation.Token);
+                await RefreshRecurringOddsBestEffortAsync(services, batchCancellation.Token);
+            }
             var service = services.GetRequiredService<AutomatedCornersSelectionService>();
             var response = await service.RunAsync(
                 new RunAutomatedCornersRequest(
@@ -400,7 +411,7 @@ public sealed class RecommendationJobWorker : BackgroundService
 
         if (recurring.RefreshOddsBeforeEnqueue)
         {
-            await RefreshRecurringOddsBestEffortAsync(services, cancellationToken);
+            await RefreshRecurringOddsBestEffortAsync(services, cancellationToken, force: true);
         }
 
         var job = await useCase.EnqueueAsync(
@@ -461,36 +472,82 @@ public sealed class RecommendationJobWorker : BackgroundService
         left.Count == right.Count &&
         left.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(right);
 
-    private async Task RefreshRecurringOddsBestEffortAsync(
-        IServiceProvider services,
-        CancellationToken cancellationToken)
+    internal bool ShouldRefreshLiveOdds(DateTime nowUtc)
     {
-        var pipeline = services.GetRequiredService<ICornersPipelineService>();
-        var pinnacleTask = RefreshOddsSourceBestEffortAsync(
-            "Pinnacle",
-            pipeline.RunPinnacleOddsAsync,
-            cancellationToken);
-        var betanoTask = RefreshOddsSourceBestEffortAsync(
-            "Betano",
-            pipeline.RunBetanoOddsAsync,
-            cancellationToken);
+        if (!_options.RefreshOddsDuringLiveJobs)
+            return false;
 
-        var results = await Task.WhenAll(pinnacleTask, betanoTask);
-        var pinnacle = results[0];
-        var betano = results[1];
+        var interval = TimeSpan.FromMinutes(
+            Math.Clamp(_options.LiveOddsRefreshIntervalMinutes, 1, 120));
+        return _lastSuccessfulOddsRefreshUtc == DateTime.MinValue
+            || nowUtc - _lastSuccessfulOddsRefreshUtc >= interval;
+    }
 
-        if (pinnacle?.IsSuccess != true && betano?.IsSuccess != true)
+    private async Task<bool> RefreshRecurringOddsBestEffortAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken,
+        bool force = false)
+    {
+        await _oddsRefreshGate.WaitAsync(cancellationToken);
+        try
         {
-            _logger.LogWarning(
-                "Both odds refreshes failed before the recurring recommendation job. " +
-                "The job will still be enqueued; the odds freshness gate remains authoritative.");
-            return;
-        }
+            // A refresh may have completed while this caller waited for the gate.
+            if (!force && _lastSuccessfulOddsRefreshUtc != DateTime.MinValue &&
+                !ShouldRefreshLiveOdds(DateTime.UtcNow))
+                return true;
 
-        _logger.LogInformation(
-            "Pre-job odds refresh completed. Pinnacle={PinnacleStatus}, Betano={BetanoStatus}.",
-            pinnacle?.Status ?? "Exception",
-            betano?.Status ?? "Exception");
+            if (!force && _lastSuccessfulOddsRefreshUtc == DateTime.MinValue)
+            {
+                var latestStoredOddsUtc = await services
+                    .GetRequiredService<SqlAutomationRepository>()
+                    .GetLatestUpcomingOddsUpdateUtcAsync("Pinnacle", cancellationToken);
+                if (latestStoredOddsUtc.HasValue)
+                {
+                    _lastSuccessfulOddsRefreshUtc = latestStoredOddsUtc.Value;
+                    if (!ShouldRefreshLiveOdds(DateTime.UtcNow))
+                    {
+                        _logger.LogInformation(
+                            "Reusing fresh Pinnacle odds captured at {OddsUpdatedAtUtc} after worker startup.",
+                            latestStoredOddsUtc.Value);
+                        return true;
+                    }
+                }
+            }
+
+            var pipeline = services.GetRequiredService<ICornersPipelineService>();
+            var pinnacleTask = RefreshOddsSourceBestEffortAsync(
+                "Pinnacle",
+                pipeline.RunPinnacleOddsAsync,
+                cancellationToken);
+            var betanoTask = RefreshOddsSourceBestEffortAsync(
+                "Betano",
+                pipeline.RunBetanoOddsAsync,
+                cancellationToken);
+
+            var results = await Task.WhenAll(pinnacleTask, betanoTask);
+            var pinnacle = results[0];
+            var betano = results[1];
+            var succeeded = pinnacle?.IsSuccess == true || betano?.IsSuccess == true;
+
+            if (!succeeded)
+            {
+                _logger.LogWarning(
+                    "Both odds refreshes failed before a live recommendation batch. " +
+                    "The batch will still run; the odds freshness gate remains authoritative.");
+                return false;
+            }
+
+            _lastSuccessfulOddsRefreshUtc = DateTime.UtcNow;
+            _logger.LogInformation(
+                "Live odds refresh completed. Pinnacle={PinnacleStatus}, Betano={BetanoStatus}.",
+                pinnacle?.Status ?? "Exception",
+                betano?.Status ?? "Exception");
+            return true;
+        }
+        finally
+        {
+            _oddsRefreshGate.Release();
+        }
     }
 
     private async Task<CornersPipelineStepResult?> RefreshOddsSourceBestEffortAsync(

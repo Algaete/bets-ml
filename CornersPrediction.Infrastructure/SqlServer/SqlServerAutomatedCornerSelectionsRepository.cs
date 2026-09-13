@@ -88,46 +88,16 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
-        // Older deployed procedures omit these identity columns. Introducing
-        // them here would change bot cohorts and fixture deduplication while
-        // ostensibly only optimizing the read. Preserve that existing contract.
-        var columns = (await connection.QueryAsync<string>(new CommandDefinition(
-            """
-            SELECT name
-            FROM sys.dm_exec_describe_first_result_set_for_object(
-                OBJECT_ID(N'dbo.sp_GetAutomatedCornerBetSelections'), 0)
-            WHERE is_hidden = 0 AND name IN (N'BotKey', N'ApiFootballFixtureId', N'MatchHistoryId');
-            """, commandTimeout: 30, cancellationToken: cancellationToken)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var botKey = columns.Contains("BotKey") ? "s.BotKey" : "N'' AS BotKey";
-        var fixtureId = columns.Contains("ApiFootballFixtureId")
-            ? "s.ApiFootballFixtureId" : "CAST(NULL AS BIGINT) AS ApiFootballFixtureId";
-        var historyId = columns.Contains("MatchHistoryId")
-            ? "s.MatchHistoryId" : "CAST(NULL AS BIGINT) AS MatchHistoryId";
-        var sql = $$"""
-            SELECT s.AutomatedCornerBetSelectionId, {{botKey}}, s.AutomationVersion,
-                s.Source, {{fixtureId}}, {{historyId}}, s.MatchDate,
+        const string sql = """
+            SELECT s.AutomatedCornerBetSelectionId, s.BotKey, s.AutomationVersion,
+                s.Source, s.ApiFootballFixtureId, s.MatchHistoryId, s.MatchDate,
                 s.League, s.StandardizedLeague, s.HomeTeam, s.AwayTeam,
                 s.StandardizedHomeTeam, s.StandardizedAwayTeam,
                 s.MarketType, s.SelectedSide, s.LineValue, s.Stake,
                 s.ImpliedProbability, s.ModelProbability, s.ProbabilityEdge,
-                s.Status, s.ProfitLoss, s.UpdatedAtUtc,
-                DecisionReason = COALESCE(evidence.DecisionReason, N'{}')
+                s.Status, s.ProfitLoss, s.CreatedAtUtc, s.UpdatedAtUtc,
+                DecisionReason = CONVERT(NVARCHAR(MAX), N'{}')
             FROM dbo.AutomatedCornerBetSelections AS s
-            OUTER APPLY
-            (
-                -- Keep raw numeric literals and JSON value types unchanged so
-                -- the shared C# bot/probability fallback rules remain identical.
-                SELECT DecisionReason = N'{' + STRING_AGG(CONVERT(NVARCHAR(MAX),
-                    N'"' + j.[key] + N'":' + CASE j.[type]
-                        WHEN 0 THEN N'null'
-                        WHEN 1 THEN N'"' + STRING_ESCAPE(j.[value], 'json') + N'"'
-                        ELSE j.[value] END) COLLATE DATABASE_DEFAULT, N',') + N'}'
-                FROM OPENJSON(CASE WHEN ISJSON(s.DecisionReason) = 1
-                    THEN s.DecisionReason ELSE N'{}' END) AS j
-                WHERE j.[key] COLLATE Latin1_General_100_BIN2 IN
-                    (N'botProfile', N'marketNoVigProbability', N'MarketNoVigProbability')
-            ) AS evidence
             WHERE s.MatchDate >= @DateFrom AND s.MatchDate < @DateToExclusive
             ORDER BY s.MatchDate DESC, s.UpdatedAtUtc DESC, s.AutomatedCornerBetSelectionId DESC
             OPTION (RECOMPILE);
@@ -135,7 +105,7 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         return (await connection.QueryAsync<AutomatedCornerSelectionDto>(new CommandDefinition(
             sql,
             new { DateFrom = dateFrom.Date, DateToExclusive = dateTo.Date.AddDays(1) },
-            commandTimeout: 30,
+            commandTimeout: 60,
             cancellationToken: cancellationToken))).AsList();
     }
 

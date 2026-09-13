@@ -10,16 +10,11 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         var column = AutomatedBotGeneralPickSorting.NormalizeColumn(query.SortBy);
         var direction = query.SortDirection == "asc" ? "ASC" : query.SortDirection == "desc" ? "DESC"
             : throw new ArgumentException("Invalid sort direction.");
-        var filtered = query.ModelDecision is not null || query.PublicationStatus is not null
-            || column == "PublicationStatus";
         var approvedFastPath = query.ModelDecision == "Approved" && query.PublicationStatus is null;
-        var auditSource = filtered
-            ? "FROM #GeneralAuditKeys AS keys INNER JOIN dbo.AutomatedBotPickEvaluations AS evaluation WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage)) ON evaluation.AutomatedBotPickEvaluationId = keys.EvaluationId"
-            : GeneralAuditScopeSql;
-        var count = filtered ? "SELECT COUNT_BIG(*) FROM #GeneralAuditKeys"
-            : "SELECT COUNT_BIG(*) " + GeneralAuditScopeSql;
+        var auditSource = "FROM #GeneralCurrentAuditKeys AS keys INNER JOIN dbo.AutomatedBotPickEvaluations AS evaluation WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage)) ON evaluation.AutomatedBotPickEvaluationId = keys.EvaluationId";
+        const string count = "SELECT COUNT_BIG(*) FROM #GeneralCurrentAuditKeys";
         var filteredKeysSql = approvedFastPath ? GeneralApprovedAuditKeysSql : GeneralFilteredAuditKeysSql;
-        var sql = "SET NOCOUNT ON;\n" + (filtered ? filteredKeysSql : "")
+        var sql = "SET NOCOUNT ON;\n" + filteredKeysSql + GeneralCurrentAuditKeysSql
             + GeneralPublishedKeysSql + $"\nSELECT ({count}) + (SELECT COUNT_BIG(*) FROM #GeneralPublishedKeys) OPTION (RECOMPILE);\n";
         var auditSort = column switch
         {
@@ -43,8 +38,8 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
             _ => "selection." + column
         };
         var auditCandidates = $"SELECT evaluation.AutomatedBotPickEvaluationId AS EvaluationId, evaluation.MatchDate, {auditSort} AS SortValue {auditSource}";
-        if (filtered && column is "PublicationStatus" or "ModelDecision" or "MatchDate" or "EvaluationId")
-            auditCandidates = $"SELECT keys.EvaluationId, keys.MatchDate, keys.{column} AS SortValue FROM #GeneralAuditKeys AS keys";
+        if (column is "PublicationStatus" or "ModelDecision" or "MatchDate" or "EvaluationId")
+            auditCandidates = $"SELECT keys.EvaluationId, keys.MatchDate, keys.{column} AS SortValue FROM #GeneralCurrentAuditKeys AS keys";
         if (column == "OutcomeStatus")
         {
             // Outcomes must be resolved before global sorting. Reuse the exact

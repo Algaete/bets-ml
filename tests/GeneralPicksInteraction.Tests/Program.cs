@@ -17,6 +17,9 @@ foreach (var filtered in new[] { false, true })
     var sql = (string)builder.Invoke(null, [query])!;
     new TSql160Parser(true).Parse(new StringReader(sql), out var errors);
     Check(errors.Count == 0, $"Invalid SQL for {column}/{direction}: {string.Join(';', errors.Select(e => $"{e.Line}: {e.Message}"))}");
+    Check(sql.Contains("#GeneralCurrentAuditKeys", StringComparison.Ordinal)
+        && sql.Contains("Sequence = ROW_NUMBER()", StringComparison.Ordinal),
+        "General Picks must collapse repeated audits to the latest logical signal.");
     if (column == "OutcomeStatus")
     {
         var projection = sql[..sql.IndexOf("INTO #GeneralOutcomeSort", StringComparison.Ordinal)];

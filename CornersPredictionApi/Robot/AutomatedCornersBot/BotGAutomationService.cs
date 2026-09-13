@@ -178,7 +178,7 @@ public sealed class BotGAutomationService
                 {
                     basePredictionError = exception.Message;
                     inferenceCompletedBeforeKickoff = DateTime.UtcNow < fixtureDateUtc;
-                    _logger.LogWarning(
+                    _logger.LogDebug(
                         exception,
                         "Bot G base signals unavailable. Fixture={Fixture}, League={League}, HomeTeam={HomeTeam}, AwayTeam={AwayTeam}, MarketType={MarketType}, Line={Line}",
                         fixtureId,
@@ -324,7 +324,7 @@ public sealed class BotGAutomationService
 
         foreach (var candidate in candidates)
         {
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Bot G candidate evaluated. BotKey={BotKey}, FixtureId={FixtureId}, CandidateId={CandidateId}, MarketType={MarketType}, Selection={Selection}, Line={Line}, Bookmaker={Bookmaker}, MarketProbability={MarketProbability}, RawProbability={RawProbability}, CalibratedProbability={CalibratedProbability}, ConservativeProbability={ConservativeProbability}, RawEdge={RawEdge}, ConservativeEdge={ConservativeEdge}, RawExpectedValue={RawExpectedValue}, ConservativeExpectedValue={ConservativeExpectedValue}, Uncertainty={Uncertainty}, Ood={Ood}, Decision={Decision}, Reason={Reason}, Shadow={Shadow}",
                 configuration.BotKey,
                 candidate.FixtureId,

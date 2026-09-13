@@ -246,56 +246,10 @@ public sealed partial class SqlAutomationRepository
         CancellationToken cancellationToken)
     {
         const string sql = """
-        WITH RankedOdds AS
+        WITH RankedBaseOdds AS
         (
             SELECT
-                q.PartidoProximoCuotaId,
-                q.Source,
-                q.SourceMatchId,
-                fixture.ApiFootballFixtureId,
-                q.SourceUrl,
-                q.MatchDate,
-                q.League,
-                q.HomeTeam,
-                q.AwayTeam,
-                q.StandardizedLeague,
-                q.StandardizedHomeTeam,
-                q.StandardizedAwayTeam,
-                q.HomeTeamGender,
-                q.AwayTeamGender,
-                q.MarketType,
-                q.LineValue,
-                OverOdds = CASE
-                    WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotOverOdds
-                    ELSE q.OverOdds
-                END,
-                UnderOdds = CASE
-                    WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotUnderOdds
-                    ELSE q.UnderOdds
-                END,
-                q.UpdatedAtUtc,
-                latestSnapshot.OddsSnapshotId,
-                latestSnapshot.OddsCapturedAtUtc,
-                latestSnapshot.SnapshotOverOdds,
-                latestSnapshot.SnapshotUnderOdds,
-                MatchIdentity =
-                    CASE
-                        WHEN NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NOT NULL
-                            THEN CONCAT(N'ID|', q.Source, N'|', LTRIM(RTRIM(q.SourceMatchId)))
-                        WHEN NULLIF(LTRIM(RTRIM(q.SourceUrl)), N'') IS NOT NULL
-                            THEN CONCAT(N'URL|', q.Source, N'|', LTRIM(RTRIM(q.SourceUrl)))
-                        ELSE CONCAT(
-                            N'FALLBACK|',
-                            q.Source,
-                            N'|',
-                            CONVERT(NVARCHAR(19), q.MatchDate, 126),
-                            N'|',
-                            COALESCE(q.StandardizedLeague, q.League),
-                            N'|',
-                            COALESCE(q.StandardizedHomeTeam, q.HomeTeam),
-                            N'|',
-                            COALESCE(q.StandardizedAwayTeam, q.AwayTeam))
-                    END,
+                q.*,
                 rn = ROW_NUMBER() OVER
                 (
                     PARTITION BY
@@ -329,47 +283,6 @@ public sealed partial class SqlAutomationRepository
                         q.PartidoProximoCuotaId DESC
                 )
             FROM dbo.PartidosProximosCuotas q
-            OUTER APPLY
-            (
-                SELECT ApiFootballFixtureId = CASE
-                    WHEN COUNT_BIG(*) = 1 THEN MAX(pp.ExternalFixtureId)
-                    ELSE NULL
-                END
-                FROM dbo.PartidosProximos pp
-                WHERE @ResolveApiFootballFixtureId = 1
-                  AND pp.ExternalFixtureId IS NOT NULL
-                  AND pp.FechaPartido >= CAST(q.MatchDate AS DATE)
-                  AND pp.FechaPartido < DATEADD(DAY, 1, CAST(q.MatchDate AS DATE))
-                  AND pp.EquipoLocal COLLATE Latin1_General_100_CI_AI =
-                      COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
-                  AND pp.EquipoVisita COLLATE Latin1_General_100_CI_AI =
-                      COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
-            ) fixture
-            OUTER APPLY
-            (
-                SELECT TOP (1)
-                    OddsSnapshotId = snapshot.CornerOddsSnapshotId,
-                    OddsCapturedAtUtc = snapshot.CapturedAtUtc,
-                    SnapshotOverOdds = snapshot.OverOdds,
-                    SnapshotUnderOdds = snapshot.UnderOdds
-                FROM dbo.CornerOddsSnapshots AS snapshot
-                WHERE @IncludeLatestOddsSnapshot = 1
-                  AND snapshot.Source = q.Source
-                  AND snapshot.MatchDate = q.MatchDate
-                  AND snapshot.MarketType = q.MarketType
-                  AND snapshot.LineValue = q.LineValue
-                  AND COALESCE(snapshot.StandardizedHomeTeam, snapshot.HomeTeam) COLLATE Latin1_General_100_CI_AI =
-                      COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
-                  AND COALESCE(snapshot.StandardizedAwayTeam, snapshot.AwayTeam) COLLATE Latin1_General_100_CI_AI =
-                      COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
-                  AND
-                  (
-                      NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NULL
-                      OR snapshot.SourceMatchId = q.SourceMatchId
-                  )
-                  AND snapshot.CapturedAtUtc <= SYSUTCDATETIME()
-                ORDER BY snapshot.CapturedAtUtc DESC, snapshot.CornerOddsSnapshotId DESC
-            ) latestSnapshot
             WHERE q.MarketType IN (
                     N'CornersTotal', N'CornersHomeTeam', N'CornersAwayTeam',
                     N'GoalsTotal', N'GoalsHomeTeam', N'GoalsAwayTeam',
@@ -434,34 +347,106 @@ public sealed partial class SqlAutomationRepository
                         ELSE @ExpectedAutomationVersionCount
                       END
               )
+        ),
+        BaseOdds AS
+        (
+            SELECT *
+            FROM RankedBaseOdds
+            WHERE rn = 1
         )
         SELECT
-            PartidoProximoCuotaId,
-            Source,
-            SourceMatchId,
-            ApiFootballFixtureId,
-            SourceUrl,
-            MatchDate,
-            League,
-            HomeTeam,
-            AwayTeam,
-            StandardizedLeague,
-            StandardizedHomeTeam,
-            StandardizedAwayTeam,
-            HomeTeamGender,
-            AwayTeamGender,
-            MarketType,
-            LineValue,
-            OverOdds,
-            UnderOdds,
-            UpdatedAtUtc,
-            OddsSnapshotId,
-            OddsCapturedAtUtc,
-            SnapshotOverOdds,
-            SnapshotUnderOdds
-        FROM RankedOdds
-        WHERE rn = 1
-        ORDER BY MatchDate, COALESCE(StandardizedLeague, League), COALESCE(StandardizedHomeTeam, HomeTeam), COALESCE(StandardizedAwayTeam, AwayTeam), LineValue
+            q.PartidoProximoCuotaId,
+            q.Source,
+            q.SourceMatchId,
+            fixture.ApiFootballFixtureId,
+            q.SourceUrl,
+            q.MatchDate,
+            q.League,
+            q.HomeTeam,
+            q.AwayTeam,
+            q.StandardizedLeague,
+            q.StandardizedHomeTeam,
+            q.StandardizedAwayTeam,
+            q.HomeTeamGender,
+            q.AwayTeamGender,
+            q.MarketType,
+            q.LineValue,
+            OverOdds = CASE
+                WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotOverOdds
+                ELSE q.OverOdds END,
+            UnderOdds = CASE
+                WHEN latestSnapshot.OddsSnapshotId IS NOT NULL THEN latestSnapshot.SnapshotUnderOdds
+                ELSE q.UnderOdds END,
+            q.UpdatedAtUtc,
+            latestSnapshot.OddsSnapshotId,
+            latestSnapshot.OddsCapturedAtUtc,
+            latestSnapshot.SnapshotOverOdds,
+            latestSnapshot.SnapshotUnderOdds
+        FROM BaseOdds AS q
+        OUTER APPLY
+        (
+            SELECT ApiFootballFixtureId = CASE
+                WHEN COUNT_BIG(*) = 1 THEN MAX(pp.ExternalFixtureId)
+                ELSE NULL END
+            FROM dbo.PartidosProximos AS pp
+            WHERE @ResolveApiFootballFixtureId = 1
+              AND pp.ExternalFixtureId IS NOT NULL
+              AND pp.FechaPartido >= CAST(q.MatchDate AS DATE)
+              AND pp.FechaPartido < DATEADD(DAY, 1, CAST(q.MatchDate AS DATE))
+              AND pp.EquipoLocal COLLATE Latin1_General_100_CI_AI =
+                  COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
+              AND pp.EquipoVisita COLLATE Latin1_General_100_CI_AI =
+                  COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
+        ) AS fixture
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                OddsSnapshotId = snapshot.CornerOddsSnapshotId,
+                OddsCapturedAtUtc = snapshot.CapturedAtUtc,
+                SnapshotOverOdds = snapshot.OverOdds,
+                SnapshotUnderOdds = snapshot.UnderOdds
+            FROM dbo.CornerOddsSnapshots AS snapshot
+            WHERE @IncludeLatestOddsSnapshot = 1
+              AND NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NOT NULL
+              AND snapshot.Source = q.Source
+              AND snapshot.SourceMatchId = LTRIM(RTRIM(q.SourceMatchId))
+              AND snapshot.MarketType = q.MarketType
+              AND snapshot.LineValue = q.LineValue
+              AND snapshot.CapturedAtUtc <= SYSUTCDATETIME()
+            ORDER BY snapshot.CapturedAtUtc DESC, snapshot.CornerOddsSnapshotId DESC
+        ) AS idSnapshot
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                OddsSnapshotId = snapshot.CornerOddsSnapshotId,
+                OddsCapturedAtUtc = snapshot.CapturedAtUtc,
+                SnapshotOverOdds = snapshot.OverOdds,
+                SnapshotUnderOdds = snapshot.UnderOdds
+            FROM dbo.CornerOddsSnapshots AS snapshot
+            WHERE @IncludeLatestOddsSnapshot = 1
+              AND NULLIF(LTRIM(RTRIM(q.SourceMatchId)), N'') IS NULL
+              AND snapshot.Source = q.Source
+              AND snapshot.MatchDate = q.MatchDate
+              AND snapshot.MarketType = q.MarketType
+              AND snapshot.LineValue = q.LineValue
+              AND COALESCE(snapshot.StandardizedHomeTeam, snapshot.HomeTeam) COLLATE Latin1_General_100_CI_AI =
+                  COALESCE(NULLIF(q.StandardizedHomeTeam, N''), q.HomeTeam) COLLATE Latin1_General_100_CI_AI
+              AND COALESCE(snapshot.StandardizedAwayTeam, snapshot.AwayTeam) COLLATE Latin1_General_100_CI_AI =
+                  COALESCE(NULLIF(q.StandardizedAwayTeam, N''), q.AwayTeam) COLLATE Latin1_General_100_CI_AI
+              AND snapshot.CapturedAtUtc <= SYSUTCDATETIME()
+            ORDER BY snapshot.CapturedAtUtc DESC, snapshot.CornerOddsSnapshotId DESC
+        ) AS fallbackSnapshot
+        CROSS APPLY
+        (
+            SELECT
+                OddsSnapshotId = COALESCE(idSnapshot.OddsSnapshotId, fallbackSnapshot.OddsSnapshotId),
+                OddsCapturedAtUtc = COALESCE(idSnapshot.OddsCapturedAtUtc, fallbackSnapshot.OddsCapturedAtUtc),
+                SnapshotOverOdds = COALESCE(idSnapshot.SnapshotOverOdds, fallbackSnapshot.SnapshotOverOdds),
+                SnapshotUnderOdds = COALESCE(idSnapshot.SnapshotUnderOdds, fallbackSnapshot.SnapshotUnderOdds)
+        ) AS latestSnapshot
+        ORDER BY q.MatchDate, COALESCE(q.StandardizedLeague, q.League),
+            COALESCE(q.StandardizedHomeTeam, q.HomeTeam),
+            COALESCE(q.StandardizedAwayTeam, q.AwayTeam), q.LineValue
         OPTION (RECOMPILE);
         """;
 
@@ -480,6 +465,7 @@ public sealed partial class SqlAutomationRepository
         // Availability only counts the deduplicated odds rows. With RECOMPILE,
         // SQL Server can remove the snapshot lookup entirely for that request.
         command.Parameters.Add(new SqlParameter("@IncludeLatestOddsSnapshot", SqlDbType.Bit) { Value = includeLatestOddsSnapshot });
+        command.CommandTimeout = 120;
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -515,6 +501,26 @@ public sealed partial class SqlAutomationRepository
         return rows;
     }
 
+    public async Task<DateTime?> GetLatestUpcomingOddsUpdateUtcAsync(
+        string source,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MAX(UpdatedAtUtc)
+            FROM dbo.PartidosProximosCuotas
+            WHERE Source = @Source
+              AND MatchDate > SYSUTCDATETIME();
+            """;
+        command.CommandTimeout = 30;
+        command.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 50) { Value = source });
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is null or DBNull)
+            return null;
+        return DateTime.SpecifyKind(Convert.ToDateTime(value), DateTimeKind.Utc);
+    }
+
     public async Task<IReadOnlyList<BotECalibrationObservation>> GetBotECalibrationHistoryAsync(
         string sourceBotKey,
         DateTime asOfDateUtc,
@@ -527,7 +533,10 @@ public sealed partial class SqlAutomationRepository
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var cacheKey = ("bot-calibration-history-v1", sourceBotKey.Trim().ToUpperInvariant(), asOfDateUtc.Ticks);
+        // Live batches on the same match day share the same already-settled
+        // evidence. A day bucket prevents every kickoff timestamp from rebuilding
+        // the complete calibration history while retaining a conservative cutoff.
+        var cacheKey = ("bot-calibration-history-v2", sourceBotKey.Trim().ToUpperInvariant(), asOfDateUtc.Date.Ticks);
         if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out var cached))
             return cached!;
         await _calibrationLock.WaitAsync(cancellationToken);
@@ -536,9 +545,30 @@ public sealed partial class SqlAutomationRepository
             if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out cached))
                 return cached!;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromMinutes(5));
-            var result = await LoadBotECalibrationHistoryAsync(sourceBotKey, asOfDateUtc, timeout.Token, reportPrepared);
-            _cache.Set(cacheKey, result, TimeSpan.FromMinutes(2));
+            // Calibration is required by the calibrated selectors, but its
+            // historical scan must not keep every live bot waiting at 0%.
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            IReadOnlyList<BotECalibrationObservation> result;
+            try
+            {
+                result = await LoadBotECalibrationHistoryAsync(
+                    sourceBotKey,
+                    asOfDateUtc,
+                    timeout.Token,
+                    reportPrepared);
+            }
+            catch (Exception exception) when (
+                !cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Calibration history timed out for {SourceBot}; live batches will retry after 15 minutes.",
+                    sourceBotKey);
+                _logger.LogDebug(exception, "Calibration timeout detail for {SourceBot}.", sourceBotKey);
+                result = Array.Empty<BotECalibrationObservation>();
+                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(15));
+                return result;
+            }
+            _cache.Set(cacheKey, result, TimeSpan.FromHours(6));
             return result;
         }
         finally

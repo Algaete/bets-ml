@@ -113,6 +113,14 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
     private const string GeneralFilteredAuditKeysSql = """
         SELECT EvaluationId = evaluation.AutomatedBotPickEvaluationId,
             evaluation.MatchDate,
+            evaluation.BotKey,
+            evaluation.ApiFootballFixtureId,
+            evaluation.HomeTeam,
+            evaluation.AwayTeam,
+            evaluation.MarketType,
+            evaluation.SelectedSide,
+            evaluation.LineValue,
+            evaluation.EvaluatedAtUtc,
             ModelDecision = evaluation.Decision,
             PublicationStatus = CASE
                 WHEN evaluation.PublishedSelectionId IS NOT NULL
@@ -145,6 +153,9 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         OPTION (RECOMPILE);
 
         SELECT candidate.EvaluationId, candidate.MatchDate,
+            candidate.BotKey, candidate.ApiFootballFixtureId,
+            candidate.HomeTeam, candidate.AwayTeam, candidate.MarketType,
+            candidate.SelectedSide, candidate.LineValue, candidate.EvaluatedAtUtc,
             effective.ModelDecision, effective.PublicationStatus
         INTO #GeneralAuditKeys
         FROM #GeneralAuditCandidates AS candidate
@@ -178,6 +189,9 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
     // temp tables before it can return the first page.
     private const string GeneralApprovedAuditKeysSql = """
         SELECT approved.EvaluationId, approved.MatchDate,
+            approved.BotKey, approved.ApiFootballFixtureId,
+            approved.HomeTeam, approved.AwayTeam, approved.MarketType,
+            approved.SelectedSide, approved.LineValue, approved.EvaluatedAtUtc,
             ModelDecision = CONVERT(NVARCHAR(30), N'Approved'),
             approved.PublicationStatus
         INTO #GeneralAuditKeys
@@ -185,6 +199,14 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         (
             SELECT EvaluationId = evaluation.AutomatedBotPickEvaluationId,
                 evaluation.MatchDate,
+                evaluation.BotKey,
+                evaluation.ApiFootballFixtureId,
+                evaluation.HomeTeam,
+                evaluation.AwayTeam,
+                evaluation.MarketType,
+                evaluation.SelectedSide,
+                evaluation.LineValue,
+                evaluation.EvaluatedAtUtc,
                 PublicationStatus = CONVERT(NVARCHAR(30), CASE
                     WHEN evaluation.PublishedSelectionId IS NOT NULL
                       OR ISNULL(evaluation.Published, 0) = 1 THEN N'Published'
@@ -215,6 +237,14 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
 
             SELECT EvaluationId = evaluation.AutomatedBotPickEvaluationId,
                 evaluation.MatchDate,
+                evaluation.BotKey,
+                evaluation.ApiFootballFixtureId,
+                evaluation.HomeTeam,
+                evaluation.AwayTeam,
+                evaluation.MarketType,
+                evaluation.SelectedSide,
+                evaluation.LineValue,
+                evaluation.EvaluatedAtUtc,
                 PublicationStatus = CONVERT(NVARCHAR(30), CASE
                     WHEN evaluation.PublishedSelectionId IS NOT NULL
                       OR ISNULL(evaluation.Published, 0) = 1 THEN N'Published'
@@ -248,6 +278,43 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
 
         CREATE UNIQUE CLUSTERED INDEX IX_GeneralApprovedAuditKeys
             ON #GeneralAuditKeys(EvaluationId);
+
+        """;
+
+    // General Picks is an operational view. Repeated live runs keep a complete
+    // audit trail, but the table only needs the newest state of the same logical
+    // bot signal. The research page and Data Science Lab continue reading every
+    // audit independently.
+    private const string GeneralCurrentAuditKeysSql = """
+        SELECT ranked.EvaluationId, ranked.MatchDate,
+            ranked.ModelDecision, ranked.PublicationStatus
+        INTO #GeneralCurrentAuditKeys
+        FROM
+        (
+            SELECT keys.EvaluationId, keys.MatchDate,
+                keys.ModelDecision, keys.PublicationStatus,
+                Sequence = ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        keys.BotKey,
+                        CASE WHEN keys.ApiFootballFixtureId > 0
+                            THEN CONCAT(N'API|', keys.ApiFootballFixtureId)
+                            ELSE CONCAT(N'TEAMS|', CONVERT(NVARCHAR(19), keys.MatchDate, 126),
+                                N'|', UPPER(LTRIM(RTRIM(keys.HomeTeam))),
+                                N'|', UPPER(LTRIM(RTRIM(keys.AwayTeam)))) END,
+                        keys.MarketType,
+                        COALESCE(keys.SelectedSide, N''),
+                        keys.LineValue
+                    ORDER BY keys.EvaluatedAtUtc DESC,
+                        keys.EvaluationId DESC
+                )
+            FROM #GeneralAuditKeys AS keys
+        ) AS ranked
+        WHERE ranked.Sequence = 1
+        OPTION (RECOMPILE);
+
+        CREATE UNIQUE CLUSTERED INDEX IX_GeneralCurrentAuditKeys
+            ON #GeneralCurrentAuditKeys(EvaluationId);
 
         """;
 

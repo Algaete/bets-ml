@@ -8,6 +8,8 @@ public sealed class RecommendationJobOptions
     public int PollIntervalSeconds { get; set; } = 5;
     public int LeaseMinutes { get; set; } = 5;
     public int HeartbeatSeconds { get; set; } = 15;
+    public bool RefreshOddsDuringLiveJobs { get; set; } = true;
+    public int LiveOddsRefreshIntervalMinutes { get; set; } = 60;
     public bool ReconcileBotPicksAfterCompletion { get; set; } = true;
     public int ReconciliationMaxSelections { get; set; } = 20000;
     public RecurringRecommendationJobOptions Recurring { get; set; } = new();

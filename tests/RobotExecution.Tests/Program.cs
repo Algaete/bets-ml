@@ -18,6 +18,8 @@ var recover = typeof(RecommendationJobWorker).GetMethod("RecoverLocalLeasesAsync
 await (Task)recover.Invoke(worker, [repository, CancellationToken.None])!;
 Check(repository.Released.SequenceEqual(new[] { repository.DeadJob }), "Only the exited local process can release its reservation.");
 Check(new RecommendationJobOptions().LeaseMinutes == 5, "Crash recovery must not wait an hour.");
+Check(new RecommendationJobOptions() is { RefreshOddsDuringLiveJobs: true, LiveOddsRefreshIntervalMinutes: 60 },
+    "Live recommendation batches must refresh odds before quotes become stale.");
 Console.WriteLine("PASS local recovery preserves live owners and releases only exited processes");
 
 if (args.Contains("--sql")) await CheckCalibrationSql();
@@ -38,7 +40,8 @@ static async Task CheckCalibrationSql()
           AutomatedBotPickEvaluationId BIGINT PRIMARY KEY, ApiFootballFixtureId BIGINT NULL,
           PublishedSelectionId BIGINT NULL, MatchDate DATETIME2, HomeTeam NVARCHAR(150), AwayTeam NVARCHAR(150),
           MarketType NVARCHAR(50), SelectedSide NVARCHAR(10), LineValue DECIMAL(6,2), SelectedOdds DECIMAL(10,2),
-          BaseCalibratedProbability DECIMAL(9,6), MarketNoVigProbability DECIMAL(9,6), DataQualityScore DECIMAL(9,6),
+          BaseCalibratedProbability DECIMAL(9,6), FinalProbability DECIMAL(9,6),
+          MarketNoVigProbability DECIMAL(9,6), DataQualityScore DECIMAL(9,6),
           FeatureSnapshotJson NVARCHAR(MAX), BaseModelTrainedThroughUtc DATETIME2, BaseModelVersion NVARCHAR(120),
           BotKey NVARCHAR(50), Decision NVARCHAR(20),
           CalibrationSourceJson AS JSON_QUERY(CASE WHEN ISJSON(FeatureSnapshotJson)=1 THEN FeatureSnapshotJson ELSE N'{}' END,N'$.empiricalCalibration') PERSISTED);
@@ -88,7 +91,9 @@ static async Task CheckCalibrationSql()
     var optimized = (string)typeof(SqlAutomationRepository).GetField("CalibrationHistorySql", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
     static string Localize(string sql) => sql.Replace("dbo.AutomatedBotPickEvaluations", "#Evaluations")
         .Replace("dbo.AutomatedCornerBetSelections", "#Selections").Replace("dbo.MatchHistory", "#History")
-        .Replace("dbo.AutomatedBotCalibrationProbabilityCache", "#ProbabilityCache");
+        .Replace("dbo.AutomatedBotCalibrationProbabilityCache", "#ProbabilityCache")
+        .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_PerformanceCandidates))", "")
+        .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage))", "");
     var parameters = new { SourceBotKey = "C2026", AsOfDateUtc = new DateTime(2026,9,3) };
     var originalRows = (await connection.QueryAsync<CalibrationRow>(Localize(baseline), parameters)).ToArray();
     var optimizedRows = (await connection.QueryAsync<CalibrationRow>(Localize(optimized), parameters)).ToArray();
@@ -97,7 +102,12 @@ static async Task CheckCalibrationSql()
         row.ActualValue, Probability = row.HasCachedProbability ? row.CachedProbability
             : BotECalibrationSourceProbabilityResolver.Resolve(row.FeatureSnapshotJson, (double?)row.BaseCalibratedProbability),
         row.MarketNoVigProbability, row.DataQualityScore, row.BaseModelVersion });
-    Check(originalRows.Select(Normalize).SequenceEqual(optimizedRows.Select(Normalize)), "Calibration identities, order, probability types and outcomes must remain identical.");
+    var originalNormalized = originalRows.Select(Normalize).ToArray();
+    var optimizedNormalized = optimizedRows.Select(Normalize).ToArray();
+    Check(originalNormalized.SequenceEqual(optimizedNormalized),
+        $"Calibration identities, order, probability types and outcomes must remain identical. " +
+        $"OriginalIds={string.Join(',', originalRows.Select(row => row.EvaluationId))}; " +
+        $"OptimizedIds={string.Join(',', optimizedRows.Select(row => row.EvaluationId))}");
     Check(optimizedRows.Single(row => row.EvaluationId == publishedPriorityId).FixtureId == 200, "Published match identity must retain priority.");
     Check(!optimizedRows.Any(row => new[] { ambiguousId, unavailableId, futureModelId }.Contains(row.EvaluationId)), "Ambiguous matches, missing official outcomes and temporal leakage remain excluded.");
     Console.WriteLine($"PASS calibration SQL: {optimizedRows.Length} identical rows across 12 markets, numeric/string/null/malformed snapshots, identity ambiguity and model cutoffs");
@@ -150,9 +160,9 @@ static async Task CheckCalibrationSql()
 
     Task Insert(long evalId, string market, string json, long? fixture, long? selection, string home) => connection.ExecuteAsync("""
         INSERT #Evaluations (AutomatedBotPickEvaluationId,ApiFootballFixtureId,PublishedSelectionId,MatchDate,HomeTeam,AwayTeam,
-            MarketType,SelectedSide,LineValue,SelectedOdds,BaseCalibratedProbability,MarketNoVigProbability,DataQualityScore,
+            MarketType,SelectedSide,LineValue,SelectedOdds,BaseCalibratedProbability,FinalProbability,MarketNoVigProbability,DataQualityScore,
             FeatureSnapshotJson,BaseModelTrainedThroughUtc,BaseModelVersion,BotKey,Decision)
-        VALUES (@Id,@Fixture,@Selection,'2026-09-01T15:00:00',@Home,N'Visitante',@Market,N'Over',2.5,1.9,0.55,0.52,0.9,@Json,'2026-08-01',N'v1',N'C2026',N'Approved');
+        VALUES (@Id,@Fixture,@Selection,'2026-09-01T15:00:00',@Home,N'Visitante',@Market,N'Over',2.5,1.9,0.55,0.55,0.52,0.9,@Json,'2026-08-01',N'v1',N'C2026',N'Approved');
         """, new { Id=evalId, Fixture=fixture, Selection=selection, Home=home, Market=market, Json=json });
 }
 
