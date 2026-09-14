@@ -1,140 +1,114 @@
+using System.Data;
+using Microsoft.Data.SqlClient;
+
 namespace AutomatedCornersBot.Api;
 
 public sealed partial class SqlAutomationRepository
 {
+    private async Task PrepareCalibrationEvaluationCacheAsync(SqlConnection connection,
+        string sourceBotKey, DateTime asOfDateUtc, CancellationToken cancellationToken,
+        Func<int, Task>? reportPrepared)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandTimeout = 120;
+        command.CommandText = "CREATE TABLE #CalibrationProjectionMissing (EvaluationId BIGINT PRIMARY KEY);";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        command.CommandText = CalibrationProjectionMissingSql;
+        command.Parameters.Add(new SqlParameter("@SourceBotKey", SqlDbType.NVarChar, 50)
+            { Value = sourceBotKey.Trim().ToUpperInvariant() });
+        command.Parameters.Add(new SqlParameter("@AsOfDateUtc", SqlDbType.DateTime2) { Value = asOfDateUtc });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        command.Parameters.Clear();
+        var prepared = 0;
+        while (true)
+        {
+            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            command.Transaction = transaction;
+            command.CommandText = CalibrationProjectionBatchSql;
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+            await transaction.CommitAsync(cancellationToken);
+            command.Transaction = null;
+            if (count == 0) break;
+            prepared += count;
+            _logger.LogInformation("Calibration metadata prepared. SourceBot={SourceBot}, Rows={Rows}", sourceBotKey, prepared);
+            if (reportPrepared is not null) await reportPrepared(prepared);
+        }
+    }
+
+    internal const string CalibrationProjectionMissingSql = """
+        INSERT #CalibrationProjectionMissing (EvaluationId)
+        SELECT e.AutomatedBotPickEvaluationId
+        FROM dbo.AutomatedBotPickEvaluations AS e
+            WITH (INDEX(IX_AutomatedBotPickEvaluations_BotDecisionDate))
+        WHERE e.BotKey = @SourceBotKey
+          AND e.Decision IN (N'Approved', N'Rejected')
+          AND e.MatchDate < @AsOfDateUtc AND e.MatchDate < SYSUTCDATETIME()
+          AND e.SelectedSide IN (N'Over', N'Under') AND e.SelectedOdds > 1
+          AND NOT EXISTS (SELECT 1 FROM dbo.AutomatedBotCalibrationEvaluationCache AS cached
+              WHERE cached.AutomatedBotPickEvaluationId = e.AutomatedBotPickEvaluationId)
+        OPTION (RECOMPILE);
+        """;
+
+    internal const string CalibrationProjectionBatchSql = """
+        DROP TABLE IF EXISTS #CalibrationProjectionBatch;
+        SELECT TOP (250) EvaluationId INTO #CalibrationProjectionBatch
+        FROM #CalibrationProjectionMissing ORDER BY EvaluationId;
+        INSERT dbo.AutomatedBotCalibrationEvaluationCache
+            (AutomatedBotPickEvaluationId, BotKey, Decision, ApiFootballFixtureId, PublishedSelectionId,
+             MatchDate, HomeTeam, AwayTeam, MarketType, SelectedSide, LineValue, SelectedOdds,
+             BaseCalibratedProbability, MarketNoVigProbability, DataQualityScore,
+             BaseModelTrainedThroughUtc, BaseModelVersion)
+        SELECT e.AutomatedBotPickEvaluationId, e.BotKey, e.Decision,
+            e.ApiFootballFixtureId, e.PublishedSelectionId, e.MatchDate, e.HomeTeam, e.AwayTeam,
+            e.MarketType, e.SelectedSide, e.LineValue, e.SelectedOdds, e.BaseCalibratedProbability,
+            e.MarketNoVigProbability, e.DataQualityScore, e.BaseModelTrainedThroughUtc, e.BaseModelVersion
+        FROM #CalibrationProjectionBatch AS batch
+        INNER LOOP JOIN dbo.AutomatedBotPickEvaluations AS e WITH (UPDLOCK, ROWLOCK, FORCESEEK)
+          ON e.AutomatedBotPickEvaluationId = batch.EvaluationId
+        WHERE NOT EXISTS (SELECT 1 FROM dbo.AutomatedBotCalibrationEvaluationCache AS cached WITH (UPDLOCK, HOLDLOCK)
+            WHERE cached.AutomatedBotPickEvaluationId = e.AutomatedBotPickEvaluationId)
+        OPTION (RECOMPILE, FORCE ORDER);
+        DELETE missing FROM #CalibrationProjectionMissing AS missing
+        INNER JOIN #CalibrationProjectionBatch AS batch ON batch.EvaluationId = missing.EvaluationId;
+        SELECT COUNT(*) FROM #CalibrationProjectionBatch;
+        """;
+
     internal const string CalibrationPreparationSql = """
         SET NOCOUNT ON;
-        -- Resolve the small settled identity universe from covering indexes
-        -- before looking up calibration-only columns in the wide audit table.
-        -- Feature and decision JSON can exceed tens of KB per row, so scanning
-        -- the base table here starves both live execution and Bot Picks on S0.
-        SELECT DISTINCT candidate.AutomatedBotPickEvaluationId
-        INTO #CalibrationCandidateIds
-        FROM
-        (
-            SELECT e.AutomatedBotPickEvaluationId
-            FROM dbo.AutomatedBotPickEvaluations AS e
-                WITH (INDEX(IX_AutomatedBotPickEvaluations_PerformanceCandidates))
-            WHERE e.BotKey = @SourceBotKey
-              AND e.BotKey IN (N'C2026', N'D2026', N'E2026', N'F2026')
-              AND e.MatchDate < @AsOfDateUtc
-              AND e.MatchDate < SYSUTCDATETIME()
-              AND e.Decision IN (N'Approved', N'Rejected')
-              AND e.ApiFootballFixtureId > 0
-              AND e.SelectedSide IN (N'Over', N'Under')
-              AND e.SelectedOdds > 1
-              AND e.FinalProbability > 0 AND e.FinalProbability < 1
-              AND EXISTS
-              (
-                  SELECT 1
-                  FROM dbo.MatchHistory AS settled
-                  WHERE settled.ApiFootballFixtureId = e.ApiFootballFixtureId
-                    AND UPPER(LTRIM(RTRIM(COALESCE(settled.FixtureStatus, N''))))
-                        IN (N'FT', N'AET', N'PEN')
-                    AND
-                    (
-                        (e.MarketType IN (N'TotalGoals', N'HomeTeamGoals', N'AwayTeamGoals')
-                            AND ISNULL(settled.ApiFootballGoalsAvailable, 0) = 1)
-                        OR (e.MarketType IN (N'TotalCorners', N'HomeTeamCorners', N'AwayTeamCorners')
-                            AND ISNULL(settled.ApiFootballCornersAvailable, 0) = 1)
-                        OR (e.MarketType IN (N'TotalShots', N'HomeTeamShots', N'AwayTeamShots')
-                            AND ISNULL(settled.ApiFootballShotsAvailable, 0) = 1)
-                        OR (e.MarketType IN (N'TotalShotsOnGoal', N'HomeTeamShotsOnGoal', N'AwayTeamShotsOnGoal')
-                            AND ISNULL(settled.ApiFootballShotsOnGoalAvailable, 0) = 1)
-                    )
-              )
+        -- Many evaluations share a kickoff. Convert each distinct timestamp
+        -- once instead of running AT TIME ZONE repeatedly over the full ledger.
+        SELECT DISTINCT e.MatchDate INTO #CalibrationMatchDates
+        FROM dbo.AutomatedBotCalibrationEvaluationCache AS e
+        WHERE e.BotKey = @SourceBotKey
+          AND e.Decision IN (N'Approved', N'Rejected')
+          AND e.MatchDate < @AsOfDateUtc AND e.MatchDate < SYSUTCDATETIME();
+        SELECT MatchDate, MatchDateUtc = CAST(MatchDate AT TIME ZONE 'Pacific SA Standard Time'
+            AT TIME ZONE 'UTC' AS DATETIME2)
+        INTO #CalibrationConvertedDates FROM #CalibrationMatchDates;
+        CREATE UNIQUE CLUSTERED INDEX IX_CalibrationConvertedDates ON #CalibrationConvertedDates(MatchDate);
 
-            UNION ALL
-
-            -- Preserve uncommon published and legacy name/date identities.
-            -- The date index covers this pass; only the resulting ids touch the
-            -- wide table below.
-            SELECT e.AutomatedBotPickEvaluationId
-            FROM dbo.AutomatedBotPickEvaluations AS e
-                WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage))
-            WHERE e.BotKey = @SourceBotKey
-              AND e.MatchDate < @AsOfDateUtc
-              AND e.MatchDate < SYSUTCDATETIME()
-              AND e.Decision IN (N'Approved', N'Rejected')
-              AND e.SelectedSide IN (N'Over', N'Under')
-              AND e.SelectedOdds > 1
-              AND (e.PublishedSelectionId IS NOT NULL OR e.ApiFootballFixtureId IS NULL)
-        ) AS candidate
-        OPTION (RECOMPILE);
-        CREATE UNIQUE CLUSTERED INDEX IX_CalibrationCandidateIds
-            ON #CalibrationCandidateIds(AutomatedBotPickEvaluationId);
-
-        WITH CalibrationEvaluationCandidates AS
-        (
-            SELECT e.AutomatedBotPickEvaluationId, e.ApiFootballFixtureId,
-                e.PublishedSelectionId, e.MatchDate,
-                HomeTeam = CONVERT(NVARCHAR(150), N''),
-                AwayTeam = CONVERT(NVARCHAR(150), N''),
-                e.MarketType, e.SelectedSide, e.LineValue, e.SelectedOdds,
-                e.BaseCalibratedProbability, e.MarketNoVigProbability,
-                e.DataQualityScore, e.BaseModelTrainedThroughUtc,
-                BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
-            FROM #CalibrationCandidateIds AS candidate
-            INNER JOIN dbo.AutomatedBotPickEvaluations AS e
-              ON e.AutomatedBotPickEvaluationId = candidate.AutomatedBotPickEvaluationId
-            WHERE e.BotKey = @SourceBotKey
-              AND e.MatchDate < @AsOfDateUtc
-              AND e.MatchDate < SYSUTCDATETIME()
-              AND e.Decision IN (N'Approved', N'Rejected')
-              AND e.SelectedSide IN (N'Over', N'Under')
-              AND e.SelectedOdds > 1
-              AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
-              AND e.DataQualityScore BETWEEN 0 AND 1
-              AND e.BaseModelTrainedThroughUtc IS NOT NULL
-              AND (e.PublishedSelectionId IS NOT NULL OR e.ApiFootballFixtureId IS NOT NULL)
-              AND CAST(e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                    AS DATETIME2) > e.BaseModelTrainedThroughUtc
-
-            UNION ALL
-
-            SELECT e.AutomatedBotPickEvaluationId, e.ApiFootballFixtureId,
-                e.PublishedSelectionId, e.MatchDate, e.HomeTeam, e.AwayTeam,
-                e.MarketType, e.SelectedSide, e.LineValue, e.SelectedOdds,
-                e.BaseCalibratedProbability, e.MarketNoVigProbability,
-                e.DataQualityScore, e.BaseModelTrainedThroughUtc,
-                BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
-            FROM #CalibrationCandidateIds AS candidate
-            INNER JOIN dbo.AutomatedBotPickEvaluations AS e
-              ON e.AutomatedBotPickEvaluationId = candidate.AutomatedBotPickEvaluationId
-            WHERE e.BotKey = @SourceBotKey
-              AND e.MatchDate < @AsOfDateUtc
-              AND e.MatchDate < SYSUTCDATETIME()
-              AND e.Decision IN (N'Approved', N'Rejected')
-              AND e.SelectedSide IN (N'Over', N'Under')
-              AND e.SelectedOdds > 1
-              AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
-              AND e.DataQualityScore BETWEEN 0 AND 1
-              AND e.BaseModelTrainedThroughUtc IS NOT NULL
-              AND e.PublishedSelectionId IS NULL AND e.ApiFootballFixtureId IS NULL
-              AND CAST(e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                    AS DATETIME2) > e.BaseModelTrainedThroughUtc
-        )
-        SELECT
-            e.AutomatedBotPickEvaluationId,
-            e.ApiFootballFixtureId,
-            e.PublishedSelectionId,
-            e.MatchDate,
-            ExpectedUtcDate = CAST(
-                e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                AS DATE),
-            e.HomeTeam,
-            e.AwayTeam,
-            e.MarketType,
-            e.SelectedSide,
-            e.LineValue,
-            e.SelectedOdds,
-            e.BaseCalibratedProbability,
-            e.MarketNoVigProbability,
-            e.DataQualityScore,
-            e.BaseModelTrainedThroughUtc,
-            e.BaseModelVersion
+        -- Metadata is prepared once in bounded, committed blocks. Reading this
+        -- compact projection avoids key lookups into the multi-GB JSON ledger.
+        SELECT e.AutomatedBotPickEvaluationId, e.ApiFootballFixtureId,
+            e.PublishedSelectionId, e.MatchDate,
+            ExpectedUtcDate = CAST(dates.MatchDateUtc AS DATE), dates.MatchDateUtc,
+            e.HomeTeam, e.AwayTeam, e.MarketType, e.SelectedSide,
+            e.LineValue, e.SelectedOdds, e.BaseCalibratedProbability,
+            e.MarketNoVigProbability, e.DataQualityScore, e.BaseModelTrainedThroughUtc,
+            BaseModelVersion = COALESCE(NULLIF(e.BaseModelVersion, N''), N'unknown')
         INTO #CalibrationEvaluations
-        FROM CalibrationEvaluationCandidates AS e
+        FROM dbo.AutomatedBotCalibrationEvaluationCache AS e
+        INNER JOIN #CalibrationConvertedDates AS dates ON dates.MatchDate = e.MatchDate
+        WHERE e.BotKey = @SourceBotKey
+          AND e.MatchDate < @AsOfDateUtc
+          AND e.MatchDate < SYSUTCDATETIME()
+          AND e.Decision IN (N'Approved', N'Rejected')
+          AND e.SelectedSide IN (N'Over', N'Under')
+          AND e.SelectedOdds > 1
+          AND e.MarketNoVigProbability > 0 AND e.MarketNoVigProbability < 1
+          AND e.DataQualityScore BETWEEN 0 AND 1
+          AND e.BaseModelTrainedThroughUtc IS NOT NULL
+          AND dates.MatchDateUtc > e.BaseModelTrainedThroughUtc
         OPTION (RECOMPILE);
         CREATE UNIQUE CLUSTERED INDEX IX_CalibrationEvaluations ON #CalibrationEvaluations(AutomatedBotPickEvaluationId);
 
@@ -238,9 +212,7 @@ public sealed partial class SqlAutomationRepository
             EvaluationId = e.AutomatedBotPickEvaluationId,
             OriginalMatchDate = e.MatchDate,
             FixtureId = mh.ApiFootballFixtureId,
-            MatchDateUtc = CAST(
-                e.MatchDate AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC'
-                AS DATETIME2),
+            e.MatchDateUtc,
             e.MarketType,
             e.SelectedSide,
             LineValue = e.LineValue,
@@ -317,34 +289,38 @@ public sealed partial class SqlAutomationRepository
 
         """;
 
-    internal const string CalibrationSnapshotBatchSql = """
-        DROP TABLE IF EXISTS #CalibrationMissingSnapshots;
+    private const string CalibrationSnapshotColumnsSql = """
+        -- Fetch only the missing ids. Parse JSON in the application: OPENJSON
+        -- over the audit blob makes compilation request expensive blob-column
+        -- statistics before even reading this bounded block.
         SELECT evaluation.AutomatedBotPickEvaluationId AS EvaluationId,
-            FeatureSnapshotJson = CASE
-                WHEN source.RootPropertyCount > 1 THEN evaluation.FeatureSnapshotJson
-                WHEN source.CalibrationObject IS NULL THEN N'{}'
-                ELSE CONCAT(N'{"empiricalCalibration":', source.CalibrationObject, N'}') END,
-            evaluation.BaseCalibratedProbability,
-            SourceHash = HASHBYTES('SHA2_256', CONCAT(
-                COALESCE(source.CalibrationObject,N'{}'), N'|',
-                COALESCE(CONVERT(NVARCHAR(40),evaluation.BaseCalibratedProbability),N'NULL')))
-        INTO #CalibrationMissingSnapshots
+            evaluation.FeatureSnapshotJson, evaluation.BaseCalibratedProbability,
+            SourceHash = CONVERT(BINARY(32), NULL)
+        """;
+
+    private const string CalibrationSnapshotSourceSql = """
         FROM (SELECT TOP (@SnapshotBatchSize) EvaluationId FROM #CalibrationMissingSources ORDER BY EvaluationId) AS missing
-        INNER LOOP JOIN dbo.AutomatedBotPickEvaluations AS evaluation WITH (UPDLOCK, ROWLOCK, FORCESEEK)
+        INNER LOOP JOIN dbo.AutomatedBotPickEvaluations AS evaluation
+            WITH (UPDLOCK, ROWLOCK, INDEX(PK_AutomatedBotPickEvaluations), FORCESEEK)
           ON evaluation.AutomatedBotPickEvaluationId = missing.EvaluationId
-        CROSS APPLY
-        (
-            -- Keep types and duplicate-property semantics of JsonDocument.
-            -- Duplicate root keys use the original JSON; a unique object keeps
-            -- nested duplicates intact while omitting unrelated feature history.
-            SELECT RootPropertyCount = COUNT_BIG(*),
-                CalibrationObject = MAX(CASE WHEN [type] = 5 THEN [value] END)
-            FROM OPENJSON(CASE WHEN ISJSON(evaluation.FeatureSnapshotJson) = 1
-                THEN evaluation.FeatureSnapshotJson ELSE N'{}' END)
-            WHERE [key] COLLATE Latin1_General_100_BIN2 = N'empiricalCalibration'
-        ) AS source
         OPTION (RECOMPILE, FORCE ORDER);
 
+        """;
+
+    internal const string CalibrationSnapshotReadSql = CalibrationSnapshotColumnsSql + "\n" + CalibrationSnapshotSourceSql;
+    internal const string CalibrationSnapshotBatchSql = "DROP TABLE IF EXISTS #CalibrationMissingSnapshots;\n"
+        + CalibrationSnapshotColumnsSql + "\nINTO #CalibrationMissingSnapshots\n" + CalibrationSnapshotSourceSql;
+
+    internal const string CalibrationCachedResultsSql = """
+        SELECT observation.EvaluationId, observation.FixtureId, observation.MatchDateUtc,
+            observation.MarketType, observation.SelectedSide, observation.LineValue,
+            observation.Odds, observation.ActualValue, observation.BaseCalibratedProbability,
+            observation.MarketNoVigProbability, observation.DataQualityScore,
+            FeatureSnapshotJson = CONVERT(NVARCHAR(MAX), NULL), observation.BaseModelVersion,
+            HasCachedProbability = CONVERT(BIT, 1), cached.SourceProbability AS CachedProbability
+        FROM #CalibrationObservations AS observation
+        INNER JOIN #CalibrationCachedSources AS cached ON cached.EvaluationId = observation.EvaluationId
+        ORDER BY observation.OriginalMatchDate, observation.EvaluationId;
         """;
 
     internal const string CalibrationResultsSql = """

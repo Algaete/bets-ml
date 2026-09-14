@@ -1,4 +1,6 @@
 using System.Data;
+using System.Globalization;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using System.Text;
@@ -56,6 +58,7 @@ public sealed partial class SqlAutomationRepository
                 Path.Combine(_environment.ContentRootPath, "sql", "20260904_automated_bot_research.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_recommendation_job_activity.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_calibration_probability_cache.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260914_calibration_evaluation_cache.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_recommendation_job_errors.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_general_pick_manual_settlements.sql")
             };
@@ -533,10 +536,10 @@ public sealed partial class SqlAutomationRepository
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        // Live batches on the same match day share the same already-settled
-        // evidence. A day bucket prevents every kickoff timestamp from rebuilding
-        // the complete calibration history while retaining a conservative cutoff.
-        var cacheKey = ("bot-calibration-history-v2", sourceBotKey.Trim().ToUpperInvariant(), asOfDateUtc.Date.Ticks);
+        // Load the complete day bucket: the calculator enforces the strict
+        // per-candidate outcome cutoff. Never cache failures as empty evidence.
+        var evidenceDay = asOfDateUtc.Date < DateTime.UtcNow.Date ? asOfDateUtc.Date : DateTime.UtcNow.Date;
+        var cacheKey = ("bot-calibration-history-v3", sourceBotKey.Trim().ToUpperInvariant(), evidenceDay.Ticks);
         if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out var cached))
             return cached!;
         await _calibrationLock.WaitAsync(cancellationToken);
@@ -544,31 +547,12 @@ public sealed partial class SqlAutomationRepository
         {
             if (_cache.TryGetValue<IReadOnlyList<BotECalibrationObservation>>(cacheKey, out cached))
                 return cached!;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            // Calibration is required by the calibrated selectors, but its
-            // historical scan must not keep every live bot waiting at 0%.
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            IReadOnlyList<BotECalibrationObservation> result;
-            try
-            {
-                result = await LoadBotECalibrationHistoryAsync(
-                    sourceBotKey,
-                    asOfDateUtc,
-                    timeout.Token,
-                    reportPrepared);
-            }
-            catch (Exception exception) when (
-                !cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
-            {
-                _logger.LogWarning(
-                    "Calibration history timed out for {SourceBot}; live batches will retry after 15 minutes.",
-                    sourceBotKey);
-                _logger.LogDebug(exception, "Calibration timeout detail for {SourceBot}.", sourceBotKey);
-                result = Array.Empty<BotECalibrationObservation>();
-                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(15));
-                return result;
-            }
-            _cache.Set(cacheKey, result, TimeSpan.FromHours(6));
+            var loadWatch = Stopwatch.StartNew();
+            var result = await LoadBotECalibrationHistoryAsync(
+                sourceBotKey, evidenceDay.AddDays(1), cancellationToken, reportPrepared);
+            _cache.Set(cacheKey, result, TimeSpan.FromMinutes(30));
+            _logger.LogInformation("Calibration history loaded. SourceBot={SourceBot}, Observations={Observations}, Seconds={Seconds:F2}",
+                sourceBotKey, result.Count, loadWatch.Elapsed.TotalSeconds);
             return result;
         }
         finally
@@ -582,6 +566,7 @@ public sealed partial class SqlAutomationRepository
     {
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PrepareCalibrationEvaluationCacheAsync(connection, sourceBotKey, asOfDateUtc, cancellationToken, reportPrepared);
         await using var command = connection.CreateCommand();
         command.CommandText = "CREATE TABLE #CalibrationParameters (SourceBotKey NVARCHAR(50), AsOfDateUtc DATETIME2);";
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -599,20 +584,29 @@ public sealed partial class SqlAutomationRepository
         {
             await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
             command.Transaction = transaction;
-            command.CommandText = "DECLARE @SnapshotBatchSize INT=100;\n" + CalibrationSnapshotBatchSql + "\nSELECT * FROM #CalibrationMissingSnapshots;";
+            // Stream blobs directly: copying them to tempdb doubles the cold
+            // history I/O on small SQL tiers. Only compact probabilities persist.
+            command.CommandText = "DECLARE @SnapshotBatchSize INT=100;\n" + CalibrationSnapshotReadSql;
             var cacheRows = new DataTable();
             cacheRows.Columns.Add("EvaluationId", typeof(long));
             cacheRows.Columns.Add("SourceHash", typeof(byte[]));
             cacheRows.Columns.Add("SourceProbability", typeof(double));
-            await using (var snapshots = await command.ExecuteReaderAsync(cancellationToken))
+            var batchWatch = Stopwatch.StartNew();
+            long snapshotBytes = 0;
+            await using (var snapshots = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
             {
                 while (await snapshots.ReadAsync(cancellationToken))
                 {
+                    // SequentialAccess avoids buffering/replaying a complete
+                    // large NVARCHAR(MAX) row before ReadAsync can return.
+                    var evaluationId = snapshots.GetInt64(0);
+                    var featureJson = snapshots["FeatureSnapshotJson"] as string;
+                    snapshotBytes += (featureJson?.Length ?? 0) * 2L;
+                    var baseProbability = snapshots["BaseCalibratedProbability"] is decimal value ? value : (decimal?)null;
                     var probability = BotECalibrationSourceProbabilityResolver.Resolve(
-                        snapshots["FeatureSnapshotJson"] as string,
-                        snapshots["BaseCalibratedProbability"] is decimal value ? (double)value : null);
-                    cacheRows.Rows.Add(snapshots.GetInt64(snapshots.GetOrdinal("EvaluationId")),
-                        (byte[])snapshots["SourceHash"], (object?)probability ?? DBNull.Value);
+                        featureJson, baseProbability.HasValue ? (double)baseProbability.Value : null);
+                    var sourceHash = CreateCalibrationSourceHash(featureJson, baseProbability);
+                    cacheRows.Rows.Add(evaluationId, sourceHash, (object?)probability ?? DBNull.Value);
                 }
             }
             if (cacheRows.Rows.Count > 0)
@@ -621,10 +615,11 @@ public sealed partial class SqlAutomationRepository
             command.Transaction = null;
             if (cacheRows.Rows.Count == 0) break;
             prepared += cacheRows.Rows.Count;
-            _logger.LogInformation("Calibration source cache prepared. SourceBot={SourceBot}, Rows={Rows}", sourceBotKey, prepared);
+            _logger.LogInformation("Calibration source cache prepared. SourceBot={SourceBot}, Rows={Rows}, SnapshotBytes={SnapshotBytes}, BatchSeconds={BatchSeconds:F2}",
+                sourceBotKey, prepared, snapshotBytes, batchWatch.Elapsed.TotalSeconds);
             if (reportPrepared is not null) await reportPrepared(prepared);
         }
-        command.CommandText = CalibrationResultsSql;
+        command.CommandText = CalibrationCachedResultsSql;
         var observations = new List<BotECalibrationObservation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var baseCalibratedProbabilityOrdinal = reader.GetOrdinal("BaseCalibratedProbability");
@@ -887,6 +882,15 @@ public sealed partial class SqlAutomationRepository
         Add(command, "@Explanation", SqlDbType.NVarChar, decision.Summary, 1000);
         Add(command, "@FeatureSnapshotJson", SqlDbType.NVarChar, decision.FeatureSnapshotJson);
         Add(command, "@EvidenceSnapshotHash", SqlDbType.Char, evidenceFingerprint, 64);
+        // Legacy snapshots fall back to the DECIMAL(9,6) actually persisted by
+        // SQL, not a more precise value that only existed in the request.
+        var calibrationBaseProbability = decimal.Round(Convert.ToDecimal(decision.BaseCalibratedProbability),
+            6, MidpointRounding.AwayFromZero);
+        Add(command, "@CalibrationSourcePrepared", SqlDbType.Bit, true);
+        Add(command, "@CalibrationSourceProbability", SqlDbType.Float,
+            BotECalibrationSourceProbabilityResolver.Resolve(decision.FeatureSnapshotJson, (double)calibrationBaseProbability));
+        Add(command, "@CalibrationSourceHash", SqlDbType.Binary,
+            CreateCalibrationSourceHash(decision.FeatureSnapshotJson, calibrationBaseProbability), 32);
         Add(command, "@PublishedSelectionId", SqlDbType.BigInt, model.PublishedSelectionId);
         Add(command, "@PublicationStatus", SqlDbType.NVarChar, model.PublicationStatus, 20);
         Add(command, "@ProductionDecision", SqlDbType.NVarChar, model.ProductionDecision, 30);
@@ -908,6 +912,10 @@ public sealed partial class SqlAutomationRepository
         parameter.Value = value ?? DBNull.Value;
         command.Parameters.Add(parameter);
     }
+
+    private static byte[] CreateCalibrationSourceHash(string? featureJson, decimal? baseProbability) =>
+        SHA256.HashData(Encoding.Unicode.GetBytes((featureJson ?? string.Empty) + "|"
+            + (baseProbability?.ToString("F6", CultureInfo.InvariantCulture) ?? "NULL")));
 
     private static void AddDecimal(SqlCommand command, string name, double? value, byte precision, byte scale) =>
         AddDecimal(command, name, value is null ? null : Convert.ToDecimal(value.Value), precision, scale);

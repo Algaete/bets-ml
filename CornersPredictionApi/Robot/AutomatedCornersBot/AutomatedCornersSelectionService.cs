@@ -296,7 +296,6 @@ public sealed class AutomatedCornersSelectionService
                 }
                 catch (Exception exception)
                 {
-                    calibrationHistoryBySourceBot[sourceBotKey] = Array.Empty<BotECalibrationObservation>();
                     _logger.LogError(
                         exception,
                         "Empirical calibration evidence could not be loaded. SourceBot={SourceBot}",
@@ -1272,8 +1271,9 @@ public sealed class AutomatedCornersSelectionService
             if (winnerOnly && !isWinner)
                 continue;
 
-            var publicationStatus = "ModelRejected";
-            var productionDecision = "ModelRejected";
+            var publicationStatus = evaluation.Decision.Decision.Equals("PendingData", StringComparison.OrdinalIgnoreCase)
+                ? "PendingData" : "ModelRejected";
+            var productionDecision = publicationStatus;
             var productionReason = evaluation.Decision.Summary;
             if (evaluation.Decision.Decision.Equals("Approved", StringComparison.OrdinalIgnoreCase))
             {
@@ -3231,7 +3231,9 @@ public sealed class AutomatedCornersSelectionService
                     out var intelligenceSnapshot)
                     ? intelligenceSnapshot
                     : null,
-            PredictionTimestampUtc: DateTime.UtcNow);
+            PredictionTimestampUtc: DateTime.UtcNow,
+            CalibrationHistoryLoadFailed: configuration.EmpiricalCalibration.Enabled
+                && !calibrationHistoryBySourceBot.ContainsKey(configuration.EmpiricalCalibration.SourceBotKey));
         var decision = _botCPickDecisionEngine.Evaluate(input, configuration);
 
         _logger.LogDebug(

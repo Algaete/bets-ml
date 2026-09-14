@@ -23,6 +23,7 @@ public static class BotCDecisionCodes
     public const string RejectedOdds = "REJECTED_ODDS_OUT_OF_RANGE";
     public const string RejectedRuleScore = "REJECTED_RULE_BASED_SCORE_LOW";
     public const string PendingHistory = "PENDING_MISSING_TEAM_HISTORY";
+    public const string PendingCalibrationHistory = "PENDING_CALIBRATION_HISTORY_UNAVAILABLE";
     public const string PendingOdds = "PENDING_MISSING_ODDS";
     public const string InvalidInput = "REJECTED_INVALID_INPUT";
     public const string RejectedModelUnavailable = "REJECTED_MODEL_NOT_AVAILABLE";

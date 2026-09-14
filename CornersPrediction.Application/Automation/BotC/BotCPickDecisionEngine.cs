@@ -34,7 +34,8 @@ public sealed record BotCPickEvaluationInput(
     IReadOnlyList<BotDTeamResultObservation>? TeamStrengthHistory = null,
     IReadOnlyList<BotECalibrationObservation>? CalibrationHistory = null,
     MatchIntelligenceSnapshotPair? FootballIntelligenceSnapshot = null,
-    DateTime? PredictionTimestampUtc = null);
+    DateTime? PredictionTimestampUtc = null,
+    bool CalibrationHistoryLoadFailed = false);
 
 public sealed record BotCDistributionStatistics(
     int SampleCount,
@@ -148,6 +149,14 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
             risks.Add(BotCRiskFlags.InvalidOdds);
             reasons.Add(BotCDecisionCodes.PendingOdds);
             return EmptyDecision("PendingData", input, config, risks, reasons, $"No existe una cuota {selectedSide} utilizable.", selectedSide);
+        }
+        if (config.EmpiricalCalibration.Enabled && input.CalibrationHistoryLoadFailed)
+        {
+            risks.Add(BotCRiskFlags.EmpiricalCalibrationUnavailable);
+            reasons.Add(BotCDecisionCodes.PendingCalibrationHistory);
+            return EmptyDecision("PendingData", input, config, risks, reasons,
+                "No se pudo cargar el historial de calibración. Evaluación pendiente de reintento; no es un rechazo del modelo.",
+                selectedSide, selectedOdds);
         }
         if (oppositeOdds is null || oppositeOdds <= 1m)
         {
@@ -430,7 +439,7 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
                 ? BotCDecisionCodes.RejectedProbability
                 : useMetaModel ? BotCDecisionCodes.RejectedMetaProbability : BotCDecisionCodes.RejectedProbability);
         else
-            reasons.Add(config.EmpiricalCalibration.Enabled
+            reasons.Add(config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
                 ? BotCDecisionCodes.ApprovedEmpiricalCalibration
                 : useMetaModel ? BotCDecisionCodes.ApprovedMetaProbability : BotCDecisionCodes.ApprovedProbability);
         if (finalEdge < thresholds.MinimumFinalEdge) thresholdFailures.Add(BotCDecisionCodes.RejectedEdge); else reasons.Add(BotCDecisionCodes.ApprovedEdge);
@@ -526,7 +535,7 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
             configuration = config
         };
         var featureSnapshotJson = JsonSerializer.Serialize(snapshot, JsonOptions);
-        var probabilityLabel = config.EmpiricalCalibration.Enabled
+        var probabilityLabel = config.EmpiricalCalibration.Enabled && empiricalCalibration.IsAvailable
             ? "probabilidad equivalente empírica conservadora"
             : useMetaModel ? "meta-probabilidad" : "probabilidad base calibrada";
         var strengthLabel = config.TeamStrength.Enabled
@@ -573,6 +582,7 @@ public sealed class BotCPickDecisionEngine : IBotCPickDecisionEngine
             input.Line,
             input.AsOfDateUtc,
             input.BaseModelTrainedThroughUtc,
+            input.CalibrationHistoryLoadFailed,
             decision,
             reasons,
             risks

@@ -54,6 +54,7 @@ var tests = new (string Name, Action Execute)[]
     ,("Bot F calibration history uses its pre-calibration probability", BotFHistoryUsesPreCalibrationProbability)
     ,("Bot E and H calibration history preserves legacy base probability", BotEAndHHistoryPreservesBaseProbability)
     ,("Calibration history repository never feeds FinalProbability", CalibrationHistoryRepositoryAvoidsFinalProbability)
+    ,("Calibration infrastructure failures remain pending instead of rejecting sample size", CalibrationLoadFailureRemainsPending)
     ,("Production decisions use the exact immutable bilateral odds snapshot", ProductionUsesImmutableBilateralOddsSnapshot)
     ,("Scientific decisions remain separate from publication gates", ScientificDecisionRemainsSeparateFromPublication)
     ,("Selector evidence is immutable per feature snapshot", SelectorEvidenceIsSnapshotAppendOnly)
@@ -309,6 +310,34 @@ static void CalibrationHistoryRepositoryAvoidsFinalProbability()
         "BotECalibrationSourceProbabilityResolver.Resolve",
         StringComparison.Ordinal));
     Assert(method.Contains("FeatureSnapshotJson", StringComparison.Ordinal));
+}
+
+static void CalibrationLoadFailureRemainsPending()
+{
+    var input = BotCInput(new DateTime(2026, 9, 14, 12, 0, 0, DateTimeKind.Utc));
+    var configuration = new BotCStrategyConfiguration
+    {
+        EmpiricalCalibration = BotETestConfiguration(minimumObservations: 20, minimumExactMarketObservations: 10)
+    };
+    var engine = new BotCPickDecisionEngine();
+    var failed = engine.Evaluate(input with { CalibrationHistoryLoadFailed = true }, configuration);
+    Assert(failed.Decision == "PendingData");
+    Assert(failed.SelectedSide.Length > 0 && failed.SelectedOdds > 1);
+    Assert(failed.DecisionReasons.Contains(BotCDecisionCodes.PendingCalibrationHistory));
+    Assert(!failed.DecisionReasons.Contains(BotCDecisionCodes.RejectedCalibrationUnavailable));
+    Assert(!failed.DecisionReasons.Contains(BotCDecisionCodes.ApprovedEmpiricalCalibration));
+    using var snapshot = System.Text.Json.JsonDocument.Parse(failed.FeatureSnapshotJson);
+    Assert(snapshot.RootElement.GetProperty("calibrationHistoryLoadFailed").GetBoolean());
+
+    var insufficient = engine.Evaluate(input with { CalibrationHistory = [] }, configuration);
+    Assert(insufficient.Decision == "Rejected");
+    Assert(insufficient.DecisionReasons.Contains(BotCDecisionCodes.RejectedCalibrationUnavailable));
+    Assert(!insufficient.DecisionReasons.Contains(BotCDecisionCodes.PendingCalibrationHistory));
+    Assert(!insufficient.DecisionReasons.Contains(BotCDecisionCodes.ApprovedEmpiricalCalibration));
+
+    var plain = new BotCStrategyConfiguration();
+    AssertSameDecisionValues(engine.Evaluate(input, plain),
+        engine.Evaluate(input with { CalibrationHistoryLoadFailed = true }, plain));
 }
 
 static void BotBIsRetired()

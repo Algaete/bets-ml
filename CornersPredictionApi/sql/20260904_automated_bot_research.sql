@@ -148,11 +148,17 @@ CREATE OR ALTER PROCEDURE dbo.sp_UpsertAutomatedBotPickEvaluation
     @IsResearchWinner BIT = 0,
     @SelectionScore DECIMAL(9,6) = NULL,
     @OddsTimestampUtc DATETIME2(3) = NULL,
-    @PredictionTimestampUtc DATETIME2(3) = NULL
+    @PredictionTimestampUtc DATETIME2(3) = NULL,
+    @CalibrationSourcePrepared BIT = 0,
+    @CalibrationSourceProbability FLOAT = NULL,
+    @CalibrationSourceHash BINARY(32) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
+
+    BEGIN TRANSACTION;
+    DECLARE @Affected TABLE (EvaluationId BIGINT PRIMARY KEY);
 
     -- Scientific inputs are immutable for an idempotency key. A retry may only
     -- enrich fixture/publication linkage; a changed snapshot receives a new key.
@@ -231,7 +237,26 @@ BEGIN
         @OddsTimestampUtc,
         @PredictionTimestampUtc,
         @PublishedSelectionId
-    );
+    )
+    OUTPUT inserted.AutomatedBotPickEvaluationId INTO @Affected;
+
+    -- The caller resolves the immutable snapshot with the same .NET parser as
+    -- historical calibration. Keep its cache write atomic with the evaluation.
+    IF @CalibrationSourcePrepared = 1 AND @EvidenceSnapshotHash IS NOT NULL AND @CalibrationSourceHash IS NOT NULL
+       AND @BotKey IN (N'C2026', N'D2026', N'E2026', N'F2026')
+       AND @Decision IN (N'Approved', N'Rejected')
+       AND @SelectedSide IN (N'Over', N'Under') AND @SelectedOdds > 1
+       AND OBJECT_ID(N'dbo.AutomatedBotCalibrationProbabilityCache', N'U') IS NOT NULL
+    BEGIN
+        INSERT dbo.AutomatedBotCalibrationProbabilityCache (EvaluationId, SourceHash, SourceProbability)
+        SELECT affected.EvaluationId, @CalibrationSourceHash,
+            CASE WHEN @CalibrationSourceProbability > 0 AND @CalibrationSourceProbability < 1
+                THEN @CalibrationSourceProbability END
+        FROM @Affected AS affected
+        WHERE NOT EXISTS (SELECT 1 FROM dbo.AutomatedBotCalibrationProbabilityCache AS cached WITH (UPDLOCK,HOLDLOCK)
+            WHERE cached.EvaluationId = affected.EvaluationId);
+    END;
+    COMMIT TRANSACTION;
 END;
 
 GO

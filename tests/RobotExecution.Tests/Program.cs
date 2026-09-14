@@ -23,6 +23,7 @@ Check(new RecommendationJobOptions() is { RefreshOddsDuringLiveJobs: true, LiveO
 Console.WriteLine("PASS local recovery preserves live owners and releases only exited processes");
 
 if (args.Contains("--sql")) await CheckCalibrationSql();
+if (args.Contains("--calibration-write-sql")) await CalibrationWriteTests.RunAsync();
 if (args.Contains("--selection-sql")) await SelectionContractTests.RunAsync();
 return 0;
 
@@ -90,11 +91,49 @@ static async Task CheckCalibrationSql()
     var baseline = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "CalibrationReference.sql"));
     var optimized = (string)typeof(SqlAutomationRepository).GetField("CalibrationHistorySql", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
     static string Localize(string sql) => sql.Replace("dbo.AutomatedBotPickEvaluations", "#Evaluations")
+        .Replace("dbo.AutomatedBotCalibrationEvaluationCache", "#EvaluationCache")
         .Replace("dbo.AutomatedCornerBetSelections", "#Selections").Replace("dbo.MatchHistory", "#History")
         .Replace("dbo.AutomatedBotCalibrationProbabilityCache", "#ProbabilityCache")
+        .Replace("INDEX(PK_AutomatedBotPickEvaluations), ", "")
         .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_PerformanceCandidates))", "")
-        .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage))", "");
+        .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage))", "")
+        .Replace("WITH (INDEX(IX_AutomatedBotPickEvaluations_BotDecisionDate))", "");
     var parameters = new { SourceBotKey = "C2026", AsOfDateUtc = new DateTime(2026,9,3) };
+    string SqlPart(string name) => Localize((string)typeof(SqlAutomationRepository)
+        .GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!);
+    await connection.ExecuteAsync("""
+        SELECT TOP (0) AutomatedBotPickEvaluationId, BotKey, Decision, ApiFootballFixtureId, PublishedSelectionId,
+            MatchDate, HomeTeam, AwayTeam, MarketType, SelectedSide, LineValue, SelectedOdds,
+            BaseCalibratedProbability, MarketNoVigProbability, DataQualityScore,
+            BaseModelTrainedThroughUtc, BaseModelVersion INTO #EvaluationCache FROM #Evaluations;
+        CREATE TABLE #CalibrationProjectionMissing (EvaluationId BIGINT PRIMARY KEY);
+        """);
+    await connection.ExecuteAsync(SqlPart("CalibrationProjectionMissingSql"), parameters);
+    var projectionBlocks = 0;
+    while (true)
+    {
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var count = await connection.ExecuteScalarAsync<int>(
+            SqlPart("CalibrationProjectionBatchSql").Replace("TOP (250)", "TOP (10)"), transaction: transaction);
+        await transaction.CommitAsync();
+        if (count == 0) break;
+        projectionBlocks++;
+    }
+    Check(projectionBlocks > 1, "Metadata backfill must survive multiple committed blocks.");
+    await connection.ExecuteAsync(SqlPart("CalibrationProjectionMissingSql"), parameters);
+    Check(await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM #CalibrationProjectionMissing") == 0,
+        "Warm calibration must reuse metadata instead of reading the wide ledger again.");
+    // Simulate the invalidation trigger after an evaluation is corrected.
+    await connection.ExecuteAsync("DELETE #EvaluationCache WHERE AutomatedBotPickEvaluationId=3;");
+    await connection.ExecuteAsync(SqlPart("CalibrationProjectionMissingSql"), parameters);
+    Check(await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM #CalibrationProjectionMissing") == 1,
+        "Only invalidated metadata is rebuilt.");
+    await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+    {
+        await connection.ExecuteScalarAsync<int>(SqlPart("CalibrationProjectionBatchSql"), transaction: transaction);
+        await transaction.CommitAsync();
+    }
+    Console.WriteLine($"PASS compact metadata: {projectionBlocks} committed blocks, warm reuse and selective rebuild");
     var originalRows = (await connection.QueryAsync<CalibrationRow>(Localize(baseline), parameters)).ToArray();
     var optimizedRows = (await connection.QueryAsync<CalibrationRow>(Localize(optimized), parameters)).ToArray();
     string Normalize(CalibrationRow row) => JsonSerializer.Serialize(new {
@@ -112,28 +151,25 @@ static async Task CheckCalibrationSql()
     Check(!optimizedRows.Any(row => new[] { ambiguousId, unavailableId, futureModelId }.Contains(row.EvaluationId)), "Ambiguous matches, missing official outcomes and temporal leakage remain excluded.");
     Console.WriteLine($"PASS calibration SQL: {optimizedRows.Length} identical rows across 12 markets, numeric/string/null/malformed snapshots, identity ambiguity and model cutoffs");
 
-    string SqlPart(string name) => Localize((string)typeof(SqlAutomationRepository)
-        .GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!);
     await connection.ExecuteAsync("DECLARE @SourceBotKey NVARCHAR(50)=N'C2026',@AsOfDateUtc DATETIME2='2026-09-03';\n" + SqlPart("CalibrationPreparationSql"));
     var preparedBatches = 0;
     while (true)
     {
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
         var batchRows = (await connection.QueryAsync<CalibrationRow>(
-            "DECLARE @SnapshotBatchSize INT=10;\n" + SqlPart("CalibrationSnapshotBatchSql")
-            + "\nSELECT * FROM #CalibrationMissingSnapshots;", transaction: transaction)).ToArray();
+            "DECLARE @SnapshotBatchSize INT=10;\n" + SqlPart("CalibrationSnapshotReadSql"), transaction: transaction)).ToArray();
         if (batchRows.Length > 0)
         {
             foreach (var row in batchRows)
                 await connection.ExecuteAsync("INSERT #CalibrationCachedSources VALUES (@EvaluationId,@Probability);",
                     new { row.EvaluationId, Probability=BotECalibrationSourceProbabilityResolver.Resolve(row.FeatureSnapshotJson,(double?)row.BaseCalibratedProbability) }, transaction);
-            await connection.ExecuteAsync("DELETE missing FROM #CalibrationMissingSources missing INNER JOIN #CalibrationMissingSnapshots prepared ON prepared.EvaluationId=missing.EvaluationId;", transaction:transaction);
+            await connection.ExecuteAsync("DELETE missing FROM #CalibrationMissingSources missing INNER JOIN #CalibrationCachedSources prepared ON prepared.EvaluationId=missing.EvaluationId;", transaction:transaction);
             preparedBatches++;
         }
         await transaction.CommitAsync();
         if (batchRows.Length == 0) break;
     }
-    var stagedRows = (await connection.QueryAsync<CalibrationRow>(SqlPart("CalibrationResultsSql"))).ToArray();
+    var stagedRows = (await connection.QueryAsync<CalibrationRow>(SqlPart("CalibrationCachedResultsSql"))).ToArray();
     Check(preparedBatches > 1 && originalRows.Select(Normalize).SequenceEqual(stagedRows.Select(Normalize)),
         "Incremental transactions must preserve all observations and temp tables between batches.");
     Check(stagedRows.All(row=>row.HasCachedProbability),"Completed preparation must use resolved cache values, including null probabilities.");
@@ -157,6 +193,7 @@ static async Task CheckCalibrationSql()
     Check(commands.All(cmd=>cmd.Parameters[0].ParameterName=="@BotKey"),"Batch parameter renaming must not mutate source commands.");
     foreach(var cmd in commands) cmd.Dispose();
     Console.WriteLine("PASS 20 ordered stored-procedure calls in one round trip, with unchanged decimals and literal JSON parameters");
+    await CalibrationWriteTests.RunAsync(connection);
 
     Task Insert(long evalId, string market, string json, long? fixture, long? selection, string home) => connection.ExecuteAsync("""
         INSERT #Evaluations (AutomatedBotPickEvaluationId,ApiFootballFixtureId,PublishedSelectionId,MatchDate,HomeTeam,AwayTeam,
