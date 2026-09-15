@@ -1,6 +1,17 @@
 # Estado del proyecto para retomar
 
-Actualizado el **14 de septiembre de 2026, aproximadamente 18:07 de Chile (UTC−03)**. Las secciones inferiores conservan el historial de sesiones anteriores.
+Actualizado el **15 de septiembre de 2026**. Las secciones inferiores conservan el historial de sesiones anteriores.
+
+## Política productiva V6: rendimiento mínimo de 3%
+
+- Por petición expresa del usuario, el único filtro estadístico productivo es **yield de 30 días ≥ 3%** para el bot, mercado, lado y versión exactos, consolidado entre casas. Un yield menor a 3% bloquea; exactamente 3% pasa. Sin scorecard o sin yield se mantiene en monitoreo.
+- Se retiraron los bloqueos por muestra mínima, semáforo, calibración, Brier, familia agregada y las pausas fijas de mercados por rendimiento. Goles local/visita/totales, córners, tiros y tiros a puerta aplican el mismo umbral. Los diagnósticos siguen visibles.
+- Permanecen la aprobación real del modelo, los controles del mantenedor/publicación/shadow, ligas, cuotas, frescura y snapshot, líneas compatibles, deduplicación y límites de exposición. C/F visita Over conserva máximo 0,5u; córners visita conserva su stake web de 0,5u.
+- La web usa `PRODUCTIVE-GATE-2026-09-15-V6`; API y web fueron reiniciadas. Logs: `/private/tmp/corners-api-yield-v6.log` y `/private/tmp/corners-web-yield-v6.log`. Puertos 5070 y 5130. Los robots se alojan en la API.
+- Validación: build 0 errores/0 advertencias, 43 pruebas del plan productivo, suite de rendimiento y prueba JavaScript del render de scorecards. Se probaron 560 combinaciones de bot/mercado/lado/yield en API y web, incluyendo 2,9999%, 3%, null y diagnósticos rojos.
+- Verificación real tras reinicio: el endpoint de scorecards respondió 200 con 1.510 tarjetas; todas las banderas de bloqueo coinciden con el umbral. En goles visita de las versiones actuales: C Over 13,60%, E Over 15,43%, F Over 9,27% y F Under exactamente 3,00% pasan rendimiento; E Under 1,225% y C Under −12,86% no pasan. Esto acredita elegibilidad estadística, no una nueva publicación ni una apuesta ejecutada.
+- Los registros de auditoría anteriores conservan sus razones originales. La política nueva se aplica al evaluar/publicar candidatos nuevos; no convierte rechazos del modelo ni resultados históricos en aprobaciones.
+- Antes del reinicio se observaron errores intermitentes de transporte SQL en ejecuciones del 15 de septiembre; son independientes del umbral. No atribuir futuros fallos de conexión a la política estadística.
 
 ## Reparación verificada del 14 de septiembre
 

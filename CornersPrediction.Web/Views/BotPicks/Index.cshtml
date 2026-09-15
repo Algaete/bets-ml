@@ -184,7 +184,7 @@
         }
         else if (Model.Market.Key == "goals")
         {
-            <p>Para partidos futuros, Green usa 1u. Además, C o F pueden usar 0.5u únicamente en la cohorte exacta «goles visita · Over», con 30+ partidos, yield mínimo 7%, calibración ≤ 5 pp y Brier no peor que el mercado. La evidencia se consolida entre casas por bot, mercado, lado y versión; cada partido cuenta una vez. La casa indica el origen de la cuota y no bloquea el pick. Esta cohorte no sube automáticamente a 1u por tener 100 históricos. A no entra en esta prueba. La cartera admite <strong>máximo 2u globales por día</strong>; las señales que exceden ese límite quedan en Monitoreo. El resultado anterior aparece aparte como simulación histórica GOALS V1; no representa apuestas ejecutadas.</p>
+            <p>Para partidos futuros, el filtro de rendimiento exige <strong>yield de los últimos 30 días ≥ 3%</strong> por bot, mercado, lado y versión, consolidado entre casas. Un rendimiento menor al 3% bloquea el segmento; sin rendimiento disponible queda en Monitoreo. La muestra, el semáforo, la calibración y Brier son informativos. Se mantienen la aprobación del modelo y los controles del mantenedor y de cuotas. C y F conservan el límite de 0.5u en goles visita Over. La cartera admite <strong>máximo 2u globales por día</strong>; el exceso queda en Monitoreo. El resultado anterior aparece aparte como simulación histórica GOALS V1; no representa apuestas ejecutadas.</p>
         }
         else
         {
@@ -395,13 +395,13 @@
     <summary>
         <span>
             <strong>Gate vigente para picks futuros</strong>
-            <small>No reconstruye el pasado: Green habilita 1u; sólo C/F en goles visita Over pueden optar a la prueba de 0.5u</small>
+            <small>Rendimiento 30d ≥ 3% para picks nuevos; C/F en goles visita Over conservan el límite de 0.5u</small>
         </span>
         <span aria-hidden="true">Abrir</span>
     </summary>
     <div class="bot-picks-collapsible-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <p class="text-muted small mb-0">Este gate decide únicamente picks nuevos. La evidencia se consolida por bot, mercado, lado y versión; la casa indica el origen de la cuota. Yield y calibración se calculan una vez por partido entre todas las casas para que duplicados no inflen la evidencia; Δ Brier positivo significa que el mercado predijo mejor. Green genérico exige 100 partidos independientes. La excepción controlada exige Bot C o F, goles visita, Over, 30+ partidos, yield ≥ 7%, brecha ≤ 5 pp y Δ Brier ≤ 0; permanece en 0.5u sin promoción automática por muestra histórica. A queda fuera de esa excepción.</p>
+            <p class="text-muted small mb-0">Para picks nuevos, el filtro de rendimiento exige yield ≥ 3% en 30 días, por bot, mercado, lado y versión. Cada partido cuenta una vez entre todas las casas. La muestra, el semáforo, la calibración y Δ Brier son diagnósticos y no bloquean la publicación. Las ventanas de 7 y 90 días son informativas. Superar el filtro de rendimiento aún requiere la aprobación del modelo y los controles de publicación, cuotas y exposición.</p>
             <div class="btn-group btn-group-sm" role="group" aria-label="Ventana del semáforo">
                 <button type="button" class="btn btn-outline-secondary" data-scorecard-window="7">7 días</button>
                 <button type="button" class="btn btn-primary" data-scorecard-window="30">30 días</button>
@@ -2129,7 +2129,7 @@
                 }
 
                 if (botKey === 'A') {
-                    return { title: 'Bot A · línea base histórica', text: 'Sus tarjetas verdes describen resultados pasados y no lo incluyen en la excepción controlada C/F. A sólo puede aparecer en el plan futuro si el gate normal alcanza Green con 100 partidos independientes.' };
+                    return { title: 'Bot A · línea base histórica', text: 'Para el plan futuro necesita rendimiento de 30 días ≥ 3% en su bot, mercado, lado y versión, además de aprobación del modelo y publicación habilitada.' };
                 }
 
                 if (botKey === 'Legacy') {
@@ -3494,22 +3494,20 @@
                         const gap = number(getValue(row, 'CalibrationGap'));
                         const deltaBrier = number(getValue(row, 'DeltaBrier'));
                         const yieldValue = number(getValue(row, 'Yield'));
-                        const fixtures = Number(getValue(row, 'PredictiveFixtures') ?? 0);
                         const marketType = String(getValue(row, 'MarketType') ?? '');
                         const botKey = String(getValue(row, 'BotKey') ?? '').toUpperCase();
                         const selectedSide = String(getValue(row, 'SelectedSide') ?? '');
-                        const controlledTrial = Number(getValue(row, 'WindowDays')) === 30
+                        const productionWindow = Number(getValue(row, 'WindowDays')) === 30;
+                        const meetsYield = yieldValue !== null && yieldValue >= 0.03;
+                        const controlledTrial = productionWindow && meetsYield
                             && (botKey === 'C2026' || botKey === 'F2026')
                             && marketType === 'AwayTeamGoals'
-                            && selectedSide.toLowerCase() === 'over'
-                            && fixtures >= 30
-                            && yieldValue !== null && yieldValue >= 0.07
-                            && gap !== null && Math.abs(gap) <= 0.05
-                            && deltaBrier !== null && deltaBrier <= 0
-                            && getValue(row, 'ProductionBlocked') !== true;
-                        const action = controlledTrial
-                            ? 'Prueba controlada · 0.5u'
-                            : getValue(row, 'Recommendation') ?? '';
+                            && selectedSide.toLowerCase() === 'over';
+                        const action = !productionWindow ? 'Ventana informativa'
+                            : yieldValue === null ? 'Sin rendimiento disponible'
+                            : !meetsYield ? 'Bloqueado: rendimiento < 3%'
+                            : controlledTrial ? 'Cumple rendimiento · límite 0.5u'
+                            : 'Cumple rendimiento ≥ 3%';
                         return `<tr>
                             <td class="fw-semibold">${escapeHtml(getValue(row, 'BotKey') ?? '-')}</td>
                             <td title="${escapeHtml(getValue(row, 'AutomationVersion') ?? '')}">${escapeHtml(marketLabel(getValue(row, 'MarketType') ?? ''))} · ${escapeHtml(getValue(row, 'SelectedSide') ?? '-')}</td>

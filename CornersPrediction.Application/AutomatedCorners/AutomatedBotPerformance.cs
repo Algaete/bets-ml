@@ -53,17 +53,14 @@ public sealed record AutomatedBotProductionEligibility(
     decimal MaxStakeUnits = 0m);
 
 /// <summary>
-/// Fail-closed production policy. A candidate can keep being audited in shadow when
-/// this policy rejects it; only a prospectively Green segment or a tightly capped,
-/// healthy GOALS controlled trial may reach the published selections table.
+/// Production performance gate: the exact 30-day segment needs yield >= 3%.
+/// Statistical diagnostics do not veto eligibility. Quote integrity and stake caps remain.
 /// </summary>
 public static class AutomatedBotProductionEligibilityPolicy
 {
     public const int RequiredWindowDays = 30;
-    public const int MinimumPredictiveFixtures = 100;
-    public const int MinimumControlledTrialFixtures = 30;
-    public const decimal MinimumControlledTrialYield = 0.07m;
-    public const decimal GreenMaxStakeUnits = 1m;
+    public const decimal MinimumYield = 0.03m;
+    public const decimal DefaultMaxStakeUnits = 1m;
     public const decimal ControlledTrialMaxStakeUnits = 0.5m;
 
     public static AutomatedBotProductionEligibility Evaluate(
@@ -87,13 +84,6 @@ public static class AutomatedBotProductionEligibilityPolicy
         selectedSide = selectedSide.Trim();
         automationVersion = automationVersion.Trim();
 
-        if (marketType.Equals("HomeTeamCorners", StringComparison.OrdinalIgnoreCase))
-            return Block("HomeTeamCorners permanece pausado por rendimiento negativo validado.");
-        if (marketType.Equals("TotalGoals", StringComparison.OrdinalIgnoreCase))
-            return Block("TotalGoals permanece pausado por rendimiento negativo validado.");
-        if (botKey.Equals("F2026", StringComparison.OrdinalIgnoreCase)
-            && marketFamily.Equals("CORNERS", StringComparison.OrdinalIgnoreCase))
-            return Block("F2026 · CORNERS permanece pausado por rendimiento negativo validado.");
         if (!IsHalfLine(line))
             return Block("Las líneas .0/.25/.75 siguen en shadow hasta usar EV asiático de cinco estados.");
         if (!immutableOddsSnapshotAvailable)
@@ -123,64 +113,19 @@ public static class AutomatedBotProductionEligibilityPolicy
             .OrderByDescending(row => row.PredictiveFixtures)
             .FirstOrDefault();
 
-        // Bookmaker is diagnostic only: the actual odds still pass the model's
-        // price/EV checks, freshness and immutable-snapshot requirements.
-        // GOALS is evaluated by the exact market/side/version segment.
-        // A BotFamily aggregate can otherwise mix a damaged TotalGoals segment with
-        // a healthy HomeTeamGoals/AwayTeamGoals segment and veto the latter.
-        if (!marketFamily.Equals("GOALS", StringComparison.OrdinalIgnoreCase)
-            && (family?.TrafficLight.Equals("Red", StringComparison.OrdinalIgnoreCase) == true
-                || family?.ProductionBlocked == true))
-            return Block("La familia completa del bot está en semáforo rojo.", market, family);
+        // Family/bookmaker, sample size, calibration and Brier are diagnostics only.
+        // Missing yield cannot establish eligibility; exactly 3% qualifies.
+        if (market.Yield is null)
+            return Block("Rendimiento 30d no disponible para esta versión del bot/mercado/lado.", market, family);
+        if (market.Yield < MinimumYield)
+            return Block($"Rendimiento 30d {market.Yield:P2} inferior al mínimo de {MinimumYield:P0}.", market, family);
 
-        var isControlledTrialSignal = IsControlledTrialGoalsSignal(
-            botKey,
-            marketFamily,
-            marketType,
-            selectedSide);
-        if (isControlledTrialSignal)
-        {
-            if (market.PredictiveFixtures >= MinimumControlledTrialFixtures
-                && market.Yield is >= MinimumControlledTrialYield
-                && market.CalibrationGap is not null
-                && Math.Abs(market.CalibrationGap.Value) <= 0.05d
-                && market.DeltaBrier is <= 0d
-                && !market.ProductionBlocked)
-            {
-                return Allow(
-                    "ControlledTrial",
-                    ControlledTrialMaxStakeUnits,
-                    $"Elegible: prueba controlada GOALS 30d con {market.PredictiveFixtures} partidos independientes y yield de al menos {MinimumControlledTrialYield:P0}; máximo {ControlledTrialMaxStakeUnits:0.##}u.",
-                    market,
-                    family);
-            }
-
-            return Block(
-                $"La cohorte controlada C/F no cumple muestra, yield mínimo de {MinimumControlledTrialYield:P0}, calibración o Brier; no puede saltar automáticamente a Green.",
-                market,
-                family);
-        }
-
-        if (market.PredictiveFixtures >= MinimumPredictiveFixtures
-            && market.TrafficLight.Equals("Green", StringComparison.OrdinalIgnoreCase)
-            && !market.ProductionBlocked)
-        {
-            return Allow(
-                "Green",
-                GreenMaxStakeUnits,
-                $"Elegible: Green 30d con {market.PredictiveFixtures} partidos independientes; máximo {GreenMaxStakeUnits:0.##}u.",
-                market,
-                family);
-        }
-
-        // The only controlled-trial cohort returned above. Every other market,
-        // including home goals, needs its own 100-fixture Green segment; suggesting
-        // a 30-fixture trial here made the missing market coverage misleading.
-        if (market.PredictiveFixtures < MinimumPredictiveFixtures)
-            return Block($"Muestra insuficiente ({market.PredictiveFixtures}/{MinimumPredictiveFixtures} partidos independientes para Green). Este segmento no pertenece a la prueba controlada de goles visita.", market, family);
-
-        return Block(
-            $"Semáforo {market.TrafficLight}: el segmento exacto no cumple los criterios Green.",
+        var cappedCohort = IsControlledTrialGoalsSignal(botKey, marketFamily, marketType, selectedSide);
+        var stakeCap = cappedCohort ? ControlledTrialMaxStakeUnits : DefaultMaxStakeUnits;
+        return Allow(
+            cappedCohort ? "ControlledTrial" : "Yield",
+            stakeCap,
+            $"Elegible: rendimiento 30d {market.Yield:P2} >= {MinimumYield:P0}; máximo {stakeCap:0.##}u.",
             market,
             family);
     }
@@ -527,8 +472,8 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
             AverageEdge = rows.Where(row => row.Selection.ProbabilityEdge.HasValue)
                 .Select(row => (double?)row.Selection.ProbabilityEdge!.Value).Average(),
             TrafficLight = traffic,
-            ProductionBlocked = traffic == "Red",
-            Recommendation = Recommendation(traffic)
+            ProductionBlocked = yield is null or < AutomatedBotProductionEligibilityPolicy.MinimumYield,
+            Recommendation = Recommendation(window, dimension, yield)
         });
     }
 
@@ -543,13 +488,16 @@ public sealed class AutomatedBotPerformanceService : IAutomatedBotPerformanceSer
         return "Amber";
     }
 
-    private static string Recommendation(string traffic) => traffic switch
+    private static string Recommendation(int window, string dimension, decimal? yield)
     {
-        "Red" => "Pausar en el plan productivo; seguir recolectando y recalibrar.",
-        "Amber" => "Mantener en monitoreo o usar como máximo 0.5u; falta estabilidad/calibración.",
-        "Green" => "Segmento elegible con vigilancia continua y stake limitado.",
-        _ => "Muestra insuficiente; sólo shadow/monitoreo."
-    };
+        if (window != 30 || dimension != "BotMarketSideVersion")
+            return "Diagnóstico informativo; la publicación usa el segmento exacto de 30 días.";
+        if (yield is null)
+            return "Sin rendimiento disponible; permanece en monitoreo.";
+        return yield < AutomatedBotProductionEligibilityPolicy.MinimumYield
+            ? "Rendimiento 30d inferior al 3%; bloqueado por rendimiento."
+            : "Cumple rendimiento 30d >= 3%; sujeto a aprobación del modelo y controles de publicación.";
+    }
 
     private static bool IsResolved(string status) =>
         status.Equals("Won", StringComparison.OrdinalIgnoreCase)

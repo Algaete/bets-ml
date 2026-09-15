@@ -25,7 +25,22 @@ const context = {
 };
 vm.runInNewContext(`${view.slice(start, end)}\nrenderPerformanceScorecards();`, context);
 assert.match(body.innerHTML, /F2026/);
-assert.match(body.innerHTML, /Prueba controlada · 0.5u/);
+assert.match(body.innerHTML, /Cumple rendimiento · límite 0.5u/);
 assert.doesNotMatch(body.innerHTML, /OLD-HOUSE-ROW|Pinnacle/);
 assert.match(body.innerHTML, /65 \/ 40/);
-console.log('PASS current gate displays consolidated evidence and permits a trial without a bookmaker');
+for (const bot of ['C2026', 'F2026', 'E2026']) {
+    for (const [yieldValue, qualifies] of [[.029999, false], [.03, true], [.12, true], [null, false]]) {
+        context.performanceScorecards = [{ ...row, BotKey: bot, Yield: yieldValue,
+            TrafficLight: 'Red', ProductionBlocked: true, PredictiveFixtures: 1,
+            CalibrationGap: .2, DeltaBrier: .1 }];
+        vm.runInNewContext('renderPerformanceScorecards();', context);
+        if (qualifies) assert.match(body.innerHTML, /Cumple rendimiento/);
+        else assert.match(body.innerHTML, yieldValue === null ? /Sin rendimiento disponible/ : /Bloqueado: rendimiento < 3%/);
+    }
+}
+context.performanceWindow = 7;
+context.performanceScorecards = [{ ...row, WindowDays: 7, Yield: .03 }];
+vm.runInNewContext('renderPerformanceScorecards();', context);
+assert.match(body.innerHTML, /Ventana informativa/);
+assert.doesNotMatch(body.innerHTML, /Cumple rendimiento/);
+console.log('PASS scorecard renderer uses inclusive 3% yield regardless of diagnostic color, sample or bookmaker');

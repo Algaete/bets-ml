@@ -11,10 +11,8 @@ public static class BotPickProductionPlanner
     private const decimal MaximumOdds = 2.30m;
     private const decimal DefaultMinimumEdge = 0.025m;
     private const decimal DefaultMinimumExpectedValue = 0.020m;
-    private const int MinimumPredictiveFixtures = 100;
-    private const int ControlledTrialMinimumPredictiveFixtures = 30;
-    private const decimal ControlledTrialMinimumYield = 0.07m;
-    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-09-06-V5";
+    private const decimal MinimumYield = 0.03m;
+    private const string CurrentPolicyVersion = "PRODUCTIVE-GATE-2026-09-15-V6";
     private const string LegacyGoalsPolicyVersion = "GOALS-HISTORICAL-RECONSTRUCTION-V1";
     private const string LegacyCornersPolicyVersion = "CORNERS-HISTORICAL-RECONSTRUCTION-V1";
     private static readonly DateTime LegacyGoalsPolicyCutover = new(2026, 8, 27, 0, 0, 0);
@@ -141,8 +139,8 @@ public static class BotPickProductionPlanner
                 stakeUnits,
                 controlledTrial ? "Prueba controlada 0.5u" : stakeUnits == 1m ? "Apostar 1u" : "Apostar 0.5u",
                 controlledTrial
-                    ? $"{source}; prueba controlada Bot {DisplayBotKey(winner.BotKey)} de goles visita Over: cohorte consolidada entre casas con yield >= 7%, calibración <= 5 pp y Brier mejor que mercado ({performance!.PredictiveFixtures} partidos).{consensus}"
-                    : $"{source}; bot activo y publicable; liga, cuota, edge y EV aprobados. Semáforo {PerformanceLabel(performance)}.{consensus}",
+                    ? $"{source}; Bot {DisplayBotKey(winner.BotKey)} de goles visita Over: rendimiento 30d {performance!.Yield:P2} >= {MinimumYield:P0}; límite de 0.5u.{consensus}"
+                    : $"{source}; bot activo y publicable; liga, cuota, edge y EV aprobados. Rendimiento 30d {performance!.Yield:P2} >= {MinimumYield:P0}.{consensus}",
                 stakeUnits == 1m ? "bot-production-primary" : "bot-production-secondary",
                 true,
                 CurrentPolicyVersion,
@@ -351,13 +349,6 @@ public static class BotPickProductionPlanner
         if (HasExplicitNonApproval(selection.DecisionReason))
             return "Monitoreo: la auditoría del candidato no contiene una aprobación productiva";
 
-        if (selection.MarketType.Equals("HomeTeamCorners", StringComparison.OrdinalIgnoreCase))
-            return "Monitoreo: córners local permanece pausado por rendimiento negativo validado";
-        if (selection.MarketType.Equals("TotalGoals", StringComparison.OrdinalIgnoreCase))
-            return "Monitoreo: goles totales permanece pausado por rendimiento negativo validado";
-        if (NormalizeBotKey(botKey) == "F2026" && family == "CORNERS")
-            return "Monitoreo: F córners permanece pausado por rendimiento negativo validado";
-
         var performance = ResolvePerformance(
             scorecards,
             botKey,
@@ -366,26 +357,10 @@ public static class BotPickProductionPlanner
             selection.AutomationVersion);
         if (performance is null)
             return "Monitoreo: la versión actual no tiene scorecard consolidado de 30 días para este mercado y lado";
-        var green = performance.PredictiveFixtures >= MinimumPredictiveFixtures
-            && performance.TrafficLight.Equals("Green", StringComparison.OrdinalIgnoreCase)
-            && !performance.ProductionBlocked;
-        var controlledTrial = IsControlledGoalsTrial(
-            performance,
-            botKey,
-            family,
-            selection.MarketType,
-            selection.SelectedSide);
-        if (IsControlledGoalsCohort(
-                botKey,
-                family,
-                selection.MarketType,
-                selection.SelectedSide)
-            && !controlledTrial)
-            return $"Monitoreo: la cohorte C/F de goles visita Over sólo entra a 0.5u con >= {ControlledTrialMinimumPredictiveFixtures} partidos, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado; no se promociona automáticamente a 1u con historia anterior a V5";
-        if (!green && !controlledTrial && performance.PredictiveFixtures < MinimumPredictiveFixtures)
-            return $"Monitoreo: muestra exacta insuficiente para Green ({performance.PredictiveFixtures}/{MinimumPredictiveFixtures}); la prueba C/F de 0.5u exige >= {ControlledTrialMinimumPredictiveFixtures} partidos, goles visita Over, yield >= {ControlledTrialMinimumYield:P0}, calibración <= 5 pp y Brier mejor que mercado";
-        if (!green && !controlledTrial)
-            return $"Monitoreo: semáforo {performance.TrafficLight} 30d; sólo Green puede entrar al plan productivo ({performance.Recommendation})";
+        if (performance.Yield is null)
+            return "Monitoreo: rendimiento 30d no disponible para esta versión del bot/mercado/lado";
+        if (performance.Yield < MinimumYield)
+            return $"Monitoreo: rendimiento 30d {performance.Yield:P2} inferior al mínimo de {MinimumYield:P0}";
 
         var minimumEdge = Convert.ToDecimal(definition.MinEdge ?? Convert.ToDouble(DefaultMinimumEdge));
         var minimumExpectedValue = Convert.ToDecimal(
@@ -394,15 +369,6 @@ public static class BotPickProductionPlanner
             return $"Monitoreo: edge menor al mínimo vigente de {minimumEdge:P1}";
         if (selection.ExpectedValue is null || selection.ExpectedValue < minimumExpectedValue)
             return $"Monitoreo: EV menor al mínimo vigente de {minimumExpectedValue:P1}";
-
-        if (family == "CORNERS"
-            && selection.MarketType is not ("HomeTeamCorners" or "AwayTeamCorners"))
-            return "Monitoreo: córners totales no forma parte del plan productivo vigente";
-        if (family == "GOALS"
-            && selection.MarketType is not ("HomeTeamGoals" or "AwayTeamGoals"))
-            return "Monitoreo: goles totales queda fuera por rendimiento negativo reciente";
-        if (family is "SHOTS" or "SOG")
-            return "Monitoreo: aún no existe muestra resuelta suficiente para habilitar este mercado";
 
         return null;
     }
@@ -598,12 +564,7 @@ public static class BotPickProductionPlanner
         string selectedSide) =>
         performance is not null
         && IsControlledGoalsCohort(botKey, family, marketType, selectedSide)
-        && performance.PredictiveFixtures >= ControlledTrialMinimumPredictiveFixtures
-        && performance.Yield is >= ControlledTrialMinimumYield
-        && performance.CalibrationGap.HasValue
-        && Math.Abs(performance.CalibrationGap.Value) <= 0.05d
-        && performance.DeltaBrier is <= 0d
-        && !performance.ProductionBlocked;
+        && performance.Yield is >= MinimumYield;
 
     private static bool IsControlledGoalsCohort(
         string botKey,
@@ -649,9 +610,6 @@ public static class BotPickProductionPlanner
             && string.Equals(row.AutomationVersion, automationVersion, StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(row => row.PredictiveFixtures)
         .FirstOrDefault();
-
-    private static string PerformanceLabel(BotPerformanceScorecardViewModel? performance) =>
-        performance is null ? "sin scorecard" : $"{performance.TrafficLight} ({performance.PredictiveFixtures} partidos)";
 
     private static string DisplayBotKey(string botKey) => NormalizeBotKey(botKey).Replace("2026", string.Empty);
 
