@@ -1,6 +1,25 @@
 # Estado del proyecto para retomar
 
-Actualizado el **15 de septiembre de 2026**. Las secciones inferiores conservan el historial de sesiones anteriores.
+Actualizado el **16 de septiembre de 2026, antes del apagado solicitado por el usuario**. Esta sección tiene prioridad; las secciones inferiores conservan el historial de sesiones anteriores.
+
+## Punto de reanudación del 16 de septiembre
+
+- Último commit de código: **`30fae57` — `fix: use three-percent yield for production eligibility`**, ya subido a `origin/main`. Incluye política V6, mensajes de API/web y pruebas. Antes de actualizar este documento el árbol estaba limpio y `main` coincidía con `origin/main`.
+- Regla vigente autorizada: **bloquear rendimiento < 3%; permitir desde 3% inclusive**, medido en 30 días por bot/mercado/lado/versión. No restaurar los antiguos bloqueos por muestra, semáforo, calibración, Brier o mercado. Se conservan aprobación del modelo y controles operativos descritos debajo.
+- API/robots escuchaban en **5070** y web en **5130** al guardar. Los robots están integrados en la API. Después del apagado hay que volver a levantar ambos proyectos; no reutilizar PID ni sesiones antiguas.
+- **Pendiente operativo detectado ahora:** el log de la API repite **SQL 40615: la IP del cliente no está autorizada en el firewall de Azure SQL**. Consultar `GET /api/recommendation-jobs?take=1` devolvió HTTP 500, por lo que no se pudo verificar el último trabajo. Esto impide al worker consultar los trabajos y es independiente de la regla del 3%. No se modificó el firewall en esta sesión de guardado. Al volver, comprobar la IP vigente y el acceso SQL antes de lanzar bots; la IP puede volver a cambiar.
+- La elegibilidad estadística se verificó el 15 de septiembre con datos reales, pero **no se ha comprobado una nueva publicación posterior al cambio V6**. Las auditorías antiguas siguen mostrando su motivo original y no se reescribieron. Tras recuperar SQL, revisar trabajos existentes y una ejecución nueva antes de asegurar que hay picks productivos nuevos.
+- Las verificaciones de código del 15 de septiembre pasaron: build sin errores/advertencias, 43 pruebas del plan, suite de rendimiento y render JavaScript. Guardar avances el 16 no cambió código ni repitió esas pruebas.
+- `.env`, modelos, entornos Python y datos locales permanecen en el disco y fuera de Git. Los logs de `/private/tmp` son temporales; los avances y decisiones necesarios para retomar están en este documento y en los documentos de reparación enlazados.
+
+Al retomar:
+
+1. Leer este punto de reanudación y la política V6 de abajo.
+2. Comprobar `git status`, puertos y configuración local; levantar API y web con los comandos de «Cómo levantar después del reinicio».
+3. Verificar acceso real a Azure SQL; resolver primero el error 40615 si persiste.
+4. Consultar «Bots y procesos» antes de crear otra ejecución para evitar duplicados. Comprobar estado, errores y publicaciones con V6.
+
+Si una compilación queda esperando al servidor compartido de .NET, el comando que funcionó al cerrar el cambio fue `dotnet build CornersPrediction.sln --no-restore --disable-build-servers -m:1`.
 
 ## Política productiva V6: rendimiento mínimo de 3%
 
