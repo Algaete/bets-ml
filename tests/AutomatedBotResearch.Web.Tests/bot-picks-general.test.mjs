@@ -63,7 +63,7 @@ function harness({ market = 'goals', search = '', savedValues = [], admin = fals
     const production = node('BotPicksProductionSurface');
     production.classList.add('d-none');
     const surface = node('BotPicksResearchSurface');
-    surface.dataset = { endpoint: '/BotPicks/GeneralPicks', settlementEndpoint: '/BotPicks/SettleGeneralPick', evidenceEndpoint: '/BotPicks/GeneralPickEvidence', labEndpoint: lab ? '/BotPicks/GeneralPicksLab' : '', canSettle: String(admin), marketFamily: market, locale: 'es-CL' };
+    surface.dataset = { endpoint: '/BotPicks/GeneralPicks', settlementEndpoint: '/BotPicks/SettleGeneralPick', settlementPreviewEndpoint: '/BotPicks/PreviewGeneralPickSettlement', evidenceEndpoint: '/BotPicks/GeneralPickEvidence', labEndpoint: lab ? '/BotPicks/GeneralPicksLab' : '', canSettle: String(admin), marketFamily: market, locale: 'es-CL' };
     const sorts = ['MatchDate', 'BotKey', 'MarketType', 'SelectedOdds', 'ModelDecision', 'PublicationStatus', 'FinalProbability', 'FinalEdge', 'FinalExpectedValue', 'SelectionScore', 'OutcomeStatus', 'EvaluationId'].map(column => {
         const button = new Element(); button.dataset.researchSort = column; button.parent = new Element('th'); button.indicator = new Element('span'); return button;
     });
@@ -256,10 +256,16 @@ const manual = harness({ admin: true });
 await respond(manual.calls[0], [{ evaluationId: 987, botKey: 'C2026', marketType: 'AwayTeamGoals',
     modelDecision: 'Approved', publicationStatus: 'ProductionBlocked', selectedSide: 'Over', lineValue: .25,
     selectedOdds: 1.9, outcomeStatus: 'Unavailable', homeTeam: 'Local', awayTeam: 'Visita' }]);
-assert.match(manual.node('BotResearchTableBody').innerHTML, /Liquidar manualmente/);
+assert.match(manual.node('BotResearchTableBody').innerHTML, /Liquidar partido/);
 manual.node('BotResearchTableBody').dispatchEvent({ type: 'click', target: {
     closest: selector => selector === '[data-research-settle]' ? { dataset: { researchSettle: '987' } } : null
 } });
+assert.equal(manual.node('BotResearchSettlementSave').disabled, true, 'wait for server-confirmed scope before writing');
+assert.match(manual.calls.at(-1).url, /PreviewGeneralPickSettlement\?id=987/);
+manual.calls.at(-1).resolve({ ok: true, json: async () => ({ botKeys: ['C2026', 'E2026', 'F2026'], publishedPicks: 2, marketType: 'AwayTeamGoals' }) });
+await flush();
+assert.match(manual.node('BotResearchSettlementScope').textContent, /3 bots/);
+assert.equal(manual.node('BotResearchSettlementSave').disabled, false);
 manual.node('BotResearchActualValue').value = '0';
 manual.node('BotResearchActualValue').dispatchEvent({ type: 'input' });
 assert.match(manual.node('BotResearchSettlementPreview').textContent, /Media pérdida/);
@@ -269,6 +275,7 @@ const save = manual.calls.at(-1);
 assert.equal(save.options.method, 'PUT');
 assert.equal(save.options.headers.RequestVerificationToken, 'test-csrf');
 assert.equal(JSON.parse(save.options.body).actualValue, 0, 'zero must not become a missing result');
+assert.equal(JSON.parse(save.options.body).applyToFixture, true, 'UI always shares the result across bots');
 assert.equal(new URL(save.url, 'http://localhost').searchParams.get('id'), '987');
 const idempotencyKey = JSON.parse(save.options.body).requestId;
 save.resolve({ ok: false, status: 502, json: async () => ({ error: 'Intenta otra vez' }) });
@@ -277,16 +284,31 @@ assert.equal(manual.node('BotResearchSettlementError').textContent, 'Intenta otr
 manual.node('BotResearchSettlementForm').dispatchEvent({ type: 'submit', preventDefault() {} });
 const retry = manual.calls.at(-1);
 assert.equal(JSON.parse(retry.options.body).requestId, idempotencyKey, 'retry cannot settle twice');
-retry.resolve({ ok: true });
+retry.resolve({ ok: true, json: async () => ({ appliedToFixture: true, affectedBots: 3, affectedPublishedPicks: 2 }) });
 await flush();
 assert.match(manual.calls.at(-1).url, /GeneralPicks/);
 await respond(manual.calls.at(-1), [{ evaluationId: 987, selectedSide: 'Over', selectedOdds: 1.9,
     outcomeSource: 'Manual', actualValue: 0, outcomeStatus: 'HalfLoss', manualSettlementReason: '<script>alert(1)</script>' }]);
-assert.match(manual.node('BotResearchTableBody').innerHTML, /Corregir liquidación/);
+assert.match(manual.node('BotResearchTableBody').innerHTML, /Corregir resultado compartido/);
+assert.match(manual.node('BotResearchSettlementSuccess').textContent, /3 bots y 2 picks/);
 assert.match(manual.node('BotResearchTableBody').innerHTML, /&lt;script&gt;/);
 assert.doesNotMatch(manual.node('BotResearchTableBody').innerHTML, /<script>/);
-assert.doesNotMatch(page.node('BotResearchTableBody').innerHTML, /Liquidar manualmente/);
+assert.doesNotMatch(page.node('BotResearchTableBody').innerHTML, /Liquidar partido/);
 console.log('PASS global column sorting, URL state, accessible order, manual settlement preview, CSRF, idempotent retry, refresh and escaped audit note.');
+
+const ambiguous = harness({ admin: true });
+await respond(ambiguous.calls[0], [{ evaluationId: 888, selectedSide: 'Over', selectedOdds: 1.9 }]);
+ambiguous.node('BotResearchTableBody').dispatchEvent({ type: 'click', target: {
+    closest: selector => selector === '[data-research-settle]' ? { dataset: { researchSettle: '888' } } : null
+} });
+ambiguous.calls.at(-1).resolve({ ok: false, status: 400, json: async () => ({ error: 'Identidad ambigua' }) });
+await flush();
+ambiguous.node('BotResearchActualValue').value = '1';
+ambiguous.node('BotResearchSettlementReason').value = 'Source';
+ambiguous.node('BotResearchSettlementForm').dispatchEvent({ type: 'submit', preventDefault() {} });
+assert.equal(ambiguous.calls.filter(call => call.options.method === 'PUT').length, 0);
+assert.match(ambiguous.node('BotResearchSettlementError').textContent, /ambigua/);
+console.log('PASS failed or ambiguous fixture preview prevents a bulk write.');
 
 const evidence = harness();
 await respond(evidence.calls[0], [{ evaluationId: 321, botKey: 'C2026', featureSnapshotJson: '{}' }]);

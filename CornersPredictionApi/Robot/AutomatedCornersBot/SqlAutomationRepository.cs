@@ -60,7 +60,8 @@ public sealed partial class SqlAutomationRepository
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_calibration_probability_cache.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260914_calibration_evaluation_cache.sql"),
                 Path.Combine(_environment.ContentRootPath, "sql", "20260906_recommendation_job_errors.sql"),
-                Path.Combine(_environment.ContentRootPath, "sql", "20260906_general_pick_manual_settlements.sql")
+                Path.Combine(_environment.ContentRootPath, "sql", "20260906_general_pick_manual_settlements.sql"),
+                Path.Combine(_environment.ContentRootPath, "sql", "20260921_fixture_manual_settlements.sql")
             };
 
             foreach (var scriptPath in scriptPaths)

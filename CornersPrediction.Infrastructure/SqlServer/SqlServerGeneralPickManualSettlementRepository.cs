@@ -6,13 +6,15 @@ using Microsoft.Extensions.Configuration;
 
 namespace CornersPrediction.Infrastructure.SqlServer;
 
-public sealed class SqlServerGeneralPickManualSettlementRepository(IConfiguration configuration)
+public sealed partial class SqlServerGeneralPickManualSettlementRepository(IConfiguration configuration)
     : IGeneralPickManualSettlementRepository
 {
     public async Task<GeneralPickManualSettlementResult> SettleAsync(long recordId,
         GeneralPickManualSettlementRequest request, string actor, CancellationToken cancellationToken)
     {
         GeneralPickManualSettlement.Validate(recordId, request, actor);
+        if (request.ApplyToFixture)
+            return await SettleFixtureAsync(recordId, request, actor, cancellationToken);
         await using var connection = new SqlConnection(configuration.GetConnectionString("DefaultConnection"));
         await connection.OpenAsync(cancellationToken);
         await using var transaction = System.Transactions.Transaction.Current is null

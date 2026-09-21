@@ -17,6 +17,7 @@
          data-endpoint="@Url.Action("GeneralPicks", "BotPicks")"
          data-lab-endpoint="@Url.Action("GeneralPicksLab", "BotPicks")"
          data-settlement-endpoint="@Url.Action("SettleGeneralPick", "BotPicks")"
+         data-settlement-preview-endpoint="@Url.Action("PreviewGeneralPickSettlement", "BotPicks")"
          data-evidence-endpoint="@Url.Action("GeneralPickEvidence", "BotPicks")"
          data-can-settle="@(User.IsInRole("Admin") ? "true" : "false")"
          data-market-family="@Model.Market.Key"
@@ -276,24 +277,25 @@
     <div class="modal fade" id="BotResearchSettlementModal" tabindex="-1" aria-labelledby="BotResearchSettlementTitle" aria-hidden="true">
         <div class="modal-dialog"><form id="BotResearchSettlementForm" class="modal-content">
             <div class="modal-header">
-                <h2 class="modal-title h5" id="BotResearchSettlementTitle">Liquidación manual</h2>
+                <h2 class="modal-title h5" id="BotResearchSettlementTitle">Liquidar partido y mercado</h2>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
             </div>
             <div class="modal-body">
                 <p id="BotResearchSettlementMatch" class="fw-bold mb-1"></p>
                 <p id="BotResearchSettlementSignal" class="text-muted small"></p>
+                <div id="BotResearchSettlementScope" class="alert alert-info" aria-live="polite"></div>
                 <label id="BotResearchSettlementLabel" for="BotResearchActualValue" class="form-label">Resultado real del mercado</label>
                 <input id="BotResearchActualValue" class="form-control" type="number" min="0" max="1000" step="1" required />
-                <div class="form-text">Ingresa la estadística final de este mercado. El 0 es un resultado válido.</div>
+                <div class="form-text">Ingresa la estadística final, no «ganado» o «perdido». El 0 es un resultado válido. Usa el resultado del tiempo reglamentario, sin prórroga ni penales.</div>
                 <label for="BotResearchSettlementReason" class="form-label mt-3">Fuente o motivo</label>
                 <textarea id="BotResearchSettlementReason" class="form-control" rows="2" maxlength="1000" required placeholder="Ej.: resultado confirmado en la web de la liga"></textarea>
                 <div id="BotResearchSettlementPreview" class="alert alert-light border mt-3 mb-2" aria-live="polite"></div>
-                <p class="text-muted small mb-0">Se guardará como liquidación manual con tu usuario y esta nota. Las actualizaciones automáticas no la sobrescribirán. Si es un pick publicado, su liquidación también se actualizará.</p>
+                <p class="text-muted small mb-0">Se aplicará a todos los bots de este partido y mercado, incluidos los de otras páginas, con su propia línea, lado y cuota. También corregirá liquidaciones anteriores de este mercado. Las demás estadísticas seguirán como están. Se guardarán tu usuario, la fuente y el historial de correcciones; la actualización automática no sobrescribirá este resultado.</p>
                 <div id="BotResearchSettlementError" class="alert alert-danger mt-3 d-none" role="alert"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button id="BotResearchSettlementSave" type="submit" class="btn btn-primary">Guardar liquidación</button>
+                <button id="BotResearchSettlementSave" type="submit" class="btn btn-primary">Liquidar para todos los bots</button>
             </div>
         </form></div>
     </div>

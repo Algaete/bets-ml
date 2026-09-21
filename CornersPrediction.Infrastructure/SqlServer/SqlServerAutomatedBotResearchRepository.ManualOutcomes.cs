@@ -18,6 +18,12 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
                 WHERE entered.RecordId = evaluation.AutomatedBotPickEvaluationId
                    OR entered.RecordId = -evaluation.PublishedSelectionId
                 UNION ALL
+                SELECT N'Manual', shared.ActualValue, CONVERT(DECIMAL(12,4),NULL),
+                    shared.Reason, shared.SettledBy, shared.SettledAtUtc, 2, shared.Id
+                FROM dbo.fn_GeneralBotFixtureManualOutcome(evaluation.ApiFootballFixtureId,
+                    evaluation.MatchDate, evaluation.League, evaluation.HomeTeam,
+                    evaluation.AwayTeam, evaluation.MarketType) AS shared
+                UNION ALL
                 SELECT CASE
                     WHEN selection.Status = N'Won' AND selection.SettlementFactor = 0.5 THEN N'HalfWin'
                     WHEN selection.Status = N'Lost' AND selection.SettlementFactor = -0.5 THEN N'HalfLoss'
@@ -25,8 +31,14 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
                     WHEN selection.Status = N'Lost' THEN N'Loss' ELSE selection.Status END,
                     selection.SettlementActualValue,
                     CONVERT(DECIMAL(12,4), CASE WHEN selection.Stake > 0 THEN selection.ProfitLoss / selection.Stake END),
-                    selection.SettlementReason, N'Administrador (registro previo)', selection.SettledAtUtc, 0, 0
+                    COALESCE(sharedPublication.Reason, selection.SettlementReason),
+                    COALESCE(sharedPublication.SettledBy, N'Administrador (registro previo)'),
+                    COALESCE(sharedPublication.SettledAtUtc, selection.SettledAtUtc), 0, 0
                 FROM dbo.AutomatedCornerBetSelections AS selection
+                LEFT JOIN dbo.GeneralBotFixtureManualSettlements AS sharedPublication
+                  ON sharedPublication.Id = TRY_CONVERT(BIGINT, JSON_VALUE(
+                      CASE WHEN ISJSON(selection.SettlementSnapshotJson)=1 THEN selection.SettlementSnapshotJson ELSE N'{}' END,
+                      '$.fixtureSettlementId'))
                 WHERE selection.AutomatedCornerBetSelectionId = evaluation.PublishedSelectionId
                   AND selection.SettlementSource = N'Manual' AND selection.Status <> N'Pending'
             ) AS result

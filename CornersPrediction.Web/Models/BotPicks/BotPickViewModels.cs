@@ -250,7 +250,8 @@ public sealed record GeneralPickLabSegmentViewModel(
     decimal? Yield,
     double? ObservedWinRate);
 
-public sealed record GeneralPickManualSettlementViewModel(int? ActualValue, string? Reason, Guid RequestId);
+public sealed record GeneralPickManualSettlementViewModel(int? ActualValue, string? Reason, Guid RequestId,
+    bool ApplyToFixture = false);
 
 /// <summary>
 /// One selector evaluation, whether or not it became a published selection.

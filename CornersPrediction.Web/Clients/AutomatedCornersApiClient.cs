@@ -86,7 +86,7 @@ public sealed class AutomatedCornersApiClient
         return lab ?? new GeneralPickLabViewModel();
     }
 
-    public async Task SettleGeneralPickAsync(long recordId, GeneralPickManualSettlementViewModel request,
+    public async Task<System.Text.Json.JsonElement> SettleGeneralPickAsync(long recordId, GeneralPickManualSettlementViewModel request,
         string actor, CancellationToken cancellationToken)
     {
         using var message = new HttpRequestMessage(HttpMethod.Put,
@@ -96,6 +96,20 @@ public sealed class AutomatedCornersApiClient
         };
         message.Headers.Add("X-Acting-User", actor);
         using var response = await _httpClient.SendAsync(message, cancellationToken);
+        return await ReadSettlementResponse(response, cancellationToken);
+    }
+
+    public async Task<System.Text.Json.JsonElement> PreviewGeneralPickSettlementAsync(long recordId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"/api/automated-corners/general-picks/{recordId}/settlement-preview", cancellationToken);
+        return await ReadSettlementResponse(response, cancellationToken);
+    }
+
+    private static async Task<System.Text.Json.JsonElement> ReadSettlementResponse(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
         if (!response.IsSuccessStatusCode)
         {
             var text = "No se pudo guardar la liquidación manual.";
@@ -106,6 +120,7 @@ public sealed class AutomatedCornersApiClient
             }
             throw new HttpRequestException(text, null, response.StatusCode);
         }
+        return await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(cancellationToken: cancellationToken);
     }
 
     public async Task<System.Text.Json.JsonElement?> GetGeneralPickEvidenceAsync(long id, CancellationToken cancellationToken)

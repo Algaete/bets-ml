@@ -1,11 +1,26 @@
 namespace CornersPrediction.Application.AutomatedCorners;
 
-public sealed record GeneralPickManualSettlementRequest(int? ActualValue, string? Reason, Guid RequestId);
+public sealed record GeneralPickManualSettlementRequest(int? ActualValue, string? Reason, Guid RequestId,
+    bool ApplyToFixture = false);
 public sealed record GeneralPickManualSettlementResult(long RecordId, int ActualValue,
-    string OutcomeStatus, decimal ProfitLoss, string Reason, string SettledBy, DateTime SettledAtUtc);
+    string OutcomeStatus, decimal ProfitLoss, string Reason, string SettledBy, DateTime SettledAtUtc)
+{
+    public GeneralPickManualSettlementResult() : this(0, 0, "", 0m, "", "", default) { }
+    public bool AppliedToFixture { get; init; }
+    public int AffectedEvaluations { get; init; }
+    public int AffectedPublishedPicks { get; init; }
+    public int AffectedBots { get; init; }
+}
+
+public sealed record GeneralPickSettlementScope(string HomeTeam, string AwayTeam, DateTime MatchDate,
+    string MarketType, int Evaluations, int PublishedPicks, string[] BotKeys, string MatchMethod)
+{
+    public string League { get; init; } = "";
+}
 
 public interface IGeneralPickManualSettlementRepository
 {
+    Task<GeneralPickSettlementScope> PreviewAsync(long recordId, CancellationToken cancellationToken);
     Task<GeneralPickManualSettlementResult> SettleAsync(long recordId,
         GeneralPickManualSettlementRequest request, string actor, CancellationToken cancellationToken);
 }

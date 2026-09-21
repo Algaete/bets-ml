@@ -10,6 +10,7 @@
     const endpoint = researchSurface.dataset.endpoint ?? '';
     const labEndpoint = researchSurface.dataset.labEndpoint ?? '';
     const settlementEndpoint = researchSurface.dataset.settlementEndpoint ?? '';
+    const settlementPreviewEndpoint = researchSurface.dataset.settlementPreviewEndpoint ?? '';
     const evidenceEndpoint = researchSurface.dataset.evidenceEndpoint ?? '';
     const evidenceCache = new Map();
     let evidenceController = null;
@@ -498,7 +499,7 @@
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-research-detail="${escapeHtml(id)}">Ver detalle</button>
                     ${canSettle && ['Over', 'Under'].includes(selectedSide) && number(selectedOdds) > 1
-                        ? `<button class="btn btn-sm btn-outline-secondary text-nowrap mt-1" type="button" data-research-settle="${escapeHtml(id)}">${getValue(row, 'OutcomeSource') === 'Manual' ? 'Corregir liquidación' : 'Liquidar manualmente'}</button>` : ''}
+                        ? `<button class="btn btn-sm btn-outline-secondary text-nowrap mt-1" type="button" data-research-settle="${escapeHtml(id)}">${getValue(row, 'OutcomeSource') === 'Manual' ? 'Corregir resultado compartido' : 'Liquidar partido'}</button>` : ''}
                     <small class="d-block text-muted mt-1">${isPublishedOnly(row)
                         ? `Pick #${escapeHtml(publishedSelectionId ?? '-')}`
                         : `Evaluación #${escapeHtml(getValue(row, 'EvaluationId') ?? '-')}`}</small>
@@ -984,6 +985,9 @@
     const settlementError = document.getElementById('BotResearchSettlementError');
     const settlementPreview = document.getElementById('BotResearchSettlementPreview');
     const settlementSave = document.getElementById('BotResearchSettlementSave');
+    const settlementScope = document.getElementById('BotResearchSettlementScope');
+    let settlementScopeReady = false;
+    let settlementScopeController = null;
     let settlementRow = null;
     let settlementRequestId = null;
     let settlementPayloadSignature = null;
@@ -1004,10 +1008,10 @@
         const factor = quarter ? (result(line - .25) + result(line + .25)) / 2 : result(line);
         const status = factor === 1 ? 'Win' : factor === .5 ? 'HalfWin' : factor === 0 ? 'Push' : factor === -.5 ? 'HalfLoss' : 'Loss';
         const profit = factor > 0 ? factor * (Number(getValue(settlementRow, 'SelectedOdds')) - 1) : factor;
-        settlementPreview.textContent = `${humanize(status)} · P/L ${formatNumber(profit)}u por cada 1u`;
+        settlementPreview.textContent = `Este pick: ${humanize(status)} · P/L ${formatNumber(profit)}u por cada 1u. Los otros picks se calculan con su propia línea y cuota.`;
     };
 
-    tableBody.addEventListener('click', event => {
+    tableBody.addEventListener('click', async event => {
         const button = event.target.closest('[data-research-settle]');
         if (!button || !canSettle || !settlementForm || settlementSaving) return;
         const row = rowsById.get(button.dataset.researchSettle);
@@ -1015,6 +1019,12 @@
         settlementRow = row;
         settlementRequestId = crypto.randomUUID();
         settlementPayloadSignature = null;
+        settlementScopeReady = false;
+        settlementSave.disabled = true;
+        settlementScopeController?.abort();
+        const scopeController = new AbortController();
+        settlementScopeController = scopeController;
+        settlementScope.textContent = 'Comprobando los bots y picks del mismo partido y mercado…';
         document.getElementById('BotResearchSettlementMatch').textContent = `${getValue(row, 'HomeTeam')} vs ${getValue(row, 'AwayTeam')}`;
         document.getElementById('BotResearchSettlementSignal').textContent = `${getValue(row, 'SelectedSide')} ${formatNumber(getValue(row, 'LineValue'))} @ ${formatNumber(getValue(row, 'SelectedOdds'))}`;
         document.getElementById('BotResearchSettlementLabel').textContent = `Resultado real: ${marketLabel(getValue(row, 'MarketType'))}`;
@@ -1023,11 +1033,33 @@
         settlementError.classList.add('d-none');
         previewSettlement();
         settlementModal?.show();
+        try {
+            const id = isPublishedOnly(row) ? -Number(getValue(row, 'PublishedSelectionId')) : getValue(row, 'EvaluationId');
+            const response = await fetch(`${settlementPreviewEndpoint}?id=${encodeURIComponent(id)}`, { signal: scopeController.signal });
+            if (!response.ok) throw new Error(await readError(response));
+            const scope = await response.json();
+            if (settlementScopeController !== scopeController || scopeController.signal.aborted) return;
+            const bots = getValue(scope, 'BotKeys') ?? [];
+            document.getElementById('BotResearchSettlementMatch').textContent = `${getValue(scope, 'HomeTeam') ?? getValue(row, 'HomeTeam')} vs ${getValue(scope, 'AwayTeam') ?? getValue(row, 'AwayTeam')}`;
+            document.getElementById('BotResearchSettlementSignal').textContent = `${formatDate(getValue(scope, 'MatchDate'))} · ${getValue(scope, 'League') ?? ''} · ${marketLabel(getValue(scope, 'MarketType'))}`;
+            settlementScope.textContent = `${bots.length} bots (${bots.join(', ')}) · ${getValue(scope, 'PublishedPicks') ?? 0} picks publicados. Se compartirán los ${marketLabel(getValue(scope, 'MarketType'))} de este partido con todas sus señales, sin importar los filtros o la página actual.`;
+            settlementScopeReady = true;
+            settlementSave.disabled = false;
+        } catch (error) {
+            if (error.name === 'AbortError' || settlementScopeController !== scopeController) return;
+            settlementScope.textContent = 'No se pudo confirmar el alcance de la liquidación.';
+            settlementError.textContent = error.message || 'Vuelve a abrir la liquidación para reintentar.';
+            settlementError.classList.remove('d-none');
+        }
+    });
+    settlementModalElement?.addEventListener('hidden.bs.modal', () => {
+        settlementScopeController?.abort();
+        settlementScopeReady = false;
     });
     actualInput?.addEventListener('input', previewSettlement);
     settlementForm?.addEventListener('submit', async event => {
         event.preventDefault();
-        if (settlementSaving || !settlementRow || !settlementForm.reportValidity()) return;
+        if (settlementSaving || !settlementScopeReady || !settlementRow || !settlementForm.reportValidity()) return;
         const actual = number(actualInput.value);
         if (!Number.isInteger(actual) || actual < 0 || actual > 1000 || !reasonInput.value.trim()) return;
         const signature = JSON.stringify([actual, reasonInput.value.trim()]);
@@ -1047,9 +1079,20 @@
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json',
                     RequestVerificationToken: filtersForm.querySelector('input[name="__RequestVerificationToken"]')?.value ?? '' },
-                body: JSON.stringify({ actualValue: actual, reason: reasonInput.value.trim(), requestId: settlementRequestId })
+                body: JSON.stringify({ actualValue: actual, reason: reasonInput.value.trim(), requestId: settlementRequestId, applyToFixture: true })
             });
             if (!response.ok) throw new Error(await readError(response));
+            const saved = await response.json();
+            let notification = document.getElementById('BotResearchSettlementSuccess');
+            if (!notification) {
+                notification = document.createElement('div');
+                notification.id = 'BotResearchSettlementSuccess';
+                notification.className = 'alert alert-success mb-3';
+                notification.setAttribute('role', 'status');
+                researchSurface.prepend(notification);
+            }
+            notification.textContent = `Resultado manual guardado para ${getValue(saved, 'AffectedBots') ?? 0} bots y ${getValue(saved, 'AffectedPublishedPicks') ?? 0} picks publicados. Todas las señales del mismo partido y mercado comparten este resultado.`;
+            evidenceCache.clear();
             settlementModal?.hide();
             await load(true);
             document.dispatchEvent(new CustomEvent('bot-pick-manually-settled'));
@@ -1060,8 +1103,8 @@
             settlementSaving = false;
             actualInput.disabled = false;
             reasonInput.disabled = false;
-            settlementSave.disabled = false;
-            settlementSave.textContent = 'Guardar liquidación';
+            settlementSave.disabled = !settlementScopeReady;
+            settlementSave.textContent = 'Liquidar para todos los bots';
         }
     });
 

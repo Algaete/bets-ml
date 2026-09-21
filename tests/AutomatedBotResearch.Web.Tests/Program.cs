@@ -59,7 +59,8 @@ static void ManualSettlementUsesAuthenticatedActor()
         var body = request.Content!.ReadFromJsonAsync<GeneralPickManualSettlementViewModel>().GetAwaiter().GetResult()!;
         Equal(0, body.ActualValue, "zero outcome");
         Equal("Official league site", body.Reason, "audit note");
-        return Json(HttpStatusCode.OK, new { saved = true });
+        Equal(true, body.ApplyToFixture, "fixture scope must reach the API");
+        return Json(HttpStatusCode.OK, new { appliedToFixture = true, affectedBots = 3, affectedPublishedPicks = 2 });
     })) { BaseAddress = new Uri("http://manual-test") };
     var controller = new BotPicksController(new AutomatedCornersApiClient(http), new RecommendationAutomationApiClient(http), NullLogger<BotPicksController>.Instance)
     {
@@ -68,8 +69,14 @@ static void ManualSettlementUsesAuthenticatedActor()
                 new(System.Security.Claims.ClaimTypes.Name, "operator@example.test"),
                 new(System.Security.Claims.ClaimTypes.Role, "Admin")], "test")) } }
     };
-    Check(controller.SettleGeneralPick(42, new(0, "Official league site", Guid.NewGuid()), default).GetAwaiter().GetResult() is OkObjectResult,
-        "Manual settlement proxy failed.");
+    var result = controller.SettleGeneralPick(42, new(0, "Official league site", Guid.NewGuid(), true), default)
+        .GetAwaiter().GetResult() as OkObjectResult;
+    Check(result?.Value is System.Text.Json.JsonElement payload && payload.GetProperty("affectedBots").GetInt32() == 3,
+        "Manual settlement proxy lost the affected bots result.");
+    var preview = typeof(BotPicksController).GetMethod(nameof(BotPicksController.PreviewGeneralPickSettlement))!;
+    Check(preview.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
+        .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Any(a => a.Policy == CornersPrediction.Web.Services.PlatformPolicies.Admin),
+        "Fixture preview requires admin.");
 }
 
 static async Task<int> RunLiveTwoPhaseComparison()

@@ -442,8 +442,20 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
           ON selection.AutomatedCornerBetSelectionId = -page.EvaluationId
         OUTER APPLY
         (
-            SELECT TOP (1) Reason, SettledBy FROM dbo.GeneralBotPickManualSettlements
-            WHERE RecordId = -selection.AutomatedCornerBetSelectionId ORDER BY Id DESC
+            SELECT TOP (1) result.Reason, result.SettledBy
+            FROM
+            (
+                SELECT Reason, SettledBy, SettledAtUtc, Id, Priority=1
+                FROM dbo.GeneralBotPickManualSettlements
+                WHERE RecordId = -selection.AutomatedCornerBetSelectionId
+                UNION ALL
+                SELECT Reason, SettledBy, SettledAtUtc, Id, Priority=2
+                FROM dbo.fn_GeneralBotFixtureManualOutcome(selection.ApiFootballFixtureId, selection.MatchDate,
+                    COALESCE(NULLIF(selection.StandardizedLeague,N''),selection.League),
+                    COALESCE(NULLIF(selection.StandardizedHomeTeam,N''),selection.HomeTeam),
+                    COALESCE(NULLIF(selection.StandardizedAwayTeam,N''),selection.AwayTeam), selection.MarketType)
+            ) AS result
+            ORDER BY result.SettledAtUtc DESC, result.Priority DESC, result.Id DESC
         ) AS entered
         WHERE page.EvaluationId < 0
         ORDER BY selection.MatchDate DESC, EvaluationId DESC

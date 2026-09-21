@@ -97,6 +97,14 @@ public sealed class AutomatedBotGeneralPicksController(
         }
     }
 
+    [HttpGet("{recordId:long}/settlement-preview")]
+    public async Task<IActionResult> SettlementPreview(long recordId, CancellationToken cancellationToken)
+    {
+        try { return Ok(await settlements.PreviewAsync(recordId, cancellationToken)); }
+        catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
+        catch (KeyNotFoundException exception) { return NotFound(new { error = exception.Message }); }
+    }
+
     [HttpGet]
     [ProducesResponseType(typeof(AutomatedBotResearchPage), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

@@ -407,6 +407,12 @@ public sealed class SqlServerAutomatedBotPickSettlementRepository : IAutomatedBo
         CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_connectionString);
+        // Picks published/backfilled after the manual entry inherit the shared
+        // result before official reconciliation, which already protects Manual.
+        await connection.ExecuteAsync(new CommandDefinition("dbo.sp_ApplyGeneralBotFixtureManualSettlement",
+            new { NowLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                TimeZoneInfo.FindSystemTimeZoneById("America/Santiago")) },
+            commandType: CommandType.StoredProcedure, commandTimeout: 60, cancellationToken: cancellationToken));
         var rows = await connection.QueryAsync<AutomatedBotPickSettlementCandidate>(new CommandDefinition(
             PendingCandidatesSql,
             new

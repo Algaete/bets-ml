@@ -498,11 +498,24 @@ public sealed class BotPicksController : Controller
     {
         try
         {
-            await _automatedCornersApiClient.SettleGeneralPickAsync(id, request,
+            var result = await _automatedCornersApiClient.SettleGeneralPickAsync(id, request,
                 User.Identity?.Name ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "",
                 cancellationToken);
-            return Ok(new { saved = true });
+            return Ok(result);
         }
+        catch (HttpRequestException exception)
+        {
+            return StatusCode((int)(exception.StatusCode ?? System.Net.HttpStatusCode.BadGateway),
+                new { error = exception.Message });
+        }
+    }
+
+    [HttpGet]
+    [Authorize(Policy = PlatformPolicies.Admin)]
+    public async Task<IActionResult> PreviewGeneralPickSettlement([FromQuery] long id,
+        CancellationToken cancellationToken)
+    {
+        try { return Ok(await _automatedCornersApiClient.PreviewGeneralPickSettlementAsync(id, cancellationToken)); }
         catch (HttpRequestException exception)
         {
             return StatusCode((int)(exception.StatusCode ?? System.Net.HttpStatusCode.BadGateway),

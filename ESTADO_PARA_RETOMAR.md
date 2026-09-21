@@ -1,6 +1,15 @@
 # Estado del proyecto para retomar
 
-Actualizado el **16 de septiembre de 2026, antes del apagado solicitado por el usuario**. Esta sección tiene prioridad; las secciones inferiores conservan el historial de sesiones anteriores.
+Actualizado el **21 de septiembre de 2026**. La sección más reciente tiene prioridad; las inferiores conservan el historial de sesiones anteriores.
+
+## Liquidación manual compartida: 21 de septiembre
+
+- Ver `docs/liquidacion-manual-compartida-2026-09-21.md`. Bot Picks generales permite **Liquidar partido** y **Corregir resultado compartido**: un dato de partido/mercado se comparte entre todos los bots, líneas y lados, incluidos los de otras páginas. No se infieren las estadísticas de otros mercados.
+- La vista previa confirma los bots y picks publicados relacionados. Cada pick se calcula con su línea, cuota y stake; se mantienen la auditoría, el reintento idempotente y la protección frente a sobrescritura automática.
+- SQL fue probado con partidos ficticios y rollback completo, incluyendo correcciones, cero, líneas asiáticas, futuras publicaciones y enlaces ambiguos. No se ingresaron resultados inventados a partidos reales.
+- La migración y el índice por partido/mercado quedaron instalados. El error de firewall observado el 16 no impidió las pruebas SQL del 21. La política productiva V6 de rendimiento mínimo de 3% se conserva.
+- Logs del arranque actualizado: `/private/tmp/corners-api-20260921.log` y `/private/tmp/corners-web-20260921.log`; API/robots 5070 y web 5130. Comprobar puertos al retomar.
+- Verificación HTTP: vista previa real 200 en 2,44 s, tabla general sin filtro de decisión 200 en 4,31 s. Pendiente de rendimiento: una consulta F/GOALS/Approved del 18–20 de septiembre excedió 60 s; no se resolvieron todas las demoras de la tabla en esta tarea.
 
 ## Punto de reanudación del 16 de septiembre
 
