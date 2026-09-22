@@ -66,6 +66,10 @@
         </div>
     </section>
 
+    <div id="IScorecardsHost" class="i-async-host" data-url="@Url.Action("Scorecards", "BotI2026", new { AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
+        <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Qué podemos aprender de I2026</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Consultando resultados, muestra útil y cobertura…</strong></div></div></section>
+    </div>
+
     @if (!ViewData.ModelState.IsValid)
     {
         <div class="alert alert-warning mb-0" asp-validation-summary="All"></div>
@@ -94,10 +98,6 @@
 
     <div id="IStatusHost" class="i-async-host" data-url="@Url.Action("Status", "BotI2026")">
         <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Estado y barreras</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Comprobando que I2026 siga aislado…</strong></div></div></section>
-    </div>
-
-    <div id="IScorecardsHost" class="i-async-host" data-url="@Url.Action("Scorecards", "BotI2026", new { AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
-        <section class="i-card" aria-live="polite" aria-busy="true"><div class="i-card-header"><h2 class="h5 mb-1">Scorecards outcome-aware 7 / 30 / 90</h2></div><div class="i-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Cargando rendimiento shadow sin bloquear la tabla…</strong></div></div></section>
     </div>
 
     <div id="IEvaluationsHost" class="i-async-host" data-url="@Url.Action("Evaluations", "BotI2026", new { PredictionFromUtc = Model.Filters.PredictionFromUtc?.ToString("O"), PredictionToUtc = Model.Filters.PredictionToUtc?.ToString("O"), AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), Decision = Model.Filters.Decision, MarketType = Model.Filters.MarketType, Selection = Model.Filters.Selection, Source = Model.Filters.Source, ConfigurationVersion = Model.Filters.ConfigurationVersion, Page = Model.Filters.Page, PageSize = Model.Filters.PageSize })">

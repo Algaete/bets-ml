@@ -12,6 +12,8 @@ var tests = new (string Name, Action Run)[]
     ("Client uses server paging and invariant I2026 filters", ClientUsesServerPaging),
     ("Collection calls only the shadow endpoint", CollectionUsesShadowEndpoint),
     ("Dashboard components fail independently", DashboardComponentsFailIndependently),
+    ("Evidence summary uses independent approvals instead of repeated observations", SummaryUsesIndependentEvidence),
+    ("Evidence summary distinguishes missing data, mixed versions and observed returns", SummaryDoesNotInventConclusions),
     ("Invalid collection is rejected before the API", InvalidCollectionDoesNotCallApi),
     ("Collection is protected against request forgery", CollectionRequiresAntiforgery),
     ("Razor surface is responsive, sortable and explicitly non-productive", RazorSurfaceIsSafeAndResponsive),
@@ -163,6 +165,47 @@ static void InvalidCollectionDoesNotCallApi()
 
     Check(result is BadRequestObjectResult, "A window larger than 14 days must return HTTP 400.");
     Equal(0, calls);
+}
+
+static void SummaryUsesIndependentEvidence()
+{
+    var summary = BotI2026EvidenceSummary.Create([
+        new() { WindowDays = 7, Dimension = "All", Approved = 400, Settled = 0 },
+        new() { WindowDays = 30, Dimension = "All", Approved = 2500, ApprovedFixtureVersions = 100,
+            Settled = 40, SettledFixtures = 40, Yield = 0.1, MissingOfficialLink = 55 },
+        new() { WindowDays = 30, Dimension = "Configuration", Segment = "v1" }
+    ]) ?? throw new InvalidOperationException("Missing summary.");
+    Equal(30, summary.Overall.WindowDays);
+    Equal(0.4, summary.SettlementCoverage!.Value);
+    Equal(false, summary.HasMixedVersions);
+    Contains(summary.NextStep, "sin enlace oficial");
+    Contains(summary.Conclusion, "todavía no demuestra");
+}
+
+static void SummaryDoesNotInventConclusions()
+{
+    Check(BotI2026EvidenceSummary.Create([]) is null, "An empty response must not imply zero performance.");
+    var zero = BotI2026EvidenceSummary.Create([
+        new() { WindowDays = 30, Dimension = "All", Approved = 1000, Settled = 0, ApprovedFixtureVersions = 0 }
+    ])!;
+    Check(zero.SettlementCoverage is null, "Zero approved fixtures must not become zero-percent coverage.");
+    Contains(zero.Conclusion, "Todavía no hay resultados resueltos");
+    var unknown = BotI2026EvidenceSummary.Create([
+        new() { WindowDays = 30, Dimension = "All", Approved = 1000, Settled = 10, Yield = -0.2 }
+    ])!;
+    Check(unknown.SettlementCoverage is null, "Legacy response without denominator must not use observation count.");
+    Contains(unknown.Conclusion, "negativo");
+    var mixed = BotI2026EvidenceSummary.Create([
+        new() { WindowDays = 30, Dimension = "All", Settled = 100, ApprovedFixtureVersions = 100, Yield = 0.6 },
+        new() { WindowDays = 30, Dimension = "Configuration", Segment = "v1" },
+        new() { WindowDays = 30, Dimension = "Configuration", Segment = "v2" }
+    ])!;
+    Check(mixed.HasMixedVersions, "Multiple configurations must be disclosed despite positive yield.");
+    Contains(mixed.Conclusion, "por separado");
+    var invalid = BotI2026EvidenceSummary.Create([
+        new() { WindowDays = 30, Dimension = "All", Settled = 10, ApprovedFixtureVersions = 5 }
+    ])!;
+    Check(invalid.SettlementCoverage is null, "An inconsistent count must not produce coverage above 100 percent.");
 }
 
 static void CollectionRequiresAntiforgery()

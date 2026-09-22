@@ -88,6 +88,7 @@ public sealed class BotI2026EvaluationViewModel
     public string FeatureSchemaVersion { get; init; } = string.Empty;
     public long FixtureIdentity { get; init; }
     public long? ApiFootballFixtureId { get; init; }
+    public long? ResolvedApiFootballFixtureId { get; init; }
     public DateTime FixtureDateUtc { get; init; }
     public DateTime PredictionTimestampUtc { get; init; }
     public string League { get; init; } = string.Empty;
@@ -154,6 +155,12 @@ public sealed class BotI2026ScorecardViewModel
     public long Rejected { get; init; }
     public long Abstained { get; init; }
     public long Settled { get; init; }
+    public long? ApprovedFixtureVersions { get; init; }
+    public long? SettledFixtures { get; init; }
+    public long? FutureApproved { get; init; }
+    public long? MissingOfficialLink { get; init; }
+    public long? AwaitingOfficialResult { get; init; }
+    public long? InvalidOutcomeTimestamp { get; init; }
     public long Won { get; init; }
     public long HalfWon { get; init; }
     public long Pushes { get; init; }

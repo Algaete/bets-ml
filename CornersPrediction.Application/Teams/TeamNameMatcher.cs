@@ -71,7 +71,12 @@ public static class TeamNameMatcher
         ["Tottenham Hotspur", "Tottenham"],
         ["Newcastle United", "Newcastle"],
         ["Ipswich Town", "Ipswich"],
-        ["Leeds United", "Leeds"]
+        ["Leeds United", "Leeds"],
+        ["Dundee United", "Dundee Utd"],
+        ["Coventry City", "Coventry"],
+        ["Bolton Wanderers", "Bolton"],
+        ["West Ham United", "West Ham"],
+        ["Bayern Munich", "Bayern München"]
     ];
 
     private static readonly IReadOnlyDictionary<string, string> KnownTeamAliases = KnownTeamVariants

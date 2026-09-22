@@ -89,12 +89,13 @@
         <div class="g-howto">
             <article><strong>1 · Recolectar</strong><span class="small text-secondary">El runner normal evalúa G cuando encuentra cuotas bilaterales de goles. Esta pantalla no ejecuta el bot.</span></article>
             <article><strong>2 · Revisar decisiones</strong><span class="small text-secondary">Approved pasó las reglas; Rejected fue puntuado pero falló un umbral; Abstain significa evidencia insuficiente.</span></article>
-            <article><strong>3 · Esperar resultados</strong><span class="small text-secondary">Un worker independiente reconcilia MatchHistory cada 15 minutos sin bloquear API-Football.</span></article>
+            <article><strong>3 · Completar resultados</strong><span class="small text-secondary">Se reconcilian cada 15 minutos. Si falta el ID oficial del partido, primero hay que resolver ese enlace; esperar por sí solo no liquida la observación.</span></article>
             <article><strong>4 · Comparar con mercado</strong><span class="small text-secondary">Promoción sólo si Δ Brier es negativo, ECE bajo, muestra suficiente y rendimiento estable fuera de muestra.</span></article>
         </div>
     </section>
 
     <section class="g-panel">
+        <p class="small text-secondary mb-2">El rango inicial incluye la última semana y los próximos partidos. Puedes ampliar las fechas; las conclusiones y los conteos corresponden al rango elegido.</p>
         <form method="get" class="g-filter-grid row g-2 align-items-end">
             <div class="col-6 col-lg-2">
                 <label class="form-label" for="DateFromUtc">Desde UTC</label>

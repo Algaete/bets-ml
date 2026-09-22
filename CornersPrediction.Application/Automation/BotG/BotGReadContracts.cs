@@ -140,6 +140,9 @@ public sealed class BotGScorecardDto
     public long CandidatesPublished { get; init; }
     public long Resolved { get; init; }
     public long PredictiveResolved { get; init; }
+    public long CalibratedCandidates { get; init; }
+    public long PairedProbabilityScored { get; init; }
+    public long PairedFixtures { get; init; }
     public long Won { get; init; }
     public long HalfWon { get; init; }
     public long Pushes { get; init; }

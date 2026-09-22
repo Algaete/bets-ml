@@ -725,21 +725,56 @@ GO
       * ApiFootballUpdatedAtUtc proves the outcome appeared after prediction and no
         later than the caller's AsOfUtc.
 */
-CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindow
+CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindowCore
 (
     @AsOfUtc DATETIME2(3),
     @FixtureFromUtc DATETIME2(3),
     @FixtureToUtc DATETIME2(3),
-    @ConfigurationVersion NVARCHAR(80)
+    @ConfigurationVersion NVARCHAR(80),
+    @FirstApprovedOnly BIT
 )
 RETURNS TABLE
 AS
 RETURN
 (
-    WITH Evidence AS
+    WITH RankedApprovals AS
+    (
+        -- The scorecard only uses the first approved signal for each fixture and
+        -- configuration. Rank narrow metadata before reading snapshots/history.
+        SELECT
+            shadow.ShadowEvaluationId,
+            ApprovalRank = ROW_NUMBER() OVER
+            (
+                PARTITION BY shadow.ConfigurationVersion,
+                    CASE WHEN shadow.ApiFootballFixtureId IS NOT NULL
+                        THEN CONCAT(N'AF|', CONVERT(NVARCHAR(30), shadow.ApiFootballFixtureId))
+                        ELSE CONCAT(N'SRC|', shadow.Source, N'|', COALESCE(shadow.SourceMatchId, N''), N'|',
+                            CONVERT(NVARCHAR(19), shadow.SourceMatchDate, 126), N'|', shadow.HomeTeam, N'|', shadow.AwayTeam)
+                    END
+                ORDER BY shadow.PredictionTimestampUtc, shadow.ShadowEvaluationId
+            )
+        FROM dbo.BotH2026ShadowEvaluations AS shadow WITH (INDEX(IX_BotH2026ShadowEvaluations_ScorecardWindow))
+        WHERE @FirstApprovedOnly = 1
+          AND shadow.Decision = N'Approved'
+          AND shadow.PredictionTimestampUtc <= @AsOfUtc
+          AND (@FixtureFromUtc IS NULL OR shadow.FixtureDateUtc >= @FixtureFromUtc)
+          AND (@FixtureToUtc IS NULL OR shadow.FixtureDateUtc <= @FixtureToUtc)
+          AND (@ConfigurationVersion IS NULL OR shadow.ConfigurationVersion = @ConfigurationVersion)
+    ),
+    Evidence AS
     (
         SELECT
             shadow.*,
+            CanonicalHomeTeam = COALESCE(homeAlias.CanonicalName, shadow.HomeTeam),
+            CanonicalAwayTeam = COALESCE(awayAlias.CanonicalName, shadow.AwayTeam),
+            -- Qualified provider names are resolved against the official league
+            -- id. "Premier League" is not made a global English alias.
+            ExpectedApiFootballLeagueId = CASE dbo.fn_NormalizeNameKey(shadow.League)
+                WHEN N'england premier league' THEN 39
+                WHEN N'england championship' THEN 40
+                WHEN N'scotland premiership' THEN 179
+                WHEN N'uefa champions league' THEN 2
+            END,
             SnapshotLineageState = CASE
                 WHEN snapshot.CornerOddsSnapshotId IS NOT NULL
                  AND snapshot.CapturedAtUtc = shadow.OddsCapturedAtUtc
@@ -757,12 +792,19 @@ RETURN
                  AND (snapshot.UnderOdds = shadow.UnderOdds OR (snapshot.UnderOdds IS NULL AND shadow.UnderOdds IS NULL))
                 THEN N'Valid' ELSE N'Invalid' END
         FROM dbo.BotH2026ShadowEvaluations AS shadow
+        LEFT JOIN dbo.TeamNameAlias AS homeAlias
+          ON homeAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.HomeTeam)
+        LEFT JOIN dbo.TeamNameAlias AS awayAlias
+          ON awayAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.AwayTeam)
         LEFT JOIN dbo.CornerOddsSnapshots AS snapshot
           ON snapshot.CornerOddsSnapshotId = shadow.OddsSnapshotId
         WHERE shadow.PredictionTimestampUtc <= @AsOfUtc
           AND (@FixtureFromUtc IS NULL OR shadow.FixtureDateUtc >= @FixtureFromUtc)
           AND (@FixtureToUtc IS NULL OR shadow.FixtureDateUtc <= @FixtureToUtc)
           AND (@ConfigurationVersion IS NULL OR shadow.ConfigurationVersion = @ConfigurationVersion)
+          AND (@FirstApprovedOnly = 0 OR shadow.Decision = N'Approved')
+          AND (@FirstApprovedOnly = 0 OR shadow.ShadowEvaluationId IN
+              (SELECT ShadowEvaluationId FROM RankedApprovals WHERE ApprovalRank = 1))
     ),
     IdentityCandidates AS
     (
@@ -787,12 +829,24 @@ RETURN
         INNER JOIN dbo.MatchHistory AS history
           ON history.MatchDate BETWEEN DATEADD(DAY, -1, CAST(evidence.SourceMatchDate AS DATE))
                                    AND DATEADD(DAY, 1, CAST(evidence.SourceMatchDate AS DATE))
-         AND COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam)
-                COLLATE Latin1_General_100_CI_AI = evidence.HomeTeam COLLATE Latin1_General_100_CI_AI
-         AND COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
-                COLLATE Latin1_General_100_CI_AI = evidence.AwayTeam COLLATE Latin1_General_100_CI_AI
+        LEFT JOIN dbo.TeamNameAlias AS historyHomeAlias
+          ON historyHomeAlias.AliasKey = dbo.fn_NormalizeNameKey(COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam))
+        LEFT JOIN dbo.TeamNameAlias AS historyAwayAlias
+          ON historyAwayAlias.AliasKey = dbo.fn_NormalizeNameKey(COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam))
         WHERE evidence.ApiFootballFixtureId IS NULL
           AND history.ApiFootballFixtureId IS NOT NULL
+          AND
+          (
+              (evidence.ExpectedApiFootballLeagueId IS NOT NULL
+                  AND history.ApiFootballLeagueId = evidence.ExpectedApiFootballLeagueId)
+              OR (evidence.ExpectedApiFootballLeagueId IS NULL
+                  AND dbo.fn_CanonicalLeagueName(COALESCE(NULLIF(history.StandardizedLeague, N''), history.League))
+                      COLLATE Latin1_General_100_CI_AI = dbo.fn_CanonicalLeagueName(evidence.League) COLLATE Latin1_General_100_CI_AI)
+          )
+          AND COALESCE(historyHomeAlias.CanonicalName, NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam)
+                COLLATE Latin1_General_100_CI_AI = evidence.CanonicalHomeTeam COLLATE Latin1_General_100_CI_AI
+          AND COALESCE(historyAwayAlias.CanonicalName, NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
+                COLLATE Latin1_General_100_CI_AI = evidence.CanonicalAwayTeam COLLATE Latin1_General_100_CI_AI
     ),
     RankedIdentityCandidates AS
     (
@@ -834,10 +888,10 @@ RETURN
             IdentityMatches = CASE
                 WHEN history.Id IS NOT NULL
                  AND ABS(DATEDIFF(DAY, evidence.SourceMatchDate, history.MatchDate)) <= 1
-                 AND COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam)
-                        COLLATE Latin1_General_100_CI_AI = evidence.HomeTeam COLLATE Latin1_General_100_CI_AI
-                 AND COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
-                        COLLATE Latin1_General_100_CI_AI = evidence.AwayTeam COLLATE Latin1_General_100_CI_AI
+                 AND COALESCE(historyHomeAlias.CanonicalName, NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam)
+                        COLLATE Latin1_General_100_CI_AI = evidence.CanonicalHomeTeam COLLATE Latin1_General_100_CI_AI
+                 AND COALESCE(historyAwayAlias.CanonicalName, NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
+                        COLLATE Latin1_General_100_CI_AI = evidence.CanonicalAwayTeam COLLATE Latin1_General_100_CI_AI
                 THEN 1 ELSE 0 END
         FROM Evidence AS evidence
         LEFT JOIN MatchedIdentity AS matched
@@ -845,6 +899,10 @@ RETURN
         LEFT JOIN dbo.MatchHistory AS history
           ON history.Id = matched.MatchHistoryId
          AND matched.MatchCandidateCount = 1
+        LEFT JOIN dbo.TeamNameAlias AS historyHomeAlias
+          ON historyHomeAlias.AliasKey = dbo.fn_NormalizeNameKey(COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam))
+        LEFT JOIN dbo.TeamNameAlias AS historyAwayAlias
+          ON historyAwayAlias.AliasKey = dbo.fn_NormalizeNameKey(COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam))
     ),
     Classified AS
     (
@@ -991,6 +1049,24 @@ RETURN
         END),
         factor.CapturedAtUtc
     FROM Factorized AS factor
+);
+
+GO
+
+-- Keep the existing four-argument contract for audit and threshold callers.
+CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindow
+(
+    @AsOfUtc DATETIME2(3),
+    @FixtureFromUtc DATETIME2(3),
+    @FixtureToUtc DATETIME2(3),
+    @ConfigurationVersion NVARCHAR(80)
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    SELECT *
+    FROM dbo.fn_BotH2026ShadowLabWindowCore(@AsOfUtc, @FixtureFromUtc, @FixtureToUtc, @ConfigurationVersion, 0)
 );
 
 GO
@@ -1160,22 +1236,45 @@ BEGIN
         lab.MarketNoVigProbability,
         lab.FinalEdge,
         lab.FinalExpectedValue,
-        lab.SettlementState,
-        lab.Result,
-        lab.ProfitLoss,
-        lab.EconomicOutcome
+        SettlementState = CONVERT(NVARCHAR(50), N'NotSelected'),
+        Result = CONVERT(NVARCHAR(20), NULL),
+        ProfitLoss = CONVERT(DECIMAL(18,6), NULL),
+        EconomicOutcome = CONVERT(DECIMAL(9,6), NULL)
     INTO #BotHLab
-    FROM dbo.fn_BotH2026ShadowLabWindow
-    (
-        @AsOfUtc,
-        DATEADD(DAY, -90, @AsOfUtc),
-        @AsOfUtc,
-        @ConfigurationVersion
-    ) AS lab
+    FROM dbo.BotH2026ShadowEvaluations AS lab WITH (INDEX(IX_BotH2026ShadowEvaluations_ScorecardWindow))
+    WHERE lab.PredictionTimestampUtc <= @AsOfUtc
+      AND lab.FixtureDateUtc >= DATEADD(DAY, -90, @AsOfUtc)
+      AND lab.FixtureDateUtc <= @AsOfUtc
+      AND (@ConfigurationVersion IS NULL OR lab.ConfigurationVersion = @ConfigurationVersion)
     OPTION (RECOMPILE);
 
     CREATE CLUSTERED INDEX CX_BotHLab_Scorecard
         ON #BotHLab(ConfigurationVersion, FixtureDateUtc, PredictionTimestampUtc, ShadowEvaluationId);
+
+    -- All capture/fixture/decision counters retain the complete bounded universe.
+    -- Only first approvals need snapshot verification and official settlement;
+    -- reconciling every rejected/repeated signal used to dominate this query.
+    -- Freeze the small outcome set before joining it to all capture metadata.
+    -- Otherwise the inline function can be expanded inside the UPDATE plan and
+    -- its history/snapshot lookups repeated for the much larger outer set.
+    SELECT ShadowEvaluationId, SettlementState, Result, ProfitLoss, EconomicOutcome
+    INTO #BotHSettledApprovals
+    FROM dbo.fn_BotH2026ShadowLabWindowCore
+    (
+        @AsOfUtc, DATEADD(DAY, -90, @AsOfUtc), @AsOfUtc, @ConfigurationVersion, 1
+    )
+    OPTION (RECOMPILE);
+
+    CREATE UNIQUE CLUSTERED INDEX CX_BotHSettledApprovals_Id ON #BotHSettledApprovals(ShadowEvaluationId);
+
+    UPDATE metadata
+    SET SettlementState = settled.SettlementState,
+        Result = settled.Result,
+        ProfitLoss = settled.ProfitLoss,
+        EconomicOutcome = settled.EconomicOutcome
+    FROM #BotHLab AS metadata
+    INNER JOIN #BotHSettledApprovals AS settled ON settled.ShadowEvaluationId = metadata.ShadowEvaluationId
+    OPTION (RECOMPILE);
 
     DECLARE @Scorecards TABLE
     (
@@ -1214,7 +1313,10 @@ BEGIN
         CoverageRate FLOAT NULL,
         Deployable BIT NOT NULL,
         PromotionState NVARCHAR(30) NOT NULL,
-        UnitOfAnalysis NVARCHAR(80) NOT NULL
+        UnitOfAnalysis NVARCHAR(80) NOT NULL,
+        PairedSamples BIGINT NULL,
+        PairedModelBrier FLOAT NULL,
+        PairedMarketBrier FLOAT NULL
     );
 
     ;WITH LabIdentity AS
@@ -1303,6 +1405,14 @@ BEGIN
             MarketBrier = AVG(CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 AND SettlementState = N'Settled'
                                       AND MarketNoVigProbability IS NOT NULL
                 THEN POWER(CONVERT(FLOAT, MarketNoVigProbability) - CONVERT(FLOAT, EconomicOutcome), 2) END),
+            PairedSamples = SUM(CONVERT(BIGINT, CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 AND SettlementState = N'Settled'
+                AND FinalProbability IS NOT NULL AND MarketNoVigProbability IS NOT NULL AND EconomicOutcome IS NOT NULL THEN 1 ELSE 0 END)),
+            PairedModelBrier = AVG(CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 AND SettlementState = N'Settled'
+                AND FinalProbability IS NOT NULL AND MarketNoVigProbability IS NOT NULL AND EconomicOutcome IS NOT NULL
+                THEN POWER(CONVERT(FLOAT, FinalProbability) - CONVERT(FLOAT, EconomicOutcome), 2) END),
+            PairedMarketBrier = AVG(CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 AND SettlementState = N'Settled'
+                AND FinalProbability IS NOT NULL AND MarketNoVigProbability IS NOT NULL AND EconomicOutcome IS NOT NULL
+                THEN POWER(CONVERT(FLOAT, MarketNoVigProbability) - CONVERT(FLOAT, EconomicOutcome), 2) END),
             AverageEdge = AVG(CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 THEN CONVERT(FLOAT, FinalEdge) END),
             AverageExpectedValue = AVG(CASE WHEN Decision = N'Approved' AND ApprovedSequence = 1 THEN CONVERT(FLOAT, FinalExpectedValue) END)
         FROM Expanded
@@ -1341,13 +1451,16 @@ BEGIN
         CalibrationGap = aggregated.AverageModelProbability - aggregated.ObservedEconomicOutcome,
         aggregated.Brier,
         aggregated.MarketBrier,
-        DeltaBrier = aggregated.Brier - aggregated.MarketBrier,
+        DeltaBrier = aggregated.PairedModelBrier - aggregated.PairedMarketBrier,
         aggregated.AverageEdge,
         aggregated.AverageExpectedValue,
         CoverageRate = CONVERT(FLOAT, aggregated.SafelySettled) / NULLIF(CONVERT(FLOAT, aggregated.Approved), 0),
         Deployable = CONVERT(BIT, 0),
         PromotionState = N'SHADOW_ONLY',
-        UnitOfAnalysis = N'FIRST_APPROVED_PER_FIXTURE_CONFIGURATION'
+        UnitOfAnalysis = N'FIRST_APPROVED_PER_FIXTURE_CONFIGURATION',
+        aggregated.PairedSamples,
+        aggregated.PairedModelBrier,
+        aggregated.PairedMarketBrier
     FROM Aggregated AS aggregated;
 
     INSERT INTO @Scorecards
@@ -1610,7 +1723,15 @@ BEGIN
                 - CONVERT(FLOAT, expanded.EconomicOutcome), 2)),
             MarketBrier = AVG(CASE WHEN expanded.MarketNoVigProbability IS NOT NULL
                 THEN POWER(CONVERT(FLOAT, expanded.MarketNoVigProbability)
-                    - CONVERT(FLOAT, expanded.EconomicOutcome), 2) END)
+                    - CONVERT(FLOAT, expanded.EconomicOutcome), 2) END),
+            PairedSamples = SUM(CONVERT(BIGINT, CASE WHEN expanded.FinalProbability IS NOT NULL
+                AND expanded.MarketNoVigProbability IS NOT NULL AND expanded.EconomicOutcome IS NOT NULL THEN 1 ELSE 0 END)),
+            PairedModelBrier = AVG(CASE WHEN expanded.FinalProbability IS NOT NULL
+                AND expanded.MarketNoVigProbability IS NOT NULL AND expanded.EconomicOutcome IS NOT NULL
+                THEN POWER(CONVERT(FLOAT, expanded.FinalProbability) - CONVERT(FLOAT, expanded.EconomicOutcome), 2) END),
+            PairedMarketBrier = AVG(CASE WHEN expanded.FinalProbability IS NOT NULL
+                AND expanded.MarketNoVigProbability IS NOT NULL AND expanded.EconomicOutcome IS NOT NULL
+                THEN POWER(CONVERT(FLOAT, expanded.MarketNoVigProbability) - CONVERT(FLOAT, expanded.EconomicOutcome), 2) END)
         FROM Expanded AS expanded
         GROUP BY expanded.SortOrder, expanded.Split
     )
@@ -1651,7 +1772,10 @@ BEGIN
         CalibrationGap = aggregated.AverageModelProbability - aggregated.ObservedEconomicOutcome,
         aggregated.Brier,
         aggregated.MarketBrier,
-        DeltaBrier = aggregated.Brier - aggregated.MarketBrier,
+        DeltaBrier = aggregated.PairedModelBrier - aggregated.PairedMarketBrier,
+        PairedSamples = COALESCE(aggregated.PairedSamples, 0),
+        aggregated.PairedModelBrier,
+        aggregated.PairedMarketBrier,
         ReadOnly = CONVERT(BIT, 1),
         Deployable = CONVERT(BIT, 0),
         PromotionState = N'SHADOW_ONLY',

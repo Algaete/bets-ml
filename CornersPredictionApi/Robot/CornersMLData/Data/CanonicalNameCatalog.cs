@@ -24,9 +24,11 @@ namespace CornersMLData.Data
             ("Australia", Array.Empty<string>()),
             ("Austria", Array.Empty<string>()),
             ("Bahia", new[] { "Bahia BA", "EC Bahia BA" }),
+            ("Bayern Munich", new[] { "Bayern München" }),
             ("Bélgica", new[] { "Belgium" }),
             ("Bosnia y Herzegovina", new[] { "Bosnia and Herzegovina", "Bosnia-Herzegovina" }),
             ("Botafogo", new[] { "Botafogo RJ" }),
+            ("Bolton Wanderers", new[] { "Bolton" }),
             ("Brasil", new[] { "Brazil" }),
             ("Cabo Verde", new[] { "Cape Verde", "Cape Verde Islands" }),
             ("Canadá", new[] { "Canada" }),
@@ -38,8 +40,10 @@ namespace CornersMLData.Data
             ("Corea del Norte", new[] { "North Korea" }),
             ("Corea del Sur", new[] { "South Korea", "Korea Republic" }),
             ("Costa de Marfil", new[] { "Ivory Coast", "Cote d'Ivoire", "Côte d’Ivoire" }),
+            ("Coventry City", new[] { "Coventry" }),
             ("Croacia", new[] { "Croatia" }),
             ("Curazao", new[] { "Curacao", "Curaçao" }),
+            ("Dundee United", new[] { "Dundee Utd" }),
             ("Ecuador", Array.Empty<string>()),
             ("Egipto", new[] { "Egypt" }),
             ("Escocia", new[] { "Scotland" }),
@@ -98,6 +102,7 @@ namespace CornersMLData.Data
             ("Uzbekistán", new[] { "Uzbekistan" }),
             ("Vasco da Gama", new[] { "Vasco da Gama RJ" }),
             ("Vitória", new[] { "Vitoria", "Vitoria BA", "Vitória BA" }),
+            ("West Ham United", new[] { "West Ham" }),
             ("Zira", new[] { "Zira FK" }));
 
         private static readonly IReadOnlyDictionary<string, string> LeagueAliases = BuildAliases(

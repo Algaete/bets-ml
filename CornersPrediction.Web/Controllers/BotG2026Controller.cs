@@ -103,16 +103,22 @@ public sealed class BotG2026Controller : Controller
         ApplyDefaults(filters);
         try
         {
-            var result = await LoadComponentAsync(
+            var scorecardsTask = LoadComponentAsync(
                 "Scorecards",
                 token => _apiClient.GetScorecardAsync(filters, token),
                 cancellationToken,
                 ScorecardsTimeout);
+            var runtimeTask = LoadComponentAsync("Estado del runtime", _apiClient.GetStatusAsync, cancellationToken);
+            await Task.WhenAll(scorecardsTask, runtimeTask);
+            var result = await scorecardsTask;
+            var runtime = await runtimeTask;
             return PartialView("_Scorecards", new BotG2026IndexViewModel
             {
                 Filters = filters,
                 Scorecards = result.Value ?? [],
-                ScorecardsErrorMessage = result.ErrorMessage
+                ScorecardsErrorMessage = result.ErrorMessage,
+                RuntimeStatus = runtime.Value ?? new BotG2026RuntimeStatusViewModel(),
+                RuntimeStatusErrorMessage = runtime.ErrorMessage
             });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -135,7 +141,7 @@ public sealed class BotG2026Controller : Controller
     private static void ApplyDefaults(BotG2026FiltersViewModel filters)
     {
         var utcToday = DateTime.UtcNow.Date;
-        filters.DateFromUtc ??= utcToday.AddDays(-30);
+        filters.DateFromUtc ??= utcToday.AddDays(-7);
         filters.DateToUtc ??= utcToday.AddDays(8);
         filters.Page = Math.Max(1, filters.Page);
         filters.PageSize = Math.Clamp(filters.PageSize, 1, 250);

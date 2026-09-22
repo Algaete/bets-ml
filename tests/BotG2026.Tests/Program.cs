@@ -75,6 +75,8 @@ if (failures.Count > 0)
     throw new InvalidOperationException($"{failures.Count} Bot G test(s) failed.{Environment.NewLine}{string.Join(Environment.NewLine, failures)}");
 
 Console.WriteLine($"All {tests.Length} Bot G 2026 tests passed.");
+if (args.Contains("--scorecard-sql", StringComparer.Ordinal))
+    ScorecardSqlContractTests.Run();
 
 void ConfigurationDefaults()
 {
@@ -360,6 +362,14 @@ void ScorecardQueryIsLightweight()
     Check.True(procedure.Contains("OPTION (RECOMPILE)", StringComparison.Ordinal));
     Check.True(procedure.Contains("GROUP BY GROUPING SETS", StringComparison.Ordinal));
     Check.True(procedure.Contains("FROM #CandidateBase", StringComparison.Ordinal));
+    Check.True(procedure.Contains("evaluation.CalibrationReliability > 0", StringComparison.Ordinal),
+        "A market-anchor fallback must not count as a calibrated G probability.");
+    Check.True(procedure.Contains("evaluation.LineValue % 1 = 0.5", StringComparison.Ordinal),
+        "Binary scoring must exclude Asian lines and pushes.");
+    Check.True(procedure.Contains("COUNT_BIG(OutcomeScore) AS PairedProbabilityScored", StringComparison.Ordinal));
+    Check.True(procedure.Contains("WHEN OutcomeScore IS NOT NULL THEN FixtureId", StringComparison.Ordinal));
+    Check.False(procedure.Contains("THEN N'EXPERIMENTAL'", StringComparison.Ordinal));
+    Check.False(procedure.Contains("ELSE N'MONITORING'", StringComparison.Ordinal));
     Check.True(procedure.Contains(
         "FROM dbo.AutomatedBotPickEvaluations AS evaluation",
         StringComparison.Ordinal));

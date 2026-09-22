@@ -79,19 +79,19 @@
         <section class="h-card" aria-live="polite" aria-busy="true"><div class="h-card-header"><h2 class="h5 mb-1">Estado y barreras de seguridad</h2></div><div class="h-card-body"><div class="d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><strong>Comprobando estado sin bloquear H2026…</strong></div></div></section>
     </div>
 
+    <div id="HScorecardsHost"
+         data-url="@Url.Action("Scorecards", "BotH2026", new { PredictionFromUtc = Model.Filters.PredictionFromUtc?.ToString("O"), PredictionToUtc = Model.Filters.PredictionToUtc?.ToString("O"), AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
+        <section class="h-card" aria-live="polite" aria-busy="true">
+            <div class="h-card-header"><h2 class="h5 mb-1">Qué podemos aprender de H</h2><p class="small text-secondary mb-0">Primero revisa las apuestas virtuales independientes, su resultado y cada versión. Miles de capturas pueden corresponder a pocos partidos.</p></div>
+            <div class="h-card-body"><button type="button" class="btn btn-sm btn-outline-primary js-load-scorecards">Ver conclusiones y métricas</button><div class="small text-secondary mt-2">La primera consulta puede tardar alrededor de un minuto. El resumen se reutiliza durante dos minutos y conserva su fecha de cálculo; puedes seguir usando la tabla mientras carga.</div></div>
+        </section>
+    </div>
+
     <div id="HThresholdAnalysisHost" class="h-async-host">
         @await Html.PartialAsync("_ThresholdAnalysis", new CornersPrediction.Web.Models.BotPicks.BotH2026IndexViewModel
         {
             ThresholdFilters = Model.ThresholdFilters
         })
-    </div>
-
-    <div id="HScorecardsHost"
-         data-url="@Url.Action("Scorecards", "BotH2026", new { PredictionFromUtc = Model.Filters.PredictionFromUtc?.ToString("O"), PredictionToUtc = Model.Filters.PredictionToUtc?.ToString("O"), AsOfUtc = Model.Filters.AsOfUtc?.ToString("O"), ConfigurationVersion = Model.Filters.ConfigurationVersion })">
-        <section class="h-card" aria-live="polite" aria-busy="true">
-            <div class="h-card-header"><h2 class="h5 mb-1">Scorecards 7 / 30 / 90 días</h2><p class="small text-secondary mb-0">Este cálculo carga aparte para que no bloquee H2026.</p></div>
-            <div class="h-card-body"><button type="button" class="btn btn-sm btn-outline-primary js-load-scorecards">Calcular scorecards ahora</button><div class="small text-secondary mt-2">Es una consulta pesada y opcional; la tabla funciona sin ejecutarla.</div></div>
-        </section>
     </div>
 
     <div id="HEvaluationsHost"

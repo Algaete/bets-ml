@@ -145,6 +145,9 @@ public sealed class BotHShadowScorecardDto
     public double? Brier { get; init; }
     public double? MarketBrier { get; init; }
     public double? DeltaBrier { get; init; }
+    public long? PairedSamples { get; init; }
+    public double? PairedModelBrier { get; init; }
+    public double? PairedMarketBrier { get; init; }
     public double? AverageEdge { get; init; }
     public double? AverageExpectedValue { get; init; }
     public double? CoverageRate { get; init; }
@@ -197,6 +200,9 @@ public sealed class BotHThresholdAnalysisDto
     public double? Brier { get; init; }
     public double? MarketBrier { get; init; }
     public double? DeltaBrier { get; init; }
+    public long? PairedSamples { get; init; }
+    public double? PairedModelBrier { get; init; }
+    public double? PairedMarketBrier { get; init; }
     public bool ReadOnly { get; init; } = true;
     public bool Deployable { get; init; }
     public string PromotionState { get; init; } = BotHShadowLab.PromotionState;

@@ -1,4 +1,5 @@
 using CornersPrediction.Application.Automation.BotH;
+using CornersPredictionApi.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPredictionApi.Controllers;
@@ -11,15 +12,25 @@ namespace CornersPredictionApi.Controllers;
 [Route("api/bot-h2026")]
 public sealed class BotH2026Controller : ControllerBase
 {
+    private static readonly ShadowScorecardCache<IReadOnlyList<BotHShadowScorecardDto>> SharedScorecards = new();
     private readonly IBotHShadowLabReadRepository _repository;
     private readonly ILogger<BotH2026Controller> _logger;
+    private readonly ShadowScorecardCache<IReadOnlyList<BotHShadowScorecardDto>> _scorecards;
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IHostApplicationLifetime? _lifetime;
 
     public BotH2026Controller(
         IBotHShadowLabReadRepository repository,
-        ILogger<BotH2026Controller> logger)
+        ILogger<BotH2026Controller> logger,
+        ShadowScorecardCache<IReadOnlyList<BotHShadowScorecardDto>>? scorecards = null,
+        IServiceScopeFactory? scopeFactory = null,
+        IHostApplicationLifetime? lifetime = null)
     {
         _repository = repository;
         _logger = logger;
+        _scorecards = scorecards ?? SharedScorecards;
+        _scopeFactory = scopeFactory;
+        _lifetime = lifetime;
     }
 
     [HttpGet("status")]
@@ -101,7 +112,17 @@ public sealed class BotH2026Controller : ControllerBase
         try
         {
             BotHShadowLab.Validate(filter, DateTime.UtcNow);
-            return Ok(await _repository.GetScorecardsAsync(filter, cancellationToken));
+            var explicitCutoff = asOfUtc.HasValue
+                ? BotHShadowLab.NormalizeAsOfUtc(asOfUtc, DateTime.UtcNow) : (DateTime?)null;
+            var version = configurationVersion?.Trim();
+            var key = new ShadowScorecardKey("H2026", version, explicitCutoff);
+            return Ok(await _scorecards.GetAsync(key,
+                token => ReadScorecardsAsync(new BotHShadowScorecardFilter(explicitCutoff ?? DateTime.UtcNow, version), token),
+                cancellationToken, _lifetime?.ApplicationStopping ?? default));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499);
         }
         catch (ArgumentException exception)
         {
@@ -115,6 +136,16 @@ public sealed class BotH2026Controller : ControllerBase
                 detail: "The read-only shadow-lab query failed.",
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
+    }
+
+    private async Task<IReadOnlyList<BotHShadowScorecardDto>> ReadScorecardsAsync(
+        BotHShadowScorecardFilter filter, CancellationToken cancellationToken)
+    {
+        if (_scopeFactory is null)
+            return await _repository.GetScorecardsAsync(filter, cancellationToken);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IBotHShadowLabReadRepository>()
+            .GetScorecardsAsync(filter, cancellationToken);
     }
 
     [HttpGet("threshold-analysis")]

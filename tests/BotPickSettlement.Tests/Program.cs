@@ -724,7 +724,12 @@ static void PremierLeagueProviderAliasesAgree()
         ("Tottenham Hotspur", "Tottenham"),
         ("Newcastle United", "Newcastle"),
         ("Ipswich Town", "Ipswich"),
-        ("Leeds United", "Leeds")
+        ("Leeds United", "Leeds"),
+        ("Dundee United", "Dundee Utd"),
+        ("Coventry City", "Coventry"),
+        ("Bolton Wanderers", "Bolton"),
+        ("West Ham United", "West Ham"),
+        ("Bayern Munich", "Bayern München")
     })
     {
         Assert(TeamNameMatcher.FindBestMatch(canonical, [provider])?.Confidence == 1);
@@ -749,7 +754,11 @@ static void PremierLeagueProviderAliasesAgree()
         ("Tottenham", "Tottenham Hotspur Women"),
         ("Ipswich", "Ipswich Town W"),
         ("Newcastle", "Newcastle United Reserves"),
-        ("Leeds", "Leeds United B")
+        ("Leeds", "Leeds United B"),
+        ("Dundee United", "Dundee"),
+        ("Coventry City", "Coventry United"),
+        ("Bayern Munich", "Bayern Munich II"),
+        ("West Ham", "West Ham United Women")
     })
     {
         Assert(!TeamNameMatcher.AreEquivalent(left, right));

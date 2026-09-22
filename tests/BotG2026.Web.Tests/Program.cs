@@ -118,7 +118,38 @@ foreach (var scenario in scenarios)
     Console.WriteLine($"PASS {scenario.Name}");
 }
 
-Console.WriteLine($"All {scenarios.Length + 2} Bot G Web tests passed.");
+var collector = new BotG2026IndexViewModel
+{
+    RuntimeStatus = new() { Available = false, State = "Missing" },
+    Scorecards = [new() { Dimension = "Overall", CandidatesEvaluated = 500000, ResolvedFixtures = 900, SuggestedPromotionStage = "MONITORING" }]
+};
+CheckContains(BotG2026LabAssessment.From(collector).Title, "no hay un modelo activo");
+Check(BotG2026LabAssessment.Stage(collector.Scorecards[0]) == "Recolección",
+    "Raw volume and a legacy stage must never imply a model is ready.");
+Console.WriteLine("PASS high-volume collection is not promoted to model evidence");
+
+var failedRuntime = new BotG2026IndexViewModel { RuntimeStatusErrorMessage = "HTTP 500" };
+CheckContains(BotG2026LabAssessment.From(failedRuntime).Title, "sin confirmar");
+var noComparison = new BotG2026IndexViewModel
+{
+    RuntimeStatus = new() { Available = true },
+    Scorecards = [new() { Dimension = "Overall", PredictiveResolved = 10000, PairedProbabilityScored = 0 }]
+};
+CheckContains(BotG2026LabAssessment.From(noComparison).Title, "no hay una comparación válida");
+Console.WriteLine("PASS missing runtime and missing paired probabilities remain distinct");
+
+var shadowEvidence = new BotG2026IndexViewModel
+{
+    RuntimeStatus = new() { Available = true },
+    Scorecards = [new() { Dimension = "Overall", CalibratedCandidates = 4000, PairedProbabilityScored = 2000, PairedFixtures = 80, DeltaBrier = -.01 }]
+};
+var assessment = BotG2026LabAssessment.From(shadowEvidence);
+CheckContains(assessment.Meaning, "menor error");
+CheckContains(assessment.Title, "shadow");
+CheckContains(assessment.NextStep, "no autoriza una promoción");
+Console.WriteLine("PASS lower observed error stays in shadow and requires temporal validation");
+
+Console.WriteLine($"All {scenarios.Length + 5} Bot G Web tests passed.");
 
 static HttpResponseMessage ResponseFor(HttpRequestMessage request, string failComponent)
 {

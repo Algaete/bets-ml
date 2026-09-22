@@ -1821,8 +1821,20 @@ BEGIN
         evaluation.ClosingLine,
         evaluation.LineValue AS Line,
         CASE
-            WHEN evaluation.Result IN (N'Win', N'HalfWin') THEN 1.0
-            WHEN evaluation.Result IN (N'Push', N'HalfLoss', N'Loss') THEN 0.0
+            -- Brier/log-loss are Bernoulli scores. Quarter/integer lines and
+            -- void/push outcomes require a settlement distribution, not a loss label.
+            -- A missing model stores the market anchor as its fallback probability;
+            -- reliability zero means it is not a calibrated G prediction.
+            WHEN evaluation.LineValue % 1 = 0.5
+                 AND evaluation.CalibrationReliability > 0
+                 AND evaluation.CalibratedProbability BETWEEN 0 AND 1
+                 AND evaluation.MarketNoVigProbability BETWEEN 0 AND 1
+                 AND evaluation.Result = N'Win' THEN 1.0
+            WHEN evaluation.LineValue % 1 = 0.5
+                 AND evaluation.CalibrationReliability > 0
+                 AND evaluation.CalibratedProbability BETWEEN 0 AND 1
+                 AND evaluation.MarketNoVigProbability BETWEEN 0 AND 1
+                 AND evaluation.Result = N'Loss' THEN 0.0
             ELSE NULL
         END AS OutcomeScore,
         CASE
@@ -1831,6 +1843,7 @@ BEGIN
         END AS IsResolved
     INTO #CandidateBase
     FROM dbo.AutomatedBotPickEvaluations AS evaluation
+        WITH (INDEX(IX_AutomatedBotPickEvaluations_G2026ScorecardV2))
     WHERE evaluation.BotKey = N'G2026'
       AND (@DateFromUtc IS NULL OR evaluation.MatchDate >= @DateFromUtc)
       AND (@DateToUtc IS NULL OR evaluation.MatchDate < @DateToUtc)
@@ -1863,6 +1876,9 @@ BEGIN
             SUM(IIF(Published = 1, 1, 0)) AS CandidatesPublished,
             SUM(IIF(Decision = N'Approved' AND IsResolved = 1, 1, 0)) AS Resolved,
             SUM(IIF(IsResolved = 1, 1, 0)) AS PredictiveResolved,
+            SUM(IIF(CalibrationReliability > 0 AND CalibratedProbability BETWEEN 0 AND 1, 1, 0)) AS CalibratedCandidates,
+            COUNT_BIG(OutcomeScore) AS PairedProbabilityScored,
+            COUNT_BIG(DISTINCT CASE WHEN OutcomeScore IS NOT NULL THEN FixtureId END) AS PairedFixtures,
             SUM(IIF(Decision = N'Approved' AND Result = N'Win', 1, 0)) AS Won,
             SUM(IIF(Decision = N'Approved' AND Result = N'HalfWin', 1, 0)) AS HalfWon,
             SUM(IIF(Decision = N'Approved' AND Result = N'Push', 1, 0)) AS Pushes,
@@ -2105,6 +2121,9 @@ BEGIN
         aggregate.CandidatesPublished,
         aggregate.Resolved,
         aggregate.PredictiveResolved,
+        aggregate.CalibratedCandidates,
+        aggregate.PairedProbabilityScored,
+        aggregate.PairedFixtures,
         aggregate.Won,
         aggregate.HalfWon,
         aggregate.Pushes,
@@ -2145,9 +2164,9 @@ BEGIN
         aggregate.AverageCalibrationReliability,
         aggregate.AverageOutOfDistributionScore,
         CASE
-            WHEN aggregate.ResolvedFixtures < 30 THEN N'SHADOW'
-            WHEN aggregate.ResolvedFixtures < 100 THEN N'EXPERIMENTAL'
-            ELSE N'MONITORING'
+            WHEN aggregate.CalibratedCandidates = 0 THEN N'COLLECTING'
+            -- Volume is data coverage, never approval to promote a model.
+            ELSE N'SHADOW'
         END AS SuggestedPromotionStage
     FROM Aggregated AS aggregate
     LEFT JOIN Calibration AS calibration

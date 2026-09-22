@@ -1,5 +1,6 @@
 using AutomatedCornersBot.Api;
 using CornersPrediction.Application.Automation.BotI;
+using CornersPredictionApi.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CornersPredictionApi.Controllers;
@@ -13,21 +14,31 @@ namespace CornersPredictionApi.Controllers;
 [Route("api/bot-i2026")]
 public sealed class BotI2026Controller : ControllerBase
 {
+    private static readonly ShadowScorecardCache<IReadOnlyList<BotIShadowScorecardDto>> SharedScorecards = new();
     private readonly SqlAutomationRepository _schemaRepository;
     private readonly IBotIShadowRepository _repository;
     private readonly IBotIShadowCollectorService _collector;
     private readonly ILogger<BotI2026Controller> _logger;
+    private readonly ShadowScorecardCache<IReadOnlyList<BotIShadowScorecardDto>> _scorecards;
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IHostApplicationLifetime? _lifetime;
 
     public BotI2026Controller(
         SqlAutomationRepository schemaRepository,
         IBotIShadowRepository repository,
         IBotIShadowCollectorService collector,
-        ILogger<BotI2026Controller> logger)
+        ILogger<BotI2026Controller> logger,
+        ShadowScorecardCache<IReadOnlyList<BotIShadowScorecardDto>>? scorecards = null,
+        IServiceScopeFactory? scopeFactory = null,
+        IHostApplicationLifetime? lifetime = null)
     {
         _schemaRepository = schemaRepository;
         _repository = repository;
         _collector = collector;
         _logger = logger;
+        _scorecards = scorecards ?? SharedScorecards;
+        _scopeFactory = scopeFactory;
+        _lifetime = lifetime;
     }
 
     [HttpGet("status")]
@@ -142,15 +153,20 @@ public sealed class BotI2026Controller : ControllerBase
     {
         try
         {
-            _ = BotIShadowLab.ValidateAsOf(asOfUtc, DateTime.UtcNow);
+            var normalizedCutoff = BotIShadowLab.ValidateAsOf(asOfUtc, DateTime.UtcNow);
             if (configurationVersion is not null
                 && (string.IsNullOrWhiteSpace(configurationVersion) || configurationVersion.Trim().Length > 80))
                 return BadRequest(new { error = "configurationVersion is invalid." });
-            await _schemaRepository.EnsureSchemaAsync(cancellationToken);
-            return Ok(await _repository.GetScorecardsAsync(
-                asOfUtc,
-                configurationVersion,
-                cancellationToken));
+            var explicitCutoff = asOfUtc.HasValue ? normalizedCutoff : (DateTime?)null;
+            var version = configurationVersion?.Trim();
+            var key = new ShadowScorecardKey("I2026", version, explicitCutoff);
+            return Ok(await _scorecards.GetAsync(key,
+                token => ReadScorecardsAsync(explicitCutoff ?? DateTime.UtcNow, version, token),
+                cancellationToken, _lifetime?.ApplicationStopping ?? default));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(499);
         }
         catch (ArgumentException exception)
         {
@@ -164,6 +180,20 @@ public sealed class BotI2026Controller : ControllerBase
                 detail: "The outcome-aware shadow query failed.",
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
+    }
+
+    private async Task<IReadOnlyList<BotIShadowScorecardDto>> ReadScorecardsAsync(
+        DateTime asOfUtc, string? configurationVersion, CancellationToken cancellationToken)
+    {
+        if (_scopeFactory is null)
+        {
+            await _schemaRepository.EnsureSchemaAsync(cancellationToken);
+            return await _repository.GetScorecardsAsync(asOfUtc, configurationVersion, cancellationToken);
+        }
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<SqlAutomationRepository>().EnsureSchemaAsync(cancellationToken);
+        return await scope.ServiceProvider.GetRequiredService<IBotIShadowRepository>()
+            .GetScorecardsAsync(asOfUtc, configurationVersion, cancellationToken);
     }
 
     private static DateOnly SantiagoToday()

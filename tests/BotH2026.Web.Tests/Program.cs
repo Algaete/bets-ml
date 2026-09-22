@@ -12,7 +12,10 @@ var tests = new (string Name, Action Run)[]
     ("Controller returns the independent threshold partial", ControllerReturnsIndependentPartial),
     ("Invalid thresholds fail before calling the API", InvalidThresholdsDoNotCallApi),
     ("Threshold API failure stays inside its own block", ApiFailureIsIsolated),
-    ("Razor surface remains read-only and split-aware", RazorSurfaceIsReadOnlyAndSplitAware)
+    ("Razor surface remains read-only and split-aware", RazorSurfaceIsReadOnlyAndSplitAware),
+    ("Evidence distinguishes a query failure from zero samples", EvidenceDistinguishesUnavailableFromZero),
+    ("Evidence counts independent approvals and warns about mixed versions", EvidenceUsesIndependentApprovals),
+    ("Brier comparison uses only verified paired evidence", BrierUsesPairedEvidence)
 };
 
 var failures = 0;
@@ -175,8 +178,64 @@ static void RazorSurfaceIsReadOnlyAndSplitAware()
     Contains(partial, "SelectedPicks");
     Contains(partial, "CalibrationGap");
     Contains(partial, "DeltaBrier");
+    Contains(partial, "todavía no es una validación independiente");
+    Contains(partial, "Local y visita");
     Check(!partial.Contains("method=\"post\"", StringComparison.OrdinalIgnoreCase),
         "The threshold form must not expose a mutation method.");
+}
+
+static void EvidenceDistinguishesUnavailableFromZero()
+{
+    var unavailable = BotH2026EvidenceSummary.From(new() { ScorecardsErrorMessage = "Timeout" });
+    Contains(unavailable.Headline, "no disponible");
+    Contains(unavailable.Detail, "No se puede concluir");
+    var empty = BotH2026EvidenceSummary.From(new()
+    {
+        Scorecards = [new() { WindowDays = 30, Dimension = "Overall", Evaluations = 0 }]
+    });
+    Contains(empty.Headline, "Sin capturas");
+    var pending = BotH2026EvidenceSummary.From(new()
+    {
+        Scorecards = [new() { WindowDays = 30, Dimension = "Overall", Evaluations = 2000, ApprovedSignals = 200, Approved = 2 }]
+    });
+    Contains(pending.Headline, "Faltan resultados");
+    Contains(pending.Detail, "2 primeras aprobaciones");
+    Check(!pending.Detail.Contains("0%", StringComparison.Ordinal), "Missing settlements must not imply zero yield.");
+}
+
+static void EvidenceUsesIndependentApprovals()
+{
+    var model = new BotH2026IndexViewModel
+    {
+        Scorecards =
+        [
+            new() { WindowDays = 30, Dimension = "Overall", Evaluations = 1000, ApprovedSignals = 100, Approved = 3, SafelySettled = 2, ProfitLoss = 1 },
+            new() { WindowDays = 30, Dimension = "Configuration", ConfigurationVersion = "v1", Evaluations = 700, Approved = 2, SafelySettled = 1 },
+            new() { WindowDays = 30, Dimension = "Configuration", ConfigurationVersion = "v2", Evaluations = 300, Approved = 1, SafelySettled = 1 }
+        ]
+    };
+    var summary = BotH2026EvidenceSummary.From(model);
+    Check(summary.MixedConfigurations, "Multiple versions must not be treated as independent fixtures.");
+    Contains(summary.Headline, "por separado");
+    Contains(summary.Detail, "3 primeras aprobaciones");
+    Contains(summary.NextStep, "mismo partido");
+    Equal(2, summary.Configurations.Count);
+}
+
+static void BrierUsesPairedEvidence()
+{
+    var oldApi = new BotH2026ScorecardViewModel { DeltaBrier = -0.50, Brier = 0.01, MarketBrier = 0.51 };
+    Check(oldApi.VerifiedDeltaBrier is null, "Aggregate Brier values with unknown cohorts must not imply a verified advantage.");
+    var paired = new BotH2026ScorecardViewModel
+    {
+        DeltaBrier = -0.50, Brier = 0.01, MarketBrier = 0.51,
+        PairedSamples = 2, PairedModelBrier = 0.25, PairedMarketBrier = 0.20
+    };
+    Check(Math.Abs(paired.VerifiedDeltaBrier!.Value - 0.05) < 0.000001,
+        "Paired comparison must show the model is worse even if the unmatched aggregate appears better.");
+    Check(BotH2026EvidenceSummary.PairedDelta(0, 0.1, 0.2) is null, "Zero pairs must remain unavailable.");
+    Check(BotH2026EvidenceSummary.PairedDelta(5, double.NaN, 0.2) is null, "Invalid numbers cannot be interpreted.");
+    Check(BotH2026EvidenceSummary.PairedDelta(5, 0.1, null) is null, "Missing market evidence cannot be compared.");
 }
 
 static BotH2026Controller Controller(HttpClient httpClient) => new(

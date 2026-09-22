@@ -12,7 +12,7 @@
 <section class="g-panel" data-candidates-state="@(Model.CandidatesAvailable ? "ready" : "error")">
     <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
         <div>
-            <h2 class="h5 mb-1">Candidate audit</h2>
+            <h2 class="h5 mb-1">Observaciones para investigación</h2>
             @if (Model.CandidatesAvailable)
             {
                 <div class="small text-secondary">
@@ -37,6 +37,7 @@
     }
     else
     {
+        <p class="small text-secondary">Sin un metamodelo G, las probabilidades del mercado siguen siendo una referencia; no se muestran como una predicción de G. La liquidación automática de este laboratorio requiere un ID oficial del partido.</p>
         <div class="g-table-scroll" tabindex="0" aria-label="Tabla desplazable de candidatos G2026">
             <table class="table table-hover table-sm align-middle g-table mb-0">
                 <thead>
@@ -45,13 +46,20 @@
                 <tbody>
                 @foreach (var candidate in Model.Candidates.Items)
                 {
+                    var hasModel = !string.IsNullOrWhiteSpace(candidate.MetaModelVersion);
+                    var hasCalibration = hasModel && candidate.CalibrationReliability > 0;
                     <tr>
-                        <td><div class="fw-semibold">@candidate.HomeTeam vs @candidate.AwayTeam</div><div class="text-secondary">@candidate.FixtureDateUtc.ToString("yyyy-MM-dd HH:mm") UTC · @candidate.Bookmaker</div></td>
+                        <td><div class="fw-semibold">@candidate.HomeTeam vs @candidate.AwayTeam</div><div class="text-secondary">@candidate.FixtureDateUtc.ToString("yyyy-MM-dd HH:mm") UTC · @candidate.Bookmaker</div>
+                            @if (candidate.OfficialFixtureId is not > 0 && (candidate.Result is null or "Pending"))
+                            {
+                                <span class="badge text-bg-warning">Falta enlazar ID oficial</span>
+                            }
+                        </td>
                         <td><div>@candidate.MarketType · @candidate.Selection @candidate.Line</div><div class="text-secondary">@@ @candidate.SelectedOdds.ToString("0.00")</div></td>
                         <td><span class="badge @(candidate.Published ? "bg-danger" : "bg-warning text-dark")">@candidate.PublicationStatus</span></td>
-                        <td><span class="badge @DecisionClass(candidate.Decision)">@candidate.Decision</span><div class="text-secondary">@candidate.DecisionReason</div></td>
-                        <td class="g-prob">@Pct(candidate.MarketNoVigProbability)</td><td class="g-prob">@Pct(candidate.CandidateProbability)</td><td class="g-prob">@Pct(candidate.CalibratedProbability)</td><td class="g-prob">@Pct(candidate.ConservativeProbability)</td>
-                        <td class="g-prob">@Pct(candidate.RawEdge)</td><td class="g-prob">@Pct(candidate.ConservativeEdge)</td><td class="g-prob">@Pct(candidate.RawExpectedValue)</td><td class="g-prob">@Pct(candidate.ConservativeExpectedValue)</td>
+                        <td><span class="badge @DecisionClass(candidate.Decision)">@candidate.Decision</span><div class="text-secondary">@candidate.DecisionReason</div>@if (!hasModel) { <small>Referencia de mercado · sin modelo G</small> }</td>
+                        <td class="g-prob">@Pct(candidate.MarketNoVigProbability)</td><td class="g-prob">@Pct(hasModel ? candidate.CandidateProbability : null)</td><td class="g-prob">@Pct(hasCalibration ? candidate.CalibratedProbability : null)</td><td class="g-prob">@Pct(hasCalibration ? candidate.ConservativeProbability : null)</td>
+                        <td class="g-prob">@Pct(hasModel ? candidate.RawEdge : null)</td><td class="g-prob">@Pct(hasCalibration ? candidate.ConservativeEdge : null)</td><td class="g-prob">@Pct(hasModel ? candidate.RawExpectedValue : null)</td><td class="g-prob">@Pct(hasCalibration ? candidate.ConservativeExpectedValue : null)</td>
                         <td class="g-prob">@Pct(candidate.UncertaintyScore)</td><td class="g-prob">@Pct(candidate.CalibrationReliability)</td><td class="g-prob">@Pct(candidate.OutOfDistributionScore)</td>
                         <td>@(candidate.Result ?? "Pending") @if (candidate.ProfitLoss.HasValue) { <span class="d-block">@candidate.ProfitLoss.Value.ToString("+0.00;-0.00;0.00")u</span> }</td>
                         <td class="g-detail">

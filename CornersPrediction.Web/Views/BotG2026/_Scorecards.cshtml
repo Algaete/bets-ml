@@ -1,60 +1,73 @@
 @model CornersPrediction.Web.Models.BotPicks.BotG2026IndexViewModel
+@using CornersPrediction.Web.Models.BotPicks
 @{
     var overall = Model.Scorecards.FirstOrDefault(row => row.Dimension == "Overall");
+    var assessment = BotG2026LabAssessment.From(Model);
     string Pct(double? value) => value.HasValue ? value.Value.ToString("P2") : "—";
-    string Num(double? value, string format = "N3") => value.HasValue ? value.Value.ToString(format) : "—";
+    string Num(double? value) => value.HasValue ? value.Value.ToString("N3") : "—";
     string Money(double? value) => value.HasValue ? $"{value.Value:+0.00;-0.00;0.00}u" : "—";
+    string Market(string value) => value switch { "TotalGoals" => "Goles totales", "HomeTeamGoals" => "Goles local", "AwayTeamGoals" => "Goles visita", _ => value };
 }
 
 <div data-scorecards-state="@(Model.ScorecardsAvailable ? "ready" : "error")">
+    <section class="g-panel mb-3" aria-labelledby="GAssessmentTitle">
+        <h2 id="GAssessmentTitle" class="h5">Qué podemos aprovechar de G</h2>
+        <div class="alert alert-@assessment.Tone mb-2" role="status"><strong>@assessment.Title</strong><p class="mb-0 mt-1">@assessment.Meaning</p></div>
+        <p class="mb-0"><strong>Siguiente paso:</strong> @assessment.NextStep</p>
+    </section>
     @if (overall is not null)
     {
-        @if (overall.CandidatesEvaluated > 0 && overall.CandidatesAbstained == overall.CandidatesEvaluated)
-        {
-            <div class="alert alert-warning mb-3" role="note">
-                <strong>El 100% está en Abstain.</strong> No hay señal apostable: revisa el runtime, la calibración y OOD antes de interpretar el rendimiento.
-            </div>
-        }
-        <section class="g-metrics mb-3" aria-label="Resumen general G2026">
-            <div class="g-metric"><span>Candidatos</span><strong>@overall.CandidatesEvaluated</strong></div>
-            <div class="g-metric"><span>Fixtures</span><strong>@overall.FixturesEvaluated</strong></div>
-            <div class="g-metric"><span>Fixtures resueltos</span><strong>@overall.ResolvedFixtures</strong></div>
-            <div class="g-metric"><span>Aprobados</span><strong>@overall.CandidatesApproved</strong></div>
-            <div class="g-metric"><span>Abstenciones</span><strong>@overall.CandidatesAbstained</strong></div>
-            <div class="g-metric"><span>Coverage</span><strong>@Pct(overall.CoverageRate)</strong></div>
-            <div class="g-metric"><span>Publication</span><strong>@Pct(overall.PublicationRate)</strong></div>
-            <div class="g-metric"><span>Brier G / market</span><strong>@Num(overall.Brier) / @Num(overall.MarketBrier)</strong></div>
-            <div class="g-metric"><span>Yield</span><strong>@Pct(overall.Yield)</strong></div>
-            <div class="g-metric"><span>Stage sugerido</span><strong>@overall.SuggestedPromotionStage</strong></div>
+        <section class="g-metrics mb-3" aria-label="Evidencia disponible G2026">
+            <div class="g-metric"><span>Observaciones de cuotas</span><strong>@overall.CandidatesEvaluated.ToString("N0")</strong><small>Varias filas por partido</small></div>
+            <div class="g-metric"><span>Partidos distintos</span><strong>@overall.FixturesEvaluated.ToString("N0")</strong><small>@overall.ResolvedFixtures.ToString("N0") con algún resultado</small></div>
+            <div class="g-metric"><span>Observaciones liquidadas</span><strong>@overall.PredictiveResolved.ToString("N0")</strong><small>Incluye abstenciones; no son apuestas</small></div>
+            <div class="g-metric"><span>Comparación G / mercado</span><strong>@overall.PairedProbabilityScored.ToString("N0")</strong><small>@overall.PairedFixtures.ToString("N0") partidos · misma muestra</small></div>
+            <div class="g-metric"><span>Aprobadas / abstenciones</span><strong>@overall.CandidatesApproved.ToString("N0") / @overall.CandidatesAbstained.ToString("N0")</strong></div>
+            <div class="g-metric"><span>Yield de aprobadas shadow</span><strong>@Pct(overall.Yield)</strong><small>@overall.Resolved.ToString("N0") resueltas · @Money(overall.ProfitLoss) · @Num(overall.Stake) u simuladas</small></div>
         </section>
     }
 
     <section class="g-panel">
-        <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
-            <div><h2 class="h5 mb-1">Scorecards</h2><div class="small text-secondary">Métricas predictivas sobre candidatos auditados; economía sobre decisiones Approved resueltas.</div></div>
-            <span class="badge @(Model.ScorecardsAvailable ? "text-bg-success" : "text-bg-warning")">@(Model.ScorecardsAvailable ? "Disponible" : "No disponible")</span>
-        </div>
+        <h2 class="h5 mb-1">Resultados por mercado</h2>
+        <p class="small text-secondary">Este resumen usa fechas y configuración. Los filtros de decisión, casa, selección y resultado sólo filtran la tabla de candidatos.</p>
         @if (!Model.ScorecardsAvailable)
         {
             <div class="alert alert-warning mb-0" role="alert">@Model.ScorecardsErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-retry-scorecards">Reintentar</button></div>
         }
         else
         {
-            <div class="g-table-scroll" tabindex="0" aria-label="Scorecards desplazables G2026">
-                <table class="table table-sm align-middle g-table mb-0">
-                    <thead><tr><th>Dimensión</th><th>Segmento</th><th class="text-end">N</th><th class="text-end">Resolved</th><th class="text-end">Coverage</th><th class="text-end">Yield</th><th class="text-end">Brier</th><th class="text-end">Δ Brier</th><th class="text-end">LogLoss</th><th class="text-end">ECE</th><th class="text-end">Max DD</th><th>Stage</th></tr></thead>
-                    <tbody>
-                    @foreach (var row in Model.Scorecards)
-                    {
-                        <tr><td>@row.Dimension</td><td>@row.Segment</td><td class="text-end">@row.CandidatesEvaluated</td><td class="text-end">@row.Resolved</td><td class="text-end">@Pct(row.CoverageRate)</td><td class="text-end">@Pct(row.Yield)</td><td class="text-end">@Num(row.Brier)</td><td class="text-end">@Num(row.DeltaBrier)</td><td class="text-end">@Num(row.LogLoss)</td><td class="text-end">@Num(row.Ece)</td><td class="text-end">@Money(row.MaximumDrawdown)</td><td>@row.SuggestedPromotionStage</td></tr>
-                    }
-                    @if (Model.Scorecards.Count == 0)
-                    {
-                        <tr><td colspan="12" class="text-center text-secondary py-4">No hay scorecards G2026 para estos filtros.</td></tr>
-                    }
-                    </tbody>
-                </table>
+            <div class="g-howto mb-3">
+                @foreach (var row in Model.Scorecards.Where(row => row.Dimension == "MarketType"))
+                {
+                    <article>
+                        <strong>@Market(row.Segment)</strong>
+                        <div>@row.ResolvedFixtures.ToString("N0") / @row.FixturesEvaluated.ToString("N0") partidos con resultado</div>
+                        <div class="small">@row.PairedProbabilityScored.ToString("N0") comparaciones · @row.PairedFixtures.ToString("N0") partidos comparables</div>
+                        <div class="small">Brier G / mercado: @Num(row.Brier) / @Num(row.MarketBrier) · Δ @Num(row.DeltaBrier)</div>
+                        <div class="small">Yield shadow: @Pct(row.Yield) sobre @row.Resolved.ToString("N0") aprobadas resueltas</div>
+                    </article>
+                }
             </div>
+            <p class="small text-secondary">Brier y log-loss comparan las mismas filas con calibración disponible, líneas .5 y resultado Win/Loss. Menor error es mejor; Δ Brier negativo favorece a G. Se excluyen anclas de mercado sin calibración, pushes y líneas asiáticas de estas métricas binarias.</p>
+            <p class="small text-secondary">Cada captura de cuota es una observación: no son muestras independientes. Agrupa por partido al entrenar y validar; separa versiones y reserva fechas futuras. El número de resultados no indica que el bot esté listo para producción.</p>
+            <details>
+                <summary class="fw-semibold">Ver desglose completo (@Model.Scorecards.Count segmentos)</summary>
+                <div class="g-table-scroll mt-2" tabindex="0" aria-label="Scorecards G2026">
+                    <table class="table table-sm align-middle g-table mb-0">
+                        <thead><tr><th>Dimensión</th><th>Segmento</th><th>Observaciones</th><th>Partidos</th><th>Resueltas</th><th>Pares G / mercado</th><th>Partidos comparables</th><th>Aprobadas resueltas</th><th>Yield shadow</th><th>Brier G / mercado</th><th>Δ Brier</th><th>LogLoss G / mercado</th><th>ECE</th><th>Max DD</th><th>Estado de evidencia</th></tr></thead>
+                        <tbody>
+                        @foreach (var row in Model.Scorecards)
+                        {
+                            <tr><td>@row.Dimension</td><td>@row.Segment</td><td>@row.CandidatesEvaluated</td><td>@row.FixturesEvaluated</td><td>@row.PredictiveResolved</td><td>@row.PairedProbabilityScored</td><td>@row.PairedFixtures</td><td>@row.Resolved</td><td>@Pct(row.Yield)</td><td>@Num(row.Brier) / @Num(row.MarketBrier)</td><td>@Num(row.DeltaBrier)</td><td>@Num(row.LogLoss) / @Num(row.MarketLogLoss)</td><td>@Num(row.Ece)</td><td>@Money(row.MaximumDrawdown)</td><td>@BotG2026LabAssessment.Stage(row)</td></tr>
+                        }
+                        @if (Model.Scorecards.Count == 0)
+                        {
+                            <tr><td colspan="15" class="text-center text-secondary py-4">No hay observaciones para estas fechas y configuración.</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         }
     </section>
 </div>

@@ -8,6 +8,7 @@
     string Num(double? value, string format = "N3") => value.HasValue ? value.Value.ToString(format) : "—";
     string Units(double? value) => value.HasValue ? $"{value.Value:+0.00;-0.00;0.00}u" : "—";
     string Sort(double? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    var insight = CornersPrediction.Web.Models.BotPicks.BotI2026EvidenceSummary.Create(Model.Scorecards);
 }
 <section class="i-card">
     <div class="i-card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -17,7 +18,7 @@
     <div class="i-card-body">
         @if (!Model.ScorecardsAvailable)
         {
-            <div class="alert alert-warning mb-0" role="alert">@Model.ScorecardsErrorMessage <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-i-retry">Reintentar</button></div>
+            <div class="alert alert-warning mb-0" role="alert">@Model.ScorecardsErrorMessage <strong>No se pudo consultar la evidencia; esto no significa que haya cero resultados.</strong> <button type="button" class="btn btn-sm btn-outline-warning ms-2 js-i-retry">Reintentar</button></div>
         }
         else if (Model.Scorecards.Count == 0)
         {
@@ -25,6 +26,31 @@
         }
         else
         {
+            @if (insight is not null)
+            {
+                var row = insight.Overall;
+                <section class="i-guard mb-3" aria-label="Qué podemos aprender de I2026">
+                    <div class="small text-secondary">LECTURA DEL LABORATORIO · @row.WindowDays DÍAS</div>
+                    <h3 class="h5 mt-1">@insight.Conclusion</h3>
+                    <div class="i-metrics my-3">
+                        <div class="i-metric"><span class="i-metric-label">Aprobadas sin repetir snapshots</span><strong class="i-metric-value">@(row.ApprovedFixtureVersions?.ToString("N0") ?? "—")</strong><span class="small text-secondary">Primera señal por partido y versión</span></div>
+                        <div class="i-metric"><span class="i-metric-label">Resueltas de esa muestra</span><strong class="i-metric-value">@row.Settled.ToString("N0")</strong><span class="small text-secondary">@(row.SettledFixtures?.ToString("N0") ?? "—") partidos distintos · @Pct(insight.SettlementCoverage) de cobertura</span></div>
+                        <div class="i-metric"><span class="i-metric-label">Rendimiento virtual</span><strong class="i-metric-value">@Pct(row.Yield)</strong><span class="small text-secondary">@Units(row.ProfitLoss) · 1 unidad por señal resuelta</span></div>
+                        <div class="i-metric"><span class="i-metric-label">Partidos sin enlace oficial</span><strong class="i-metric-value">@(row.MissingOfficialLink?.ToString("N0") ?? "—")</strong><span class="small text-secondary">Sin identificación, sin coincidencia o ambiguos</span></div>
+                    </div>
+                    <p class="small mb-2">Pendientes: <strong>@(row.FutureApproved?.ToString("N0") ?? "—")</strong> señales de partidos futuros; <strong>@(row.AwaitingOfficialResult?.ToString("N0") ?? "—")</strong> esperan resultado oficial; <strong>@(row.InvalidOutcomeTimestamp?.ToString("N0") ?? "—")</strong> tienen fechas de resultado inválidas o ausentes.</p>
+                    <p class="mb-2"><strong>Siguiente paso:</strong> @insight.NextStep</p>
+                    @if (insight.HasMixedVersions)
+                    {
+                        <p class="small mb-2"><strong>Hay @insight.ConfigurationCount configuraciones.</strong> Un mismo partido puede aparecer en más de una versión: el total combinado no equivale a una muestra independiente para comparar modelos.</p>
+                    }
+                    @if (!row.ApprovedFixtureVersions.HasValue)
+                    {
+                        <p class="small mb-2">El servidor todavía no entrega el denominador sin repeticiones; la cobertura se deja sin calcular.</p>
+                    }
+                    <p class="small mb-0">I mide <strong>movimiento de mercado</strong>. El score de señal no es una probabilidad de acierto y no sirve como entrada directa para calibrar probabilidades. Aún no se mide CLV (ventaja frente a la cuota de cierre) ni se muestra un intervalo de incertidumbre; un yield positivo por sí solo no valida el bot.</p>
+                </section>
+            }
             <div class="row g-3 mb-3">
                 @foreach (var row in overallRows)
                 {
@@ -33,7 +59,7 @@
                             <div class="d-flex justify-content-between align-items-center gap-2"><strong>@row.WindowDays días</strong><span class="badge text-bg-secondary">@row.PromotionState</span></div>
                             <div class="row g-2 mt-1 small">
                                 <div class="col-6"><span class="text-secondary d-block">Partidos</span><strong>@row.FixturesEvaluated.ToString("N0")</strong></div>
-                                <div class="col-6"><span class="text-secondary d-block">Resueltos</span><strong>@row.Settled.ToString("N0")</strong></div>
+                                <div class="col-6"><span class="text-secondary d-block">Señales únicas resueltas</span><strong>@row.Settled.ToString("N0")</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">Yield virtual</span><strong>@Pct(row.Yield)</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">P/L virtual</span><strong>@Units(row.ProfitLoss)</strong></div>
                                 <div class="col-6"><span class="text-secondary d-block">Aprobación shadow</span><strong>@Pct(row.ApprovalRate)</strong></div>
@@ -51,7 +77,7 @@
                         <th><button type="button" class="i-sort js-i-sort" data-column="2">Segmento</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="3">Evaluaciones</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="4">Partidos</button></th>
-                        <th><button type="button" class="i-sort js-i-sort" data-column="5">Aprobadas shadow</button></th>
+                        <th><button type="button" class="i-sort js-i-sort" data-column="5">Observaciones aprobadas</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="6">Resueltas</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="7">Yield virtual</button></th>
                         <th><button type="button" class="i-sort js-i-sort" data-column="8">P/L virtual</button></th>
@@ -84,6 +110,7 @@
                     </tbody>
                 </table>
             </div>
+            <p class="small text-secondary mt-2 mb-0">Las evaluaciones y observaciones aprobadas incluyen snapshots repetidos. La economía usa sólo la primera aprobación por partido y configuración dentro de los últimos 90 días, asignada a la ventana de esa primera decisión. Los cortes por mercado y casa corresponden a esa señal seleccionada, no a una simulación independiente por cada segmento.</p>
             <p class="small text-secondary mt-2 mb-0">Tipo: <code>@Model.Scorecards.First().ScorecardType</code>. Todas las cifras económicas son virtuales; una aprobación shadow nunca autoriza una apuesta.</p>
         }
     </div>

@@ -120,6 +120,10 @@ public sealed class BotG2026ScorecardViewModel
     public long CandidatesAbstained { get; init; }
     public long CandidatesPublished { get; init; }
     public long Resolved { get; init; }
+    public long PredictiveResolved { get; init; }
+    public long CalibratedCandidates { get; init; }
+    public long PairedProbabilityScored { get; init; }
+    public long PairedFixtures { get; init; }
     public double? Stake { get; init; }
     public double? ProfitLoss { get; init; }
     public double? Yield { get; init; }

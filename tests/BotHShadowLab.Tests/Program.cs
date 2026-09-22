@@ -19,6 +19,7 @@ var tests = new (string Name, Action Run)[]
     ("Selector snapshot exposes the H lineage paths", SelectorSnapshotExposesLineagePaths),
     ("Migration parses with SQL Server ScriptDom", MigrationParsesWithScriptDom),
     ("Dynamic settlement is official, unique and temporal", DynamicSettlementIsFailClosed),
+    ("Identity aliases preserve immutable lineage and require competition", IdentityAliasesPreserveLineage),
     ("Scorecards are shadow-only and economic", ScorecardsAreHonest),
     ("Scorecards bound evidence before reconciliation", ScorecardsBoundEvidenceFirst),
     ("Threshold replay is chronological and read-only", ThresholdReplayIsChronologicalAndReadOnly),
@@ -210,10 +211,33 @@ static void ScorecardsAreHonest()
     Contains(sql, "ApprovedSequence = 1 AND SettlementState = N'Settled'");
     Contains(sql, "FIRST_APPROVED_PER_FIXTURE_CONFIGURATION");
     Contains(sql, "EconomicOutcome");
-    Contains(sql, "DeltaBrier = aggregated.Brier - aggregated.MarketBrier");
+    Contains(sql, "DeltaBrier = aggregated.PairedModelBrier - aggregated.PairedMarketBrier");
+    Contains(sql, "PairedSamples = SUM(CONVERT(BIGINT");
+    Contains(sql, "AND FinalProbability IS NOT NULL AND MarketNoVigProbability IS NOT NULL AND EconomicOutcome IS NOT NULL");
     Contains(sql, "Deployable = CONVERT(BIT, 0)");
     Contains(sql, "PromotionState = N'SHADOW_ONLY'");
     Contains(sql, "UnsafeOrUnavailable");
+}
+
+static void IdentityAliasesPreserveLineage()
+{
+    var core = Slice(Migration(), "CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindowCore",
+        "CREATE OR ALTER FUNCTION dbo.fn_BotH2026ShadowLabWindow\n");
+    Contains(core, "CanonicalHomeTeam = COALESCE(homeAlias.CanonicalName, shadow.HomeTeam)");
+    Contains(core, "CanonicalAwayTeam = COALESCE(awayAlias.CanonicalName, shadow.AwayTeam)");
+    Contains(core, "historyHomeAlias.CanonicalName, NULLIF(history.StandardizedHomeTeam");
+    Contains(core, "historyAwayAlias.CanonicalName, NULLIF(history.StandardizedAwayTeam");
+    Contains(core, "dbo.fn_CanonicalLeagueName(evidence.League)");
+    Contains(core, "history.ApiFootballLeagueId = evidence.ExpectedApiFootballLeagueId");
+    Contains(core, "OR (evidence.ExpectedApiFootballLeagueId IS NULL");
+    Contains(core, "WHEN N'england premier league' THEN 39");
+    Contains(core, "WHEN N'england championship' THEN 40");
+    Contains(core, "WHEN N'scotland premiership' THEN 179");
+    Contains(core, "WHEN N'uefa champions league' THEN 2");
+    Contains(core, "AND matched.MatchCandidateCount = 1");
+    Contains(core, "snapshot.HomeTeam)\n                        COLLATE Latin1_General_100_CI_AI = shadow.HomeTeam");
+    Contains(core, "outcome.ApiFootballUpdatedAtUtc <= outcome.PredictionTimestampUtc");
+    NotContains(core, "UPDATE dbo.BotH2026ShadowEvaluations");
 }
 
 static void ScorecardsBoundEvidenceFirst()
@@ -223,7 +247,14 @@ static void ScorecardsBoundEvidenceFirst()
         sql,
         "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ShadowScorecards",
         "CREATE OR ALTER PROCEDURE dbo.sp_GetBotH2026ThresholdAnalysis");
-    Contains(procedure, "FROM dbo.fn_BotH2026ShadowLabWindow");
+    Contains(procedure, "FROM dbo.BotH2026ShadowEvaluations AS lab WITH (INDEX(IX_BotH2026ShadowEvaluations_ScorecardWindow))");
+    Contains(procedure, "INTO #BotHSettledApprovals\n    FROM dbo.fn_BotH2026ShadowLabWindowCore");
+    Contains(procedure, "CREATE UNIQUE CLUSTERED INDEX CX_BotHSettledApprovals_Id");
+    Contains(procedure, "INNER JOIN #BotHSettledApprovals AS settled");
+    NotContains(procedure, "INNER JOIN dbo.fn_BotH2026ShadowLabWindowCore");
+    Contains(procedure, "@ConfigurationVersion, 1");
+    Contains(sql, "@FirstApprovedOnly = 0 OR shadow.ShadowEvaluationId IN");
+    Contains(sql, "WHERE ApprovalRank = 1");
     Contains(procedure, "DATEADD(DAY, -90, @AsOfUtc)");
     Contains(procedure, "@ConfigurationVersion");
     Contains(procedure, "CREATE CLUSTERED INDEX CX_BotHLab_Scorecard");

@@ -123,6 +123,27 @@ END;
 
 GO
 
+-- Cover status and scorecards without reading the immutable JSON audit payloads.
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'dbo.BotI2026ShadowEvaluations')
+      AND name = N'IX_BotI2026ShadowEvaluations_InsightWindow'
+)
+BEGIN
+    CREATE INDEX IX_BotI2026ShadowEvaluations_InsightWindow
+        ON dbo.BotI2026ShadowEvaluations(PredictionTimestampUtc DESC, ShadowEvaluationId DESC)
+        INCLUDE
+        (
+            ConfigurationVersion, FixtureIdentity, FixtureDateUtc, ApiFootballFixtureId, League, HomeTeam, AwayTeam,
+            MarketType, Selection, Decision, Source, SignalScore, SelectedOdds, CurrentLine,
+            SelectedProbabilityMovement, SelectedLineMovement, OddsAgeMinutes,
+            ObservationHours, PeerSnapshotId, ShadowOnly, PublicationBlocked
+        ) WITH (MAXDOP = 1);
+END;
+
+GO
+
 IF NOT EXISTS
 (
     SELECT 1 FROM sys.indexes
@@ -461,40 +482,106 @@ RETURNS TABLE
 AS
 RETURN
 (
-    WITH IdentityCounts AS
+    WITH FixtureScopes AS
+    (
+        -- Resolve once per recorded identity, not once per odds snapshot. The
+        -- original provider id in the immutable ledger is never overwritten.
+        SELECT DISTINCT FixtureIdentity, ApiFootballFixtureId, FixtureDateUtc, League, HomeTeam, AwayTeam
+        FROM dbo.BotI2026ShadowEvaluations
+        WHERE PredictionTimestampUtc <= @AsOfUtc AND Decision = N'Approved'
+    ),
+    IdentityCounts AS
     (
         SELECT
-            shadow.ShadowEvaluationId,
-            MatchCandidateCount = COUNT_BIG(history.Id),
-            MatchHistoryId = MAX(CONVERT(BIGINT, history.Id))
-        FROM dbo.BotI2026ShadowEvaluations AS shadow
-        LEFT JOIN dbo.MatchHistory AS history
-          ON shadow.ApiFootballFixtureId IS NOT NULL
-         AND history.ApiFootballFixtureId = shadow.ApiFootballFixtureId
-        WHERE shadow.PredictionTimestampUtc <= @AsOfUtc
-        GROUP BY shadow.ShadowEvaluationId
+            shadow.FixtureIdentity, shadow.ApiFootballFixtureId,
+            shadow.FixtureDateUtc, shadow.League, shadow.HomeTeam, shadow.AwayTeam,
+            matches.MatchCandidateCount, matches.MatchHistoryId,
+            ResolvedApiFootballFixtureId = CASE WHEN matches.MatchCandidateCount = 1
+                THEN matches.ApiFootballFixtureId END
+        FROM FixtureScopes AS shadow
+        LEFT JOIN dbo.TeamNameAlias AS homeAlias
+          ON shadow.ApiFootballFixtureId IS NULL
+         AND homeAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.HomeTeam)
+        LEFT JOIN dbo.TeamNameAlias AS awayAlias
+          ON shadow.ApiFootballFixtureId IS NULL
+         AND awayAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.AwayTeam)
+        CROSS APPLY (VALUES (CASE dbo.fn_NormalizeNameKey(shadow.League)
+            WHEN N'england premier league' THEN 39
+            WHEN N'england championship' THEN 40
+            WHEN N'scotland premiership' THEN 179
+            WHEN N'uefa champions league' THEN 2
+        END)) AS league(ExpectedApiFootballLeagueId)
+        OUTER APPLY
+        (
+            SELECT MatchCandidateCount = COUNT_BIG(*),
+                MatchHistoryId = MAX(CONVERT(BIGINT, candidate.Id)),
+                ApiFootballFixtureId = MAX(candidate.ApiFootballFixtureId)
+            FROM
+            (
+                SELECT history.Id, history.ApiFootballFixtureId
+                FROM dbo.MatchHistory AS history
+                WHERE shadow.ApiFootballFixtureId IS NOT NULL
+                  AND history.ApiFootballFixtureId = shadow.ApiFootballFixtureId
+                UNION ALL
+                SELECT history.Id, history.ApiFootballFixtureId
+                FROM dbo.MatchHistory AS history
+                LEFT JOIN dbo.TeamNameAlias AS historyHomeAlias
+                  ON historyHomeAlias.AliasKey = dbo.fn_NormalizeNameKey(
+                      COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam))
+                LEFT JOIN dbo.TeamNameAlias AS historyAwayAlias
+                  ON historyAwayAlias.AliasKey = dbo.fn_NormalizeNameKey(
+                      COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam))
+                WHERE shadow.ApiFootballFixtureId IS NULL
+                  AND history.ApiFootballFixtureId > 0
+                  AND
+                  (
+                      (league.ExpectedApiFootballLeagueId IS NOT NULL
+                          AND history.ApiFootballLeagueId = league.ExpectedApiFootballLeagueId)
+                      OR (league.ExpectedApiFootballLeagueId IS NULL
+                          AND dbo.fn_CanonicalLeagueName(COALESCE(NULLIF(history.StandardizedLeague, N''), history.League))
+                              COLLATE Latin1_General_100_CI_AI = dbo.fn_CanonicalLeagueName(shadow.League) COLLATE Latin1_General_100_CI_AI)
+                  )
+                  AND history.MatchDate >= DATEADD(DAY, -1,
+                      CONVERT(DATE, shadow.FixtureDateUtc AT TIME ZONE 'UTC' AT TIME ZONE 'Pacific SA Standard Time'))
+                  AND history.MatchDate <= DATEADD(DAY, 1,
+                      CONVERT(DATE, shadow.FixtureDateUtc AT TIME ZONE 'UTC' AT TIME ZONE 'Pacific SA Standard Time'))
+                  AND COALESCE(historyHomeAlias.CanonicalName, NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam)
+                      COLLATE Latin1_General_100_CI_AI = COALESCE(homeAlias.CanonicalName, shadow.HomeTeam) COLLATE Latin1_General_100_CI_AI
+                  AND COALESCE(historyAwayAlias.CanonicalName, NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
+                      COLLATE Latin1_General_100_CI_AI = COALESCE(awayAlias.CanonicalName, shadow.AwayTeam) COLLATE Latin1_General_100_CI_AI
+            ) AS candidate
+        ) AS matches
     ),
     Outcome AS
     (
         SELECT
             shadow.*,
-            identityCount.MatchCandidateCount,
+            MatchCandidateCount = COALESCE(identityCount.MatchCandidateCount, 0),
             identityCount.MatchHistoryId,
+            identityCount.ResolvedApiFootballFixtureId,
             history.FixtureStatus,
             history.ApiFootballUpdatedAtUtc AS OutcomeAvailableUtc,
             history.ApiFootballGoalsAvailable,
             history.ApiFootballCornersAvailable,
-            ActualValue = CONVERT(INT, CASE shadow.MarketType
-                WHEN N'TotalGoals' THEN history.HomeGoals + history.AwayGoals
-                WHEN N'TotalCorners' THEN history.HomeCorners + history.AwayCorners
-            END),
+            ActualValue = CONVERT(INT, CASE WHEN shadow.Decision = N'Approved'
+                AND history.ApiFootballUpdatedAtUtc > shadow.PredictionTimestampUtc
+                AND history.ApiFootballUpdatedAtUtc <= @AsOfUtc
+                AND shadow.PredictionTimestampUtc < shadow.FixtureDateUtc
+                AND UPPER(LTRIM(RTRIM(COALESCE(history.FixtureStatus, N'')))) IN (N'FT', N'AET', N'PEN')
+                THEN CASE
+                    WHEN shadow.MarketType = N'TotalGoals' AND history.ApiFootballGoalsAvailable = 1
+                        THEN history.HomeGoals + history.AwayGoals
+                    WHEN shadow.MarketType = N'TotalCorners' AND history.ApiFootballCornersAvailable = 1
+                        THEN history.HomeCorners + history.AwayCorners
+                END END),
             SettlementState = CASE
                 WHEN shadow.Decision <> N'Approved' THEN N'NotSelected'
-                WHEN shadow.ApiFootballFixtureId IS NULL THEN
+                WHEN shadow.ApiFootballFixtureId IS NULL AND identityCount.MatchCandidateCount = 0 THEN
                     CASE WHEN @AsOfUtc < shadow.FixtureDateUtc THEN N'Pending' ELSE N'OfficialFixtureMissing' END
                 WHEN identityCount.MatchCandidateCount = 0 THEN
                     CASE WHEN @AsOfUtc < shadow.FixtureDateUtc THEN N'Pending' ELSE N'Unmatched' END
                 WHEN identityCount.MatchCandidateCount > 1 THEN N'Ambiguous'
+                WHEN shadow.PredictionTimestampUtc >= shadow.FixtureDateUtc THEN N'TemporalRejected'
                 WHEN UPPER(LTRIM(RTRIM(COALESCE(history.FixtureStatus, N'')))) NOT IN (N'FT', N'AET', N'PEN')
                     THEN N'Pending'
                 WHEN shadow.MarketType = N'TotalGoals'
@@ -511,8 +598,15 @@ RETURN
                 ELSE N'Settled'
             END
         FROM dbo.BotI2026ShadowEvaluations AS shadow
-        INNER JOIN IdentityCounts AS identityCount
-          ON identityCount.ShadowEvaluationId = shadow.ShadowEvaluationId
+        LEFT JOIN IdentityCounts AS identityCount
+          ON shadow.Decision = N'Approved'
+         AND identityCount.FixtureIdentity = shadow.FixtureIdentity
+         AND (identityCount.ApiFootballFixtureId = shadow.ApiFootballFixtureId
+              OR (identityCount.ApiFootballFixtureId IS NULL AND shadow.ApiFootballFixtureId IS NULL))
+         AND identityCount.FixtureDateUtc = shadow.FixtureDateUtc
+         AND identityCount.League = shadow.League
+         AND identityCount.HomeTeam = shadow.HomeTeam
+         AND identityCount.AwayTeam = shadow.AwayTeam
         LEFT JOIN dbo.MatchHistory AS history
           ON history.Id = identityCount.MatchHistoryId
          AND identityCount.MatchCandidateCount = 1
@@ -619,18 +713,193 @@ BEGIN
     DECLARE @Windows TABLE(WindowDays INT NOT NULL PRIMARY KEY);
     INSERT INTO @Windows(WindowDays) VALUES (7), (30), (90);
 
-    ;WITH Lab AS
+    -- Bound metadata before reading results. Only the first approval per fixture
+    -- and configuration contributes economics, exactly as in the original query.
+    SELECT
+        lab.ShadowEvaluationId, lab.ConfigurationVersion, lab.FixtureIdentity,
+        lab.ApiFootballFixtureId, lab.FixtureDateUtc, lab.PredictionTimestampUtc,
+        lab.League, lab.HomeTeam, lab.AwayTeam, lab.MarketType, lab.Selection,
+        lab.Decision, lab.Source, lab.SignalScore, lab.SelectedOdds, lab.CurrentLine,
+        lab.SelectedProbabilityMovement, lab.SelectedLineMovement, lab.OddsAgeMinutes,
+        lab.ObservationHours, lab.PeerSnapshotId,
+        ApprovedSequence = CASE WHEN lab.Decision = N'Approved' THEN ROW_NUMBER() OVER
+        (
+            PARTITION BY lab.FixtureIdentity, lab.ConfigurationVersion, lab.Decision
+            ORDER BY lab.PredictionTimestampUtc, lab.ShadowEvaluationId
+        ) END
+    INTO #BotILab
+    FROM dbo.BotI2026ShadowEvaluations AS lab
+    WHERE lab.PredictionTimestampUtc > DATEADD(DAY, -90, @AsOfUtc)
+      AND lab.PredictionTimestampUtc <= @AsOfUtc
+      AND (@ConfigurationVersion IS NULL OR lab.ConfigurationVersion = @ConfigurationVersion)
+    OPTION (RECOMPILE);
+
+    CREATE UNIQUE CLUSTERED INDEX CX_BotILab_Id ON #BotILab(ShadowEvaluationId);
+
+    SELECT * INTO #BotIFirstApproved FROM #BotILab WHERE ApprovedSequence = 1;
+    CREATE UNIQUE CLUSTERED INDEX CX_BotIFirstApproved_Id ON #BotIFirstApproved(ShadowEvaluationId);
+
+    -- Resolve fallback identities from a materialized date slice. Scalar name
+    -- functions run once per distinct history name/league, not once for every
+    -- (approved observation, history row) pair in a correlated lookup.
+    SELECT shadow.ShadowEvaluationId,
+        LocalFixtureDate = CONVERT(DATE, shadow.FixtureDateUtc AT TIME ZONE 'UTC' AT TIME ZONE 'Pacific SA Standard Time'),
+        HomeTeam = COALESCE(homeAlias.CanonicalName, shadow.HomeTeam) COLLATE Latin1_General_100_CI_AI,
+        AwayTeam = COALESCE(awayAlias.CanonicalName, shadow.AwayTeam) COLLATE Latin1_General_100_CI_AI,
+        CanonicalLeague = dbo.fn_CanonicalLeagueName(shadow.League) COLLATE Latin1_General_100_CI_AI,
+        ExpectedApiFootballLeagueId = CASE dbo.fn_NormalizeNameKey(shadow.League)
+            WHEN N'england premier league' THEN 39
+            WHEN N'england championship' THEN 40
+            WHEN N'scotland premiership' THEN 179
+            WHEN N'uefa champions league' THEN 2 END
+    INTO #BotIMissingScopes
+    FROM #BotIFirstApproved AS shadow
+    LEFT JOIN dbo.TeamNameAlias AS homeAlias ON homeAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.HomeTeam)
+    LEFT JOIN dbo.TeamNameAlias AS awayAlias ON awayAlias.AliasKey = dbo.fn_NormalizeNameKey(shadow.AwayTeam)
+    WHERE shadow.ApiFootballFixtureId IS NULL
+    OPTION (RECOMPILE);
+
+    DECLARE @FallbackDateFrom DATE, @FallbackDateTo DATE;
+    SELECT @FallbackDateFrom = DATEADD(DAY, -1, MIN(LocalFixtureDate)),
+        @FallbackDateTo = DATEADD(DAY, 1, MAX(LocalFixtureDate))
+    FROM #BotIMissingScopes;
+
+    SELECT history.Id, history.ApiFootballFixtureId, history.ApiFootballLeagueId, history.MatchDate,
+        RawHomeTeam = COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam),
+        RawAwayTeam = COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam),
+        RawLeague = COALESCE(NULLIF(history.StandardizedLeague, N''), history.League)
+    INTO #BotIFallbackHistoryRaw
+    FROM dbo.MatchHistory AS history
+    WHERE history.ApiFootballFixtureId > 0
+      AND history.MatchDate >= @FallbackDateFrom AND history.MatchDate <= @FallbackDateTo
+      AND EXISTS
+      (
+          SELECT 1 FROM #BotIMissingScopes AS scope
+          WHERE history.MatchDate >= DATEADD(DAY, -1, scope.LocalFixtureDate)
+            AND history.MatchDate <= DATEADD(DAY, 1, scope.LocalFixtureDate)
+            AND (scope.ExpectedApiFootballLeagueId IS NULL OR history.ApiFootballLeagueId = scope.ExpectedApiFootballLeagueId)
+      )
+    OPTION (RECOMPILE);
+
+    SELECT RawHomeTeam AS TeamName INTO #BotIHistoryNames FROM #BotIFallbackHistoryRaw
+    UNION SELECT RawAwayTeam FROM #BotIFallbackHistoryRaw;
+    SELECT TeamName, NameKey = dbo.fn_NormalizeNameKey(TeamName)
+    INTO #BotIHistoryNameKeys FROM #BotIHistoryNames;
+    SELECT DISTINCT RawLeague INTO #BotIHistoryLeagues FROM #BotIFallbackHistoryRaw;
+    SELECT RawLeague, CanonicalLeague = dbo.fn_CanonicalLeagueName(RawLeague) COLLATE Latin1_General_100_CI_AI
+    INTO #BotIHistoryLeagueKeys FROM #BotIHistoryLeagues;
+
+    SELECT history.Id, history.ApiFootballFixtureId, history.ApiFootballLeagueId, history.MatchDate,
+        HomeTeam = COALESCE(homeAlias.CanonicalName, history.RawHomeTeam) COLLATE Latin1_General_100_CI_AI,
+        AwayTeam = COALESCE(awayAlias.CanonicalName, history.RawAwayTeam) COLLATE Latin1_General_100_CI_AI,
+        league.CanonicalLeague
+    INTO #BotIFallbackHistory
+    FROM #BotIFallbackHistoryRaw AS history
+    LEFT JOIN #BotIHistoryNameKeys AS homeName ON homeName.TeamName = history.RawHomeTeam
+    LEFT JOIN #BotIHistoryNameKeys AS awayName ON awayName.TeamName = history.RawAwayTeam
+    LEFT JOIN dbo.TeamNameAlias AS homeAlias ON homeAlias.AliasKey = homeName.NameKey
+    LEFT JOIN dbo.TeamNameAlias AS awayAlias ON awayAlias.AliasKey = awayName.NameKey
+    LEFT JOIN #BotIHistoryLeagueKeys AS league ON league.RawLeague = history.RawLeague;
+    CREATE CLUSTERED INDEX CX_BotIFallbackHistory_Date ON #BotIFallbackHistory(MatchDate, Id);
+
+    -- The exact provider-id path never expands to a date/name fallback.
+    SELECT shadow.ShadowEvaluationId, MatchCandidateCount = COUNT_BIG(history.Id),
+        MatchHistoryId = MAX(CONVERT(BIGINT, history.Id))
+    INTO #BotIIdentities
+    FROM #BotIFirstApproved AS shadow
+    LEFT JOIN dbo.MatchHistory AS history
+      ON history.ApiFootballFixtureId = shadow.ApiFootballFixtureId
+    WHERE shadow.ApiFootballFixtureId IS NOT NULL
+    GROUP BY shadow.ShadowEvaluationId
+    OPTION (RECOMPILE);
+
+    INSERT #BotIIdentities(ShadowEvaluationId, MatchCandidateCount, MatchHistoryId)
+    SELECT scope.ShadowEvaluationId, COUNT_BIG(history.Id), MAX(CONVERT(BIGINT, history.Id))
+    FROM #BotIMissingScopes AS scope
+    LEFT JOIN #BotIFallbackHistory AS history
+      ON history.MatchDate >= DATEADD(DAY, -1, scope.LocalFixtureDate)
+     AND history.MatchDate <= DATEADD(DAY, 1, scope.LocalFixtureDate)
+     AND history.HomeTeam = scope.HomeTeam AND history.AwayTeam = scope.AwayTeam
+     AND ((scope.ExpectedApiFootballLeagueId IS NOT NULL
+           AND history.ApiFootballLeagueId = scope.ExpectedApiFootballLeagueId)
+          OR (scope.ExpectedApiFootballLeagueId IS NULL AND history.CanonicalLeague = scope.CanonicalLeague))
+    GROUP BY scope.ShadowEvaluationId
+    OPTION (RECOMPILE);
+
+    SELECT shadow.ShadowEvaluationId,
+            ActualValue = CONVERT(INT, CASE WHEN shadow.Decision = N'Approved'
+                AND history.ApiFootballUpdatedAtUtc > shadow.PredictionTimestampUtc
+                AND history.ApiFootballUpdatedAtUtc <= @AsOfUtc
+                AND shadow.PredictionTimestampUtc < shadow.FixtureDateUtc
+                AND UPPER(LTRIM(RTRIM(COALESCE(history.FixtureStatus, N'')))) IN (N'FT', N'AET', N'PEN')
+                THEN CASE
+                    WHEN shadow.MarketType = N'TotalGoals' AND history.ApiFootballGoalsAvailable = 1
+                        THEN history.HomeGoals + history.AwayGoals
+                    WHEN shadow.MarketType = N'TotalCorners' AND history.ApiFootballCornersAvailable = 1
+                        THEN history.HomeCorners + history.AwayCorners
+                END END),
+            SettlementState = CASE
+                WHEN shadow.Decision <> N'Approved' THEN N'NotSelected'
+                WHEN shadow.ApiFootballFixtureId IS NULL AND identityCount.MatchCandidateCount = 0 THEN
+                    CASE WHEN @AsOfUtc < shadow.FixtureDateUtc THEN N'Pending' ELSE N'OfficialFixtureMissing' END
+                WHEN identityCount.MatchCandidateCount = 0 THEN
+                    CASE WHEN @AsOfUtc < shadow.FixtureDateUtc THEN N'Pending' ELSE N'Unmatched' END
+                WHEN identityCount.MatchCandidateCount > 1 THEN N'Ambiguous'
+                WHEN shadow.PredictionTimestampUtc >= shadow.FixtureDateUtc THEN N'TemporalRejected'
+                WHEN UPPER(LTRIM(RTRIM(COALESCE(history.FixtureStatus, N'')))) NOT IN (N'FT', N'AET', N'PEN')
+                    THEN N'Pending'
+                WHEN shadow.MarketType = N'TotalGoals'
+                     AND (ISNULL(history.ApiFootballGoalsAvailable, 0) <> 1
+                          OR history.HomeGoals IS NULL OR history.AwayGoals IS NULL)
+                    THEN N'Pending'
+                WHEN shadow.MarketType = N'TotalCorners'
+                     AND (ISNULL(history.ApiFootballCornersAvailable, 0) <> 1
+                          OR history.HomeCorners IS NULL OR history.AwayCorners IS NULL)
+                    THEN N'Pending'
+                WHEN history.ApiFootballUpdatedAtUtc IS NULL THEN N'OutcomeTimestampMissing'
+                WHEN history.ApiFootballUpdatedAtUtc <= shadow.PredictionTimestampUtc THEN N'TemporalRejected'
+                WHEN history.ApiFootballUpdatedAtUtc > @AsOfUtc THEN N'Pending'
+                ELSE N'Settled'
+            END
+    INTO #BotIOutcomes
+    FROM #BotIFirstApproved AS shadow
+    INNER JOIN #BotIIdentities AS identityCount ON identityCount.ShadowEvaluationId = shadow.ShadowEvaluationId
+    LEFT JOIN dbo.MatchHistory AS history
+      ON history.Id = identityCount.MatchHistoryId AND identityCount.MatchCandidateCount = 1
+    OPTION (RECOMPILE);
+
+    ;WITH Factorized AS
     (
-        SELECT
-            lab.*,
-            ApprovedSequence = CASE WHEN lab.Decision = N'Approved' THEN ROW_NUMBER() OVER
-            (
-                PARTITION BY lab.FixtureIdentity, lab.ConfigurationVersion, lab.Decision
-                ORDER BY lab.PredictionTimestampUtc, lab.ShadowEvaluationId
-            ) END
-        FROM dbo.fn_BotI2026ShadowLab(@AsOfUtc) AS lab
-        WHERE lab.PredictionTimestampUtc > DATEADD(DAY, -90, @AsOfUtc)
-          AND (@ConfigurationVersion IS NULL OR lab.ConfigurationVersion = @ConfigurationVersion)
+        SELECT outcome.ShadowEvaluationId, outcome.SettlementState,
+            SettlementFactor = CASE WHEN outcome.SettlementState <> N'Settled' THEN NULL ELSE
+                CONVERT(DECIMAL(9,4), CASE shadow.Selection
+                    WHEN N'Over' THEN CASE WHEN outcome.ActualValue > shadow.CurrentLine THEN 1.0
+                                           WHEN outcome.ActualValue = shadow.CurrentLine THEN 0.0 ELSE -1.0 END
+                    WHEN N'Under' THEN CASE WHEN outcome.ActualValue < shadow.CurrentLine THEN 1.0
+                                            WHEN outcome.ActualValue = shadow.CurrentLine THEN 0.0 ELSE -1.0 END
+                END) END
+        FROM #BotIOutcomes AS outcome
+        INNER JOIN #BotIFirstApproved AS shadow ON shadow.ShadowEvaluationId = outcome.ShadowEvaluationId
+    ),
+    Lab AS
+    (
+        SELECT metadata.*, factor.SettlementState,
+        Result = CASE factor.SettlementFactor
+            WHEN 1.0000 THEN N'Win'
+            WHEN 0.5000 THEN N'HalfWin'
+            WHEN 0.0000 THEN N'Push'
+            WHEN -0.5000 THEN N'HalfLoss'
+            WHEN -1.0000 THEN N'Loss'
+        END,
+        ProfitLoss = CONVERT(DECIMAL(12,4), CASE factor.SettlementFactor
+            WHEN 1.0000 THEN metadata.SelectedOdds - 1.0
+            WHEN 0.5000 THEN (metadata.SelectedOdds - 1.0) / 2.0
+            WHEN 0.0000 THEN 0.0
+            WHEN -0.5000 THEN -0.5
+            WHEN -1.0000 THEN -1.0
+        END)
+        FROM #BotILab AS metadata
+        LEFT JOIN Factorized AS factor ON factor.ShadowEvaluationId = metadata.ShadowEvaluationId
     ),
     Segments AS
     (
@@ -656,6 +925,12 @@ BEGIN
             Approved = SUM(CONVERT(BIGINT, CASE WHEN segment.Decision = N'Approved' THEN 1 ELSE 0 END)),
             Rejected = SUM(CONVERT(BIGINT, CASE WHEN segment.Decision = N'Rejected' THEN 1 ELSE 0 END)),
             Abstained = SUM(CONVERT(BIGINT, CASE WHEN segment.Decision = N'Abstain' THEN 1 ELSE 0 END)),
+            ApprovedFixtureVersions = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 THEN 1 ELSE 0 END)),
+            SettledFixtures = COUNT_BIG(DISTINCT CASE WHEN segment.ApprovedSequence = 1 AND segment.SettlementState = N'Settled' THEN segment.FixtureIdentity END),
+            FutureApproved = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.FixtureDateUtc > @AsOfUtc AND segment.SettlementState = N'Pending' THEN 1 ELSE 0 END)),
+            MissingOfficialLink = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.SettlementState IN (N'OfficialFixtureMissing', N'Unmatched', N'Ambiguous') THEN 1 ELSE 0 END)),
+            AwaitingOfficialResult = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.FixtureDateUtc <= @AsOfUtc AND segment.SettlementState = N'Pending' THEN 1 ELSE 0 END)),
+            InvalidOutcomeTimestamp = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.SettlementState IN (N'OutcomeTimestampMissing', N'TemporalRejected') THEN 1 ELSE 0 END)),
             Settled = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.SettlementState = N'Settled' THEN 1 ELSE 0 END)),
             Won = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.Result = N'Win' THEN 1 ELSE 0 END)),
             HalfWon = SUM(CONVERT(BIGINT, CASE WHEN segment.ApprovedSequence = 1 AND segment.Result = N'HalfWin' THEN 1 ELSE 0 END)),
@@ -686,6 +961,12 @@ BEGIN
         aggregated.Approved,
         aggregated.Rejected,
         aggregated.Abstained,
+        aggregated.ApprovedFixtureVersions,
+        aggregated.SettledFixtures,
+        aggregated.FutureApproved,
+        aggregated.MissingOfficialLink,
+        aggregated.AwaitingOfficialResult,
+        aggregated.InvalidOutcomeTimestamp,
         aggregated.Settled,
         aggregated.Won,
         aggregated.HalfWon,
@@ -706,7 +987,8 @@ BEGIN
         PromotionState = N'SHADOW_ONLY',
         ScorecardType = N'OUTCOME_AWARE_SHADOW_OFFICIAL_FIXTURE_ONLY'
     FROM Aggregated AS aggregated
-    ORDER BY aggregated.WindowDays, aggregated.Dimension, aggregated.Segment;
+    ORDER BY aggregated.WindowDays, aggregated.Dimension, aggregated.Segment
+    OPTION (RECOMPILE);
 END;
 
 GO

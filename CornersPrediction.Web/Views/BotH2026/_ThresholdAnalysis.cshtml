@@ -9,7 +9,7 @@
     {
         ("Overall", "Todo el período", "Sirve como resumen, pero no reemplaza la prueba fuera de muestra."),
         ("Development", "Desarrollo", "Primer tramo cronológico usado para explorar los umbrales."),
-        ("Holdout", "Fuera de muestra", "Último tramo cronológico: es la comprobación más importante.")
+        ("Holdout", "Tramo posterior exploratorio", "El corte cambia al ajustar filtros; todavía no es una validación independiente.")
     };
     string Dec(decimal value, string format = "0.00") => value.ToString(format, CultureInfo.InvariantCulture);
     string Pct(double? value) => value.HasValue ? value.Value.ToString("P2", CultureInfo.CurrentCulture) : "—";
@@ -41,7 +41,7 @@
                 <div>
                     <label class="form-label small" for="HWhatIfMarketType">Mercado</label>
                     <select class="form-select form-select-sm" id="HWhatIfMarketType" name="MarketType">
-                        <option value="">Todos</option>
+                        <option value="">Local y visita</option>
                         <option value="TotalCorners" selected="@(filters.MarketType == "TotalCorners")">Córners totales</option>
                         <option value="HomeTeamCorners" selected="@(filters.MarketType == "HomeTeamCorners")">Córners local</option>
                         <option value="AwayTeamCorners" selected="@(filters.MarketType == "AwayTeamCorners")">Córners visita</option>
@@ -92,6 +92,7 @@
                 </div>
             </div>
             <div class="small text-secondary mt-2">Los porcentajes se ingresan como decimal: 0.56 significa 56%. El corte desarrollo/holdout siempre respeta el orden cronológico.</div>
+            <div class="h-shadow-note small mt-3"><strong>Exploración, no validación del modelo.</strong> Cambiar los umbrales también cambia los partidos seleccionados y el corte cronológico. Elegir la mejor combinación mirando este tramo posterior puede sobreajustar. Para validar una calibración hay que fijar reglas y reservar partidos futuros que no se hayan usado para elegirlas. Las versiones se mezclan si no eliges una configuración exacta.</div>
             <div class="js-h-threshold-feedback mt-3" aria-live="polite"></div>
         </form>
 
@@ -137,7 +138,8 @@
                                     <div><span>Yield</span><strong>@Pct(row.Yield)</strong></div>
                                     <div><span>P/L virtual</span><strong>@Units(row.ProfitLoss)</strong></div>
                                     <div><span>Brecha calibración</span><strong>@Pct(row.CalibrationGap)</strong></div>
-                                    <div><span>Δ Brier</span><strong>@Num(row.DeltaBrier)</strong></div>
+                                    <div><span>Δ error pareado</span><strong>@Num(row.VerifiedDeltaBrier)</strong></div>
+                                    <div><span>Pares modelo / mercado</span><strong>@(row.PairedSamples?.ToString("N0") ?? "—")</strong></div>
                                     <div><span>Brier H / mercado</span><strong>@Num(row.Brier) / @Num(row.MarketBrier)</strong></div>
                                     <div><span>Cuota media</span><strong>@Num(row.AverageOdds, "N2")</strong></div>
                                 </div>

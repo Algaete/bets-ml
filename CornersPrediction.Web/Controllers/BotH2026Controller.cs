@@ -12,7 +12,9 @@ public sealed class BotH2026Controller : Controller
     private static readonly TimeSpan ComponentTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan EvaluationsTimeout = TimeSpan.FromSeconds(45);
-    private static readonly TimeSpan ScorecardsTimeout = TimeSpan.FromSeconds(45);
+    // Scorecards load in a separate block. A cold Azure S0 read can take about
+    // a minute; let the shared API fill finish instead of discarding its result.
+    private static readonly TimeSpan ScorecardsTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan ThresholdAnalysisTimeout = TimeSpan.FromSeconds(60);
     private readonly BotH2026ApiClient _apiClient;
     private readonly ILogger<BotH2026Controller> _logger;
