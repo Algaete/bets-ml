@@ -24,6 +24,7 @@ var tests = new (string Name, Action Execute)[]
     ("Invalid settlement scope is rejected", InvalidScopeIsRejected),
     ("Settlement is idempotent after a pick leaves Pending", SettlementIsIdempotent),
     ("Provider team aliases remain deterministic", ProviderTeamAliasesAreDeterministic)
+    ,("Premier League provider aliases agree across matching and storage", PremierLeagueProviderAliasesAgree)
     ,("Bot C weighted statistics are deterministic", BotCWeightedStatisticsAreDeterministic)
     ,("Bot C shrinkage and exact-line rates are correct", BotCShrinkageAndHitRatesAreCorrect)
     ,("Bot C excludes every observation at or after AsOfDateUtc", BotCPreventsTemporalLeakage)
@@ -714,6 +715,49 @@ static void ProviderTeamAliasesAreDeterministic()
     Assert(TeamNameMatcher.FindBestMatch("Boyaca Chico", ["Chico"])?.Confidence == 1);
     Assert(TeamNameMatcher.FindBestMatch("Manchester City", ["Manchester United"]) is null);
     Assert(TeamNameMatcher.FindBestMatch("FC Juarez", ["Juarez U21"]) is null);
+}
+
+static void PremierLeagueProviderAliasesAgree()
+{
+    foreach (var (canonical, provider) in new[]
+    {
+        ("Tottenham Hotspur", "Tottenham"),
+        ("Newcastle United", "Newcastle"),
+        ("Ipswich Town", "Ipswich"),
+        ("Leeds United", "Leeds")
+    })
+    {
+        Assert(TeamNameMatcher.FindBestMatch(canonical, [provider])?.Confidence == 1);
+        Assert(TeamNameMatcher.FindBestMatch(provider, [canonical])?.Confidence == 1);
+        Assert(TeamNameMatcher.AreEquivalent(canonical, provider));
+        Assert(TeamNameMatcher.GetKnownNameVariants(provider).Contains(canonical));
+        Assert(TeamNameMatcher.GetKnownNameVariants(canonical).Contains(provider));
+        Assert(CornersMLData.Data.CanonicalNameCatalog.CanonicalizeTeam(provider) == canonical);
+        Assert(CornersMLData.Data.CanonicalNameCatalog.CanonicalizeTeam(canonical) == canonical);
+        Assert(CornersMLData.Data.CanonicalNameCatalog.GetTeamAliases().Any(alias =>
+            alias.AliasKey == CornersMLData.Data.CanonicalNameCatalog.NormalizeKey(provider)
+            && alias.CanonicalName == canonical));
+    }
+
+    foreach (var (left, right) in new[]
+    {
+        ("Newcastle", "Newcastle Jets"),
+        ("Manchester City", "Manchester United"),
+        ("Tottenham", "Tottenham U21"),
+        ("Ipswich", "Ipswich Town U18"),
+        ("Leeds", "Leeds United U21"),
+        ("Tottenham", "Tottenham Hotspur Women"),
+        ("Ipswich", "Ipswich Town W"),
+        ("Newcastle", "Newcastle United Reserves"),
+        ("Leeds", "Leeds United B")
+    })
+    {
+        Assert(!TeamNameMatcher.AreEquivalent(left, right));
+        Assert(TeamNameMatcher.FindBestMatch(left, [right]) is null);
+        Assert(TeamNameMatcher.FindBestMatch(right, [left]) is null);
+        Assert(CornersMLData.Data.CanonicalNameCatalog.CanonicalizeTeam(left)
+            != CornersMLData.Data.CanonicalNameCatalog.CanonicalizeTeam(right));
+    }
 }
 
 static void BotCWeightedStatisticsAreDeterministic()

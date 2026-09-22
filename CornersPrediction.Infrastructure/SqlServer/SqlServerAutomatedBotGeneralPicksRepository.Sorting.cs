@@ -44,7 +44,7 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         {
             // Outcomes must be resolved before global sorting. Reuse the exact
             // official/manual resolver, but keep audit JSON out of that scan.
-            sql += $"SELECT evaluation.AutomatedBotPickEvaluationId AS EvaluationId, evaluation.MatchDate INTO #GeneralSortResearchPageKeys {auditSource} OPTION (RECOMPILE);\n";
+            sql += "SELECT EvaluationId, MatchDate INTO #GeneralSortResearchPageKeys FROM #GeneralCurrentAuditKeys;\n";
             sql += BuildOutcomeSortProjection().Replace("#Research", "#GeneralSortResearch", StringComparison.Ordinal);
             sql += "DROP TABLE #GeneralSortResearchPageKeys, #GeneralSortResearchPageRows, #GeneralSortResearchFallbackScopes, #GeneralSortResearchFallbackHistory, #GeneralSortResearchFallbackIdentities;\n";
             auditCandidates = "SELECT EvaluationId, MatchDate, OutcomeStatus AS SortValue FROM #GeneralOutcomeSort";
@@ -86,13 +86,12 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         var firstStage = """
             SELECT evaluation.ApiFootballFixtureId, evaluation.AutomatedBotPickEvaluationId,
                 evaluation.BotKey, evaluation.MarketType, evaluation.PublishedSelectionId,
-                evaluation.HomeTeam, evaluation.AwayTeam, evaluation.MatchDate,
+                evaluation.HomeTeam, evaluation.AwayTeam, evaluation.League, evaluation.MatchDate,
                 evaluation.PredictionTimestampUtc, evaluation.EvaluatedAtUtc,
                 evaluation.LineValue, evaluation.SelectedSide, evaluation.SelectedOdds
             INTO #ResearchPageRows
             FROM #ResearchPageKeys AS page
             INNER JOIN dbo.AutomatedBotPickEvaluations AS evaluation
-                WITH (INDEX(IX_AutomatedBotPickEvaluations_ResearchPage))
               ON evaluation.AutomatedBotPickEvaluationId = page.EvaluationId
             OPTION (RECOMPILE);
 

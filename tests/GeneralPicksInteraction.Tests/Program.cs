@@ -64,13 +64,18 @@ var fixtureMigration = File.ReadAllText("CornersPredictionApi/sql/20260921_fixtu
 new TSql160Parser(true).Parse(new StringReader(fixtureMigration), out var fixtureSqlErrors);
 Check(fixtureSqlErrors.Count == 0, string.Join(';', fixtureSqlErrors.Select(e => $"{e.Line}: {e.Message}")));
 Console.WriteLine("PASS shared fixture settlement schema and procedure parse as SQL Server syntax.");
-if (!args.Contains("--sql") && !args.Contains("--fixture-sql")) return;
+if (!args.Contains("--sql") && !args.Contains("--fixture-sql") && !args.Contains("--alias-sql")) return;
 
 var root = Directory.GetCurrentDirectory();
 var connectionString = File.ReadLines(Path.Combine(root, ".env"))
     .First(line => line.StartsWith("AZURE_SQL_CONNECTION_STRING=")).Split('=', 2)[1].Trim().Trim('"', '\'');
 var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
     ["ConnectionStrings:DefaultConnection"] = connectionString }).Build();
+if (args.Contains("--alias-sql"))
+{
+    await OfficialAliasSettlementTests.Run(configuration, connectionString);
+    return;
+}
 if (args.Contains("--fixture-sql"))
 {
     await FixtureManualSettlementTests.Run(configuration, connectionString, fixtureMigration);

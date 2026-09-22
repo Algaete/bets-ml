@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../CornersPrediction.Application/CornersPrediction.Application.csproj" />
+    <Compile Include="../../CornersPredictionApi/Robot/CornersMLData/Data/CanonicalNameCatalog.cs" Link="CanonicalNameCatalog.cs" />
   </ItemGroup>
 </Project>

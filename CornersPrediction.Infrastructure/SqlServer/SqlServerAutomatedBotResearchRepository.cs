@@ -309,6 +309,76 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
 
         """;
 
+    // Materialize the requested fixture/date scope before normalizing names.
+    // All three readers (page, outcome sorting and lab) use this same resolver.
+    private const string ResearchFallbackIdentitySql = """
+        -- Resolve repeated missing-id candidates once per fixture identity.
+        SELECT DISTINCT
+            HomeTeam,
+            AwayTeam,
+            CanonicalHomeTeam = HomeTeam,
+            CanonicalAwayTeam = AwayTeam,
+            MatchDateDay = CONVERT(DATE, MatchDate)
+        INTO #ResearchFallbackScopes
+        FROM #ResearchPageRows
+        WHERE NULLIF(ApiFootballFixtureId, 0) IS NULL;
+
+        UPDATE scope
+        SET CanonicalHomeTeam = COALESCE(homeAlias.CanonicalName, scope.HomeTeam),
+            CanonicalAwayTeam = COALESCE(awayAlias.CanonicalName, scope.AwayTeam)
+        FROM #ResearchFallbackScopes AS scope
+        LEFT JOIN dbo.TeamNameAlias AS homeAlias
+          ON homeAlias.AliasKey = dbo.fn_NormalizeNameKey(scope.HomeTeam)
+        LEFT JOIN dbo.TeamNameAlias AS awayAlias
+          ON awayAlias.AliasKey = dbo.fn_NormalizeNameKey(scope.AwayTeam);
+
+        -- Freeze the date subset before invoking name normalization. The
+        -- immutable audit and its large feature snapshots are never scanned.
+        SELECT
+            history.ApiFootballFixtureId,
+            history.MatchDate,
+            HomeTeam = COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam),
+            AwayTeam = COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
+        INTO #ResearchFallbackHistory
+        FROM dbo.MatchHistory AS history
+        WHERE history.ApiFootballFixtureId > 0
+          AND history.MatchDate >=
+              (SELECT DATEADD(DAY, -1, MIN(MatchDateDay)) FROM #ResearchFallbackScopes)
+          AND history.MatchDate <=
+              (SELECT DATEADD(DAY, 1, MAX(MatchDateDay)) FROM #ResearchFallbackScopes)
+        OPTION (RECOMPILE);
+
+        UPDATE history
+        SET HomeTeam = COALESCE(homeAlias.CanonicalName, history.HomeTeam),
+            AwayTeam = COALESCE(awayAlias.CanonicalName, history.AwayTeam)
+        FROM #ResearchFallbackHistory AS history
+        LEFT JOIN dbo.TeamNameAlias AS homeAlias
+          ON homeAlias.AliasKey = dbo.fn_NormalizeNameKey(history.HomeTeam)
+        LEFT JOIN dbo.TeamNameAlias AS awayAlias
+          ON awayAlias.AliasKey = dbo.fn_NormalizeNameKey(history.AwayTeam);
+
+        -- Duplicate history records of one official id are harmless; two
+        -- distinct fixture ids must stay unavailable instead of guessing.
+        SELECT
+            scope.HomeTeam,
+            scope.AwayTeam,
+            scope.MatchDateDay,
+            MatchCandidateCount = COUNT_BIG(DISTINCT history.ApiFootballFixtureId),
+            ApiFootballFixtureId = MIN(history.ApiFootballFixtureId)
+        INTO #ResearchFallbackIdentities
+        FROM #ResearchFallbackScopes AS scope
+        LEFT JOIN #ResearchFallbackHistory AS history
+          ON history.MatchDate BETWEEN
+              DATEADD(DAY, -1, scope.MatchDateDay)
+              AND DATEADD(DAY, 1, scope.MatchDateDay)
+         AND history.HomeTeam COLLATE Latin1_General_100_CI_AI =
+              scope.CanonicalHomeTeam COLLATE Latin1_General_100_CI_AI
+         AND history.AwayTeam COLLATE Latin1_General_100_CI_AI =
+              scope.CanonicalAwayTeam COLLATE Latin1_General_100_CI_AI
+        GROUP BY scope.HomeTeam, scope.AwayTeam, scope.MatchDateDay;
+
+        """;
+
     private const string ResearchPageDetailsSql = """
         -- Freeze the page before outcome resolution so the optimizer cannot
         -- expand any name/date fallback into the full evaluation ledger.
@@ -358,51 +428,7 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
           ON evaluation.AutomatedBotPickEvaluationId = page.EvaluationId
         OPTION (RECOMPILE);
 
-        -- Resolve repeated missing-id candidates once per fixture identity.
-        SELECT DISTINCT
-            HomeTeam,
-            AwayTeam,
-            MatchDateDay = CONVERT(DATE, MatchDate)
-        INTO #ResearchFallbackScopes
-        FROM #ResearchPageRows
-        WHERE ApiFootballFixtureId IS NULL;
-
-        -- Put the page's date boundary before name/collation matching. This
-        -- prevents a correlated distinct count from scanning all fixture ids
-        -- and looking up every historical match for each candidate.
-        SELECT
-            history.ApiFootballFixtureId,
-            history.MatchDate,
-            HomeTeam = COALESCE(NULLIF(history.StandardizedHomeTeam, N''), history.HomeTeam),
-            AwayTeam = COALESCE(NULLIF(history.StandardizedAwayTeam, N''), history.AwayTeam)
-        INTO #ResearchFallbackHistory
-        FROM dbo.MatchHistory AS history
-        WHERE history.ApiFootballFixtureId IS NOT NULL
-          AND history.MatchDate >=
-              (SELECT DATEADD(DAY, -1, MIN(MatchDateDay)) FROM #ResearchFallbackScopes)
-          AND history.MatchDate <=
-              (SELECT DATEADD(DAY, 1, MAX(MatchDateDay)) FROM #ResearchFallbackScopes)
-        OPTION (RECOMPILE);
-
-        -- Count distinct official ids, not history rows: duplicate records of
-        -- one fixture are valid; two different fixtures remain ambiguous.
-        SELECT
-            scope.HomeTeam,
-            scope.AwayTeam,
-            scope.MatchDateDay,
-            MatchCandidateCount = COUNT_BIG(DISTINCT history.ApiFootballFixtureId),
-            ApiFootballFixtureId = MIN(history.ApiFootballFixtureId)
-        INTO #ResearchFallbackIdentities
-        FROM #ResearchFallbackScopes AS scope
-        LEFT JOIN #ResearchFallbackHistory AS history
-          ON history.MatchDate BETWEEN
-              DATEADD(DAY, -1, scope.MatchDateDay)
-              AND DATEADD(DAY, 1, scope.MatchDateDay)
-         AND history.HomeTeam COLLATE Latin1_General_100_CI_AI =
-              scope.HomeTeam COLLATE Latin1_General_100_CI_AI
-         AND history.AwayTeam COLLATE Latin1_General_100_CI_AI =
-              scope.AwayTeam COLLATE Latin1_General_100_CI_AI
-        GROUP BY scope.HomeTeam, scope.AwayTeam, scope.MatchDateDay;
+        """ + ResearchFallbackIdentitySql + """
 
         SELECT
             EvaluationId = evaluation.AutomatedBotPickEvaluationId,
@@ -478,7 +504,8 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
             OutcomeStatus = CASE
                 WHEN manual.OutcomeStatus = N'Void' THEN N'Void'
                 WHEN COALESCE(manual.ActualValue, official.ActualValue) IS NULL THEN
-                    CASE WHEN evaluation.MatchDate > SYSUTCDATETIME()
+                    CASE WHEN CONVERT(DATETIME2, evaluation.MatchDate
+                        AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC') > SYSUTCDATETIME()
                         THEN N'Pending' ELSE N'Unavailable' END
                 WHEN settlement.SettlementFactor IS NULL THEN N'Official'
                 WHEN settlement.SettlementFactor = 1.0000 THEN N'Win'
@@ -537,7 +564,7 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
                 END
             ) AS publication
         LEFT JOIN #ResearchFallbackIdentities AS fallbackIdentity
-          ON evaluation.ApiFootballFixtureId IS NULL
+          ON NULLIF(evaluation.ApiFootballFixtureId, 0) IS NULL
          AND fallbackIdentity.HomeTeam = evaluation.HomeTeam
          AND fallbackIdentity.AwayTeam = evaluation.AwayTeam
          AND fallbackIdentity.MatchDateDay = CONVERT(DATE, evaluation.MatchDate)
@@ -546,7 +573,7 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
             SELECT ResolvedFixtureId = CASE
                 -- An exact API-Football id is authoritative; mutable display
                 -- names or corrected kickoff times cannot invalidate it.
-                WHEN evaluation.ApiFootballFixtureId IS NOT NULL
+                WHEN evaluation.ApiFootballFixtureId > 0
                     THEN evaluation.ApiFootballFixtureId
                 WHEN fallbackIdentity.MatchCandidateCount = 1
                     THEN fallbackIdentity.ApiFootballFixtureId
@@ -575,7 +602,8 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
               AND history.ApiFootballFixtureId = resolvedIdentity.ResolvedFixtureId
               AND COALESCE(
                     evaluation.PredictionTimestampUtc,
-                    evaluation.EvaluatedAtUtc) < evaluation.MatchDate
+                    evaluation.EvaluatedAtUtc) < CONVERT(DATETIME2, evaluation.MatchDate
+                        AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC')
               AND history.ApiFootballUpdatedAtUtc > COALESCE(
                     evaluation.PredictionTimestampUtc,
                     evaluation.EvaluatedAtUtc)

@@ -35,6 +35,12 @@ public static class TeamNameMatcher
         "ba", "go", "mg", "pe", "pr", "rj", "rn", "rs", "sp"
     };
 
+    private static readonly HashSet<string> SquadSuffixTokens = new(StringComparer.Ordinal)
+    {
+        "women", "ladies", "w", "femenino", "femenina", "feminino", "feminina",
+        "reserves", "reserve", "reservas", "reserva", "b", "ii", "2"
+    };
+
     // Some providers omit a legal part of the club name (for example API-Football
     // exposes "Coventry" while the bookmaker uses "Coventry City"). This is kept
     // separate from ClubTokens: it requires an otherwise exact token sequence and
@@ -61,7 +67,11 @@ public static class TeamNameMatcher
         ["Jaguares", "Jaguares de Cordoba"],
         ["Vicenza", "Vicenza Virtus", "L.R. Vicenza", "LR Vicenza", "L R Vicenza"],
         ["Heart of Midlothian", "Hearts"],
-        ["Dundee", "Dundee FC"]
+        ["Dundee", "Dundee FC"],
+        ["Tottenham Hotspur", "Tottenham"],
+        ["Newcastle United", "Newcastle"],
+        ["Ipswich Town", "Ipswich"],
+        ["Leeds United", "Leeds"]
     ];
 
     private static readonly IReadOnlyDictionary<string, string> KnownTeamAliases = KnownTeamVariants
@@ -302,12 +312,30 @@ public static class TeamNameMatcher
 
     private static bool IsPlausibleFuzzyPair(TeamNameIdentity input, TeamNameIdentity candidate)
     {
-        if (HasConflictingRegionalSuffixes(input.LooseTokens, candidate.LooseTokens))
+        if (input.LooseKey.Length < 5 || candidate.LooseKey.Length < 5)
         {
             return false;
         }
 
-        if (input.LooseKey.Length < 5 || candidate.LooseKey.Length < 5)
+        // A short provider alias can expand to a long senior-club name whose
+        // fuzzy score is otherwise high enough to match that club's youth team.
+        var inputYouthCategory = input.LooseTokens.FirstOrDefault(IsYouthCategoryToken);
+        var candidateYouthCategory = candidate.LooseTokens.FirstOrDefault(IsYouthCategoryToken);
+        if (inputYouthCategory != candidateYouthCategory)
+        {
+            return false;
+        }
+
+        var inputSquad = SquadSuffixTokens.Contains(input.LooseTokens[^1])
+            ? input.LooseTokens[^1] : null;
+        var candidateSquad = SquadSuffixTokens.Contains(candidate.LooseTokens[^1])
+            ? candidate.LooseTokens[^1] : null;
+        if (inputSquad != candidateSquad)
+        {
+            return false;
+        }
+
+        if (HasConflictingRegionalSuffixes(input.LooseTokens, candidate.LooseTokens))
         {
             return false;
         }
@@ -332,6 +360,9 @@ public static class TeamNameMatcher
         return JaroWinkler(input.LooseTokens[0], candidate.LooseTokens[0]) >= 0.92 ||
             JaroWinkler(input.LooseTokens[^1], candidate.LooseTokens[^1]) >= 0.92;
     }
+
+    private static bool IsYouthCategoryToken(string token) =>
+        token.Length > 1 && token[0] == 'u' && token.Skip(1).All(char.IsDigit);
 
     private static bool IsRegionalVariant(IReadOnlyList<string> left, IReadOnlyList<string> right)
     {

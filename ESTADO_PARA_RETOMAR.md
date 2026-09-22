@@ -2,6 +2,16 @@
 
 Actualizado el **21 de septiembre de 2026**. La sección más reciente tiene prioridad; las inferiores conservan el historial de sesiones anteriores.
 
+## Premier League: diagnóstico de nombres y horarios
+
+- Ver `docs/premier-api-football-enlaces-2026-09-21.md`. API-Football respondió 200 con los 10 partidos finalizados del 18–20 de septiembre (liga 39, temporada 2026); los diez ya estaban en MatchHistory con goles y córners. No atribuir estos casos a falta de cobertura.
+- Faltaban equivalencias Tottenham/Hotspur, Newcastle/United, Ipswich/Town y Leeds/United. Se agregaron al matcher y catálogo compartido. Generales, orden por resultado y Lab resuelven alias oficiales sin alterar la auditoría del modelo y conservan rechazo ante IDs ambiguos.
+- Caso real adicional: evaluación E 767306 de Leeds, predicción 12:42 UTC para inicio 10:00 Santiago = 13:00 UTC. El control temporal comparaba UTC con hora local; se corrige convirtiendo el inicio a UTC y manteniendo la exclusión de predicciones posteriores.
+- Verificación final: build limpio, 66 pruebas del motor y regresión SQL de alias/orden/Lab/horarios/prioridad manual con rollback completo. La consulta HTTP real devuelve para 767306 **Win, 4 córners, fuente ApiFootball, +0,85u**. API actualizada y catálogo SQL instalados; log `/private/tmp/corners-api-20260921-premier-aliases.log`. Web sigue en 5130.
+- Se quitó una relectura redundante del histórico al ordenar por resultado y los hints que forzaban barridos en búsquedas por ID. La regresión pasó en aproximadamente 20 s después de un timeout inicial de 120 s; no dar por resueltos todos los pendientes de rendimiento de aprobadas.
+- El usuario liquidó los nueve picks publicados afectados durante la revisión, incluido Leeds 3946. La reparación no reemplaza esos resultados manuales por automáticos. La comprobación dirigida de pendientes devolvió 0 filas; no se aplicaron escrituras automáticas a estos picks.
+- No se modificaron política productiva del 3%, habilitación de bots ni filtro de competición. Los otros hallazgos del importador se documentan para revisión posterior; no se dan por corregidos.
+
 ## Corrección Productivo → todos los bots: 21 de septiembre, 21:39 Chile
 
 - Causa confirmada de Sabadell–Real Oviedo (20/09, 09:00): Productivo seguía llamando a la liquidación individual. Las selecciones 3840 F, 3841 C, 3842 D y 3843 E se habían guardado una por una; el registro compartido estaba vacío. No era un problema de coincidencia de nombres ni del modelo.

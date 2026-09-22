@@ -52,18 +52,14 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
                   AND approved.PublicationStatus = @PublicationStatus)
           );
 
-        ;WITH CandidateBase AS
-        (
-            SELECT
+        SELECT
                 evaluation.AutomatedBotPickEvaluationId,
                 evaluation.PublishedSelectionId,
                 evaluation.BotKey,
                 evaluation.ApiFootballFixtureId,
-                FixtureKey = CASE WHEN evaluation.ApiFootballFixtureId > 0
-                    THEN CONCAT(N'api:', evaluation.ApiFootballFixtureId)
-                    ELSE CONCAT(N'name:', CONVERT(CHAR(10), evaluation.MatchDate, 23), N'|',
-                        UPPER(LTRIM(RTRIM(evaluation.HomeTeam))), N'|',
-                        UPPER(LTRIM(RTRIM(evaluation.AwayTeam)))) END,
+                evaluation.League,
+                evaluation.HomeTeam,
+                evaluation.AwayTeam,
                 evaluation.MatchDate,
                 evaluation.MarketType,
                 evaluation.SelectedSide,
@@ -74,12 +70,38 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
                     evaluation.PredictionTimestampUtc,
                     CONVERT(DATETIME2(3), evaluation.EvaluatedAtUtc)),
                 evaluation.IsResearchWinner
+            INTO #ResearchPageRows
             FROM #GeneralAuditKeys AS approved
             INNER JOIN dbo.AutomatedBotPickEvaluations AS evaluation
-                WITH (INDEX(IX_AutomatedBotPickEvaluations_GeneralDecisionPage))
               ON evaluation.AutomatedBotPickEvaluationId = approved.EvaluationId
             WHERE evaluation.SelectedSide IN (N'Over', N'Under')
               AND evaluation.SelectedOdds > 1
+            OPTION (RECOMPILE);
+
+        """ + ResearchFallbackIdentitySql + """
+
+        ;WITH CandidateBase AS
+        (
+            SELECT evaluation.*,
+                resolved.ResolvedFixtureId,
+                FixtureKey = CASE WHEN resolved.ResolvedFixtureId > 0
+                    THEN CONCAT(N'api:', resolved.ResolvedFixtureId)
+                    ELSE CONCAT(N'name:', CONVERT(CHAR(10), evaluation.MatchDate, 23), N'|',
+                        UPPER(LTRIM(RTRIM(evaluation.HomeTeam))), N'|',
+                        UPPER(LTRIM(RTRIM(evaluation.AwayTeam)))) END
+            FROM #ResearchPageRows AS evaluation
+            LEFT JOIN #ResearchFallbackIdentities AS fallbackIdentity
+              ON NULLIF(evaluation.ApiFootballFixtureId, 0) IS NULL
+             AND fallbackIdentity.HomeTeam = evaluation.HomeTeam
+             AND fallbackIdentity.AwayTeam = evaluation.AwayTeam
+             AND fallbackIdentity.MatchDateDay = CONVERT(DATE, evaluation.MatchDate)
+            CROSS APPLY
+            (
+                SELECT ResolvedFixtureId = CASE
+                    WHEN evaluation.ApiFootballFixtureId > 0 THEN evaluation.ApiFootballFixtureId
+                    WHEN fallbackIdentity.MatchCandidateCount = 1 THEN fallbackIdentity.ApiFootballFixtureId
+                END
+            ) AS resolved
         )
         SELECT candidate.*,
             SignalSequence = ROW_NUMBER() OVER
@@ -98,6 +120,10 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
             PublishedSelectionId,
             BotKey,
             ApiFootballFixtureId,
+            ResolvedFixtureId,
+            League,
+            HomeTeam,
+            AwayTeam,
             FixtureKey,
             MatchDate,
             MarketType,
@@ -113,10 +139,10 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         CREATE UNIQUE CLUSTERED INDEX IX_LabSignalsId
             ON #LabSignals(AutomatedBotPickEvaluationId);
 
-        SELECT DISTINCT ApiFootballFixtureId
+        SELECT DISTINCT ApiFootballFixtureId = ResolvedFixtureId
         INTO #LabFixtureIds
         FROM #LabSignals
-        WHERE ApiFootballFixtureId > 0;
+        WHERE ResolvedFixtureId > 0;
 
         CREATE UNIQUE CLUSTERED INDEX IX_LabFixtureIds
             ON #LabFixtureIds(ApiFootballFixtureId);
@@ -178,7 +204,8 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
             evaluation.FinalProbability,
             OutcomeStatus = CASE
                 WHEN manual.OutcomeStatus = N'Void' THEN N'Void'
-                WHEN actual.ActualValue IS NULL AND evaluation.MatchDate > SYSUTCDATETIME()
+                WHEN actual.ActualValue IS NULL AND CONVERT(DATETIME2, evaluation.MatchDate
+                    AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC') > SYSUTCDATETIME()
                     THEN N'Pending'
                 WHEN actual.ActualValue IS NULL THEN N'Unavailable'
                 WHEN settlement.SettlementFactor = 1.0000 THEN N'Win'
@@ -204,12 +231,13 @@ public sealed partial class SqlServerAutomatedBotResearchRepository
         FROM #LabSignals AS evaluation
         """ + GeneralManualOutcomeApplySql + """
         LEFT JOIN #LabOfficialFixtures AS history
-          ON history.ApiFootballFixtureId = evaluation.ApiFootballFixtureId
+          ON history.ApiFootballFixtureId = evaluation.ResolvedFixtureId
         OUTER APPLY
         (
             SELECT ActualValue = COALESCE(manual.ActualValue,
                 CONVERT(DECIMAL(12,4), CASE
-                    WHEN evaluation.DecisionAtUtc >= evaluation.MatchDate
+                    WHEN evaluation.DecisionAtUtc >= CONVERT(DATETIME2, evaluation.MatchDate
+                        AT TIME ZONE 'Pacific SA Standard Time' AT TIME ZONE 'UTC')
                       OR history.ApiFootballUpdatedAtUtc <= evaluation.DecisionAtUtc
                       OR (evaluation.BotKey = N'H2026' AND NOT EXISTS
                           (SELECT 1 FROM dbo.BotH2026ShadowEvaluations AS shadow
