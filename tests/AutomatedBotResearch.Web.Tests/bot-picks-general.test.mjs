@@ -373,3 +373,56 @@ labSort.dispatchEvent({ type: 'click' });
 await respond(lab.calls[2], rows);
 assert.equal(lab.calls.length, 3, 'sorting the table reuses the unchanged aggregate lab');
 console.log('PASS approved lab loads after the table, ignores decision/paging/sort, renders performance, calibration and segments, and reuses its slice.');
+
+const shared = harness({ admin: true, lab: true });
+const siblingSignals = ['C2026', 'F2026'].map((botKey, index) => ({
+    evaluationId: 501 + index, botKey, marketType: 'AwayTeamGoals', modelDecision: 'Approved',
+    publicationStatus: 'Published', selectedSide: 'Over', lineValue: .5, selectedOdds: 1.9,
+    outcomeStatus: 'Unavailable', homeTeam: 'Sabadell', awayTeam: 'Real Oviedo'
+}));
+await respond(shared.calls[0], siblingSignals);
+const resolveSharedLab = async (call, resolved) => {
+    assert.match(call.url, /^\/BotPicks\/GeneralPicksLab\?/);
+    call.resolve({ ok: true, json: async () => ({ summary: {
+        approvedEvaluations: 2, independentSignals: 2, uniqueFixtures: 1,
+        resolvedSignals: resolved, pendingSignals: 2 - resolved, unavailableSignals: 0,
+        profitLossUnits: resolved * .9
+    } }) });
+    await flush();
+};
+await resolveSharedLab(shared.calls[1], 0);
+assert.match(shared.node('BotResearchLabResolved').textContent, /0.*2/);
+assert.match(shared.node('BotResearchTableBody').innerHTML, /Bot F[\s\S]*Liquidar partido/);
+shared.document.dispatchEvent({ type: 'bot-pick-manually-settled' });
+assert.equal(shared.calls.length, 2, 'the general surface does not duplicate its own settlement refresh');
+shared.tabs[1].dispatchEvent({ type: 'click' });
+assert.match(shared.calls.at(-1).url, /^\/BotPicks\/Selections\?/);
+const callsWhileHidden = shared.calls.length;
+shared.document.dispatchEvent({ type: 'bot-pick-manually-settled', detail: { source: 'production' } });
+assert.equal(shared.calls.length, callsWhileHidden, 'a hidden general table and lab wait for the user to return');
+shared.tabs[0].dispatchEvent({ type: 'click' });
+assert.equal(shared.calls.length, callsWhileHidden + 1, 'returning must reload the invalidated table instead of reusing pending rows');
+const refreshedSignals = siblingSignals.map(item => ({ ...item,
+    outcomeSource: 'Manual', actualValue: 1, outcomeStatus: 'Win', profitLoss: .9,
+    manualSettlementReason: 'Resultado compartido'
+}));
+await respond(shared.calls.at(-1), refreshedSignals);
+assert.equal(shared.calls.length, callsWhileHidden + 2, 'the unchanged lab filters still require refreshed settlement aggregates');
+assert.match(shared.node('BotResearchTableBody').innerHTML, /Bot F[\s\S]*Corregir resultado compartido/);
+assert.doesNotMatch(shared.node('BotResearchTableBody').innerHTML, /Liquidar partido/);
+await resolveSharedLab(shared.calls.at(-1), 2);
+assert.match(shared.node('BotResearchLabResolved').textContent, /2.*2/);
+assert.match(shared.node('BotResearchLabProfit').textContent, /\+1,8u/);
+console.log('PASS a productive settlement invalidates hidden general rows and lab aggregates and reloads both on return.');
+
+const inFlight = harness({ admin: true });
+const staleGeneral = inFlight.calls[0];
+inFlight.document.dispatchEvent({ type: 'bot-pick-manually-settled', detail: { source: 'production' } });
+assert.ok(staleGeneral.options.signal.aborted, 'a settlement cancels general requests that could return pre-settlement data');
+assert.equal(inFlight.calls.length, 2, 'an already visible general table refreshes immediately');
+await respond(inFlight.calls[1], refreshedSignals);
+await respond(staleGeneral, siblingSignals);
+assert.match(inFlight.node('BotResearchTableBody').innerHTML, /Bot F[\s\S]*Corregir resultado compartido/);
+assert.doesNotMatch(inFlight.node('BotResearchTableBody').innerHTML, /Liquidar partido/,
+    'a late response cannot restore the unliquidated Bot F after a shared settlement');
+console.log('PASS in-flight stale general responses cannot undo a productive settlement refresh.');

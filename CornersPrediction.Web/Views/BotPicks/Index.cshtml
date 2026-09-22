@@ -2768,7 +2768,7 @@
                                             <span>${escapeHtml(actualResultLabel)}</span>
 	                                        <input class="form-control form-control-sm" type="number" min="0" step="1" inputmode="numeric" data-actual-result="${escapeHtml(id)}" value="${actualResult === null ? '' : escapeHtml(actualResult)}" aria-label="Resultado real: ${escapeHtml(actualResultLabel)}" placeholder="Ej. 0" />
                                         </label>
-	                                    <button class="btn btn-sm btn-primary" type="button" data-resolve-selection="${escapeHtml(id)}">Liquidar</button>
+	                                    <button class="btn btn-sm ${isPending ? 'btn-primary' : 'btn-outline-secondary'}" type="button" data-resolve-selection="${escapeHtml(id)}" title="Comparte el resultado con todos los bots del mismo partido y mercado">${isPending ? 'Liquidar para todos' : 'Corregir para todos'}</button>
 	                                </div>
 	                            `
 	                        : '<span class="badge text-bg-light">Solo admin</span>';
@@ -3190,7 +3190,12 @@
 	                        localStorage.setItem(`${storagePrefix}-table-view`, tableView);
 	                    }
 	                    replaceSelection(updatedSelection);
-	                    render();
+                        // The server settles every matching bot. Reload their persisted
+                        // outcomes instead of leaving sibling rows pending in memory.
+                        document.dispatchEvent(new CustomEvent('bot-pick-manually-settled', {
+                            detail: { source: 'production' }
+                        }));
+                        await loadSelections();
 	                    window.scrollTo(0, previousScrollTop);
 
                         const updatedStatus = getValue(updatedSelection, 'Status') ?? 'resuelto';
@@ -3199,8 +3204,8 @@
                             ? ''
                             : ` · P/L ${formatDecimal(updatedProfitLoss)}u`;
                         showSettlementResult(
-                            `Pick #${id} liquidado manualmente: ${resultLabel} = ${actualValue}. ` +
-                            `Estado: ${updatedStatus}${profitText}.`,
+                            `Resultado compartido con todos los bots de este partido: ${resultLabel} = ${actualValue}. ` +
+                            `Pick #${id}: ${updatedStatus}${profitText}.`,
                             updatedStatus === 'Lost' ? 'warning' : 'success',
                             false);
 

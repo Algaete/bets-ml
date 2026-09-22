@@ -8,10 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const view = fs.readFileSync(path.join(root, 'CornersPrediction.Web/Views/BotPicks/Index.cshtml'), 'utf8');
 const inline = view.match(/@section Scripts\s*{\s*<script>([\s\S]*?)<\/script>/)[1]
     .replace(/'@Url\.Action\("([^"]+)"[^\n]*?\)'/g, (_, action) => `'/BotPicks/${action}'`)
-    .replace('@(canUpdateResults ? "true" : "false")', 'false')
     .replaceAll("'@language'", "'es'")
-    .replaceAll("'@marketFamily'", "'corners'")
-    .replaceAll("'@Model.Market.UnitLabel'", "'córners'")
     .replace(/\}\)\(\);\s*$/, 'globalThis.testAccess = { getDecisionReason }; })();');
 
 class Element {
@@ -38,12 +35,13 @@ class Element {
     }
     dispatchEvent(event) { this.events.get(event.type)?.forEach(fn => fn(event)); }
     setAttribute() {}
-    querySelector() { return null; }
+    querySelector(selector) { return selector.includes('__RequestVerificationToken') ? { value: 'test-csrf' } : null; }
     querySelectorAll() { return []; }
     scrollIntoView() {}
+    setCustomValidity(message) { this.validationMessage = message; }
 }
 
-function harness(surface = 'production') {
+function harness(surface = 'production', { admin = false, market = 'corners' } = {}) {
     const nodes = new Map();
     const document = new Element('document');
     document.getElementById = id => {
@@ -59,22 +57,29 @@ function harness(surface = 'production') {
     node('BotPicksBetCurrency').value = 'CLP';
     node('BotPicksServerMonitoring').open = true;
     node('BotPicksMonitoringAudit').open = true;
-    const saved = new Map([['bot-picks-corners-surface', surface]]);
+    const saved = new Map([[`bot-picks-${market}-surface`, surface]]);
     const calls = [];
+    const scrolls = [];
     const context = vm.createContext({
         document, bootstrap: { Modal: { getOrCreateInstance: () => ({}) } },
         localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
-        window: { location: { pathname: '/BotPicks' }, history: { replaceState() {} }, setTimeout },
+        window: { location: { pathname: '/BotPicks' }, history: { replaceState() {} }, setTimeout,
+            scrollY: 600, scrollTo: (...coordinates) => scrolls.push(coordinates) },
         fetch: (url, options = {}) => new Promise(resolve => calls.push({ url, options, resolve })),
+        CustomEvent: class { constructor(type, values = {}) { this.type = type; this.detail = values.detail; } },
         AbortController, URLSearchParams, Intl, Date, setTimeout, clearTimeout, console
     });
-    vm.runInContext(inline, context, { filename: 'BotPicks/Index.cshtml inline script' });
+    vm.runInContext(inline
+        .replace('@(canUpdateResults ? "true" : "false")', String(admin))
+        .replaceAll("'@marketFamily'", `'${market}'`)
+        .replaceAll("'@Model.Market.UnitLabel'", market === 'goals' ? "'goles'" : "'córners'"),
+    context, { filename: 'BotPicks/Index.cshtml inline script' });
     // The separate surface controller now owns initial activation. These tests
     // exercise the production path only after an explicit tab selection.
     if (surface === 'production') {
         document.dispatchEvent({ type: 'bot-picks-surface-change', detail: { surface: 'production' } });
     }
-    return { context, calls, node, document };
+    return { context, calls, node, document, scrolls };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function respond(call, payload = []) {
@@ -186,3 +191,50 @@ item.decisionReason = '{"botProfile":"F2026"}';
 assert.equal(read(item).botProfile, 'F2026', 'changing decision evidence invalidates the parsed cache');
 assert.notEqual(read(item), first);
 console.log('PASS Bot Picks two-phase table loading, zero-stake verification, failure visibility, canceled-plan isolation, deferred statistics/history, cache and surface switching.');
+
+const shared = harness('production', { admin: true, market: 'goals' });
+const eventDetails = [];
+shared.document.addEventListener('bot-pick-manually-settled', event => eventDetails.push(event.detail));
+const siblings = ['C2026', 'F2026'].map((botKey, index) => ({
+    ...verifiedRow, automatedCornerBetSelectionId: 201 + index, botKey,
+    automationVersion: `Bot-${botKey}`, homeTeam: 'Sabadell', awayTeam: 'Real Oviedo',
+    matchDate: '2026-09-01T16:00:00', marketType: 'AwayTeamGoals', lineValue: .5
+}));
+await respond(shared.calls[0], siblings);
+await respond(shared.calls[1], siblings);
+const siblingRow = () => shared.node('BotPicksTableBody').innerHTML.match(/<tr[^>]*data-selection-row="202"[\s\S]*?<\/tr>/)?.[0] ?? '';
+assert.match(siblingRow(), /Bot F[\s\S]*Liquidar para todos/);
+const actualInput = new Element();
+actualInput.value = '1';
+const clickedButton = new Element();
+const clickedRow = new Element();
+clickedRow.querySelector = selector => selector.startsWith('input[') ? actualInput : clickedButton;
+clickedRow.querySelectorAll = () => [actualInput, clickedButton];
+shared.node('BotPicksTableBody').querySelector = selector => selector === '[data-selection-row="201"]' ? clickedRow : null;
+shared.node('BotPicksTableBody').dispatchEvent({ type: 'click', target: {
+    closest: selector => selector === 'button[data-resolve-selection]' ? { dataset: { resolveSelection: '201' } } : null
+} });
+const resolution = shared.calls.at(-1);
+assert.match(resolution.url, /\/BotPicks\/Resolve\?id=201$/);
+assert.equal(resolution.options.method, 'PUT');
+assert.equal(resolution.options.headers.RequestVerificationToken, 'test-csrf');
+assert.deepEqual(JSON.parse(resolution.options.body), { actualValue: 1 });
+const settledSiblings = siblings.map(item => ({ ...item, status: 'Won', settlementActualValue: 1,
+    actualAwayCorners: 1, settlementFactor: 1, settlementSource: 'Manual', profitLoss: .9 }));
+await respond(resolution, settledSiblings[0]);
+assert.equal(eventDetails.length, 1);
+assert.equal(eventDetails[0].source, 'production', 'general picks must distinguish a productive settlement from their own refresh');
+const reloaded = shared.calls.at(-1);
+assert.match(reloaded.url, /^\/BotPicks\/Selections\?/,
+    'a successful settlement must fetch all persisted sibling outcomes, not just replace the clicked row');
+assert.match(reloaded.url, /includePerformance=false/);
+await respond(reloaded, settledSiblings);
+assert.equal(shared.node('BotPicksQuickPendingCount').textContent, '0');
+assert.equal(shared.node('BotPicksQuickResolvedCount').textContent, '2');
+assert.match(siblingRow(), /Bot F[\s\S]*Real: 1 goles[\s\S]*Corregir para todos/,
+    'the unclicked Bot F must show its shared result and only offer a correction');
+assert.doesNotMatch(siblingRow(), /Liquidar para todos/);
+assert.match(shared.node('BotPicksSettlementResult').textContent, /Resultado compartido con todos los bots/);
+assert.deepEqual(shared.scrolls, [[0, 600]], 'refreshing every bot preserves the user position');
+assert.equal(actualInput.disabled, false);
+console.log('PASS productive manual settlement sends the statistic, reloads sibling Bot F, labels corrections and invalidates the general surface.');

@@ -86,6 +86,33 @@ internal static class FixtureManualSettlementTests
             Check(await SharedActual(first) == 0 && await SharedActual(late) == 0, "Correction/zero did not propagate.");
             Check(await Scalar<decimal>("SELECT ProfitLoss FROM dbo.AutomatedCornerBetSelections WHERE AutomatedCornerBetSelectionId=@Id", new { Id = published }) == 2.2m,
                 "Correction did not recalculate published economic return.");
+
+            var productionWriter = new SqlServerAutomatedCornerSelectionsRepository(configuration);
+            var productionResult = await productionWriter.ResolveAsync(published, 2, "production-integration-test", default);
+            Check(productionResult.Status == "Lost" && productionResult.ProfitLoss == -2m,
+                "Productivo response lost its original per-pick odds/stake contract.");
+            Check(await SharedActual(first) == 2 && await SharedActual(withoutId) == 2 && await SharedActual(late) == 2,
+                "Productivo still settled only the selected bot instead of its fixture and market.");
+            Check(await Scalar<string>("SELECT TOP(1) SettledBy FROM dbo.GeneralBotFixtureManualSettlements WHERE RecordId=@Id ORDER BY Id DESC", new { Id = -published }) == "production-integration-test",
+                "Productivo did not preserve the authenticated operator in the shared audit.");
+
+            // Regression for Sabadell–Oviedo: no bot has an API-Football id.
+            // One published pick must settle the other published bot and the
+            // unpublished model signals using the exact event identity.
+            var missingIdDay = day.AddHours(1);
+            var missingIdA = await SeedEvaluation(botA, "AwayTeamGoals", "Over", .5m, 1.65m, null, missingIdDay);
+            var missingIdF = await SeedEvaluation(botF, "AwayTeamGoals", "Over", .5m, 1.67m, null, missingIdDay);
+            var missingIdUnder = await SeedEvaluation(botC, "AwayTeamGoals", "Under", 1.5m, 1.21m, null, missingIdDay);
+            var missingIdPubA = await SeedPublished(botA, "Over", .5m, 1.65m, 1m, null, missingIdDay);
+            var missingIdPubF = await SeedPublished(botF, "Over", .5m, 1.67m, .5m, null, missingIdDay);
+            await productionWriter.ResolveAsync(missingIdPubA, 1, "production-integration-test", default);
+            foreach (var id in new[] { missingIdA, missingIdF, missingIdUnder })
+                Check(await SharedActual(id) == 1, "A bot without a fixture id did not inherit the productive result.");
+            Check(await Scalar<string>("SELECT Status FROM dbo.AutomatedCornerBetSelections WHERE AutomatedCornerBetSelectionId=@Id", new { Id = missingIdPubF }) == "Won",
+                "F remained pending after another bot settled the same away-goals pick.");
+            Check(await Scalar<decimal>("SELECT ProfitLoss FROM dbo.AutomatedCornerBetSelections WHERE AutomatedCornerBetSelectionId=@Id", new { Id = missingIdPubF }) == .34m,
+                "F did not calculate its own rounded profit from the shared actual value.");
+            Console.WriteLine("PASS Productivo shares manual results with General Picks and other published bots, including events without a fixture id.");
             await Reject(() => writer.SettleAsync(first, request with { ActualValue = 2 }, "fixture-integration-test", default));
             var future = await SeedEvaluation(botA, "AwayTeamGoals", "Over", .5m, 1.9m, fixture + 2, DateTime.Today.AddDays(2));
             await Reject(() => writer.SettleAsync(future, correction with { RequestId = Guid.NewGuid() }, "fixture-integration-test", default));

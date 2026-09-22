@@ -10,6 +10,7 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
     IAutomatedBotMonthlyHistoryRepository, IAutomatedBotPerformanceSelectionsRepository
 {
     private readonly string _connectionString;
+    private readonly IGeneralPickManualSettlementRepository _manualSettlements;
     private const string SelectSelectionSql = """
         SELECT
             s.AutomatedCornerBetSelectionId,
@@ -77,9 +78,16 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
     private const string SelectSelectionByIdSql = SelectSelectionSql + " WHERE s.AutomatedCornerBetSelectionId = @Id;";
 
     public SqlServerAutomatedCornerSelectionsRepository(IConfiguration configuration)
+        : this(configuration, new SqlServerGeneralPickManualSettlementRepository(configuration))
+    {
+    }
+
+    public SqlServerAutomatedCornerSelectionsRepository(IConfiguration configuration,
+        IGeneralPickManualSettlementRepository manualSettlements)
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection") ??
             throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+        _manualSettlements = manualSettlements;
     }
 
     public async Task<IReadOnlyList<AutomatedCornerSelectionDto>> GetPerformanceSelectionsAsync(
@@ -320,29 +328,31 @@ public sealed class SqlServerAutomatedCornerSelectionsRepository : IAutomatedCor
         return updatedSelection ?? throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
     }
 
+    public Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        int actualValue,
+        CancellationToken cancellationToken) =>
+        ResolveAsync(id, actualValue, ResolveAutomatedCornerSelectionUseCase.LegacyManualSettlementActor,
+            cancellationToken);
+
     public async Task<AutomatedCornerSelectionDto> ResolveAsync(
         long id,
         int actualValue,
+        string actor,
         CancellationToken cancellationToken)
     {
+        if (id <= 0)
+            throw new ArgumentException("Selection id must be greater than zero.");
+
+        // A manual value describes the fixture's market statistic, independently
+        // of which bot, line or bookmaker exposed the settlement action.
+        await _manualSettlements.SettleAsync(-id,
+            new GeneralPickManualSettlementRequest(actualValue,
+                "Resultado manual registrado desde Bot Picks productivo.", Guid.NewGuid(), ApplyToFixture: true),
+            string.IsNullOrWhiteSpace(actor) ? ResolveAutomatedCornerSelectionUseCase.LegacyManualSettlementActor : actor.Trim(),
+            cancellationToken);
+
         await using var connection = new SqlConnection(_connectionString);
-        var parameters = new DynamicParameters();
-        parameters.Add("AutomatedCornerBetSelectionId", id, DbType.Int64);
-        parameters.Add("ActualValue", actualValue, DbType.Int32);
-        parameters.Add("RowsAffected", dbType: DbType.Int32, direction: ParameterDirection.Output);
-
-        await connection.ExecuteAsync(new CommandDefinition(
-            "dbo.sp_ResolveAutomatedCornerBetSelection",
-            parameters,
-            commandType: CommandType.StoredProcedure,
-            commandTimeout: 300,
-            cancellationToken: cancellationToken));
-
-        if (parameters.Get<int>("RowsAffected") == 0)
-        {
-            throw new KeyNotFoundException($"Automated corner selection {id} was not found.");
-        }
-
         var selectCommand = new CommandDefinition(
             SelectSelectionByIdSql,
             new { Id = id },

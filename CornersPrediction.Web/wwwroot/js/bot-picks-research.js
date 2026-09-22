@@ -923,6 +923,19 @@
     });
 
     refreshButton?.addEventListener('click', () => void load(true));
+
+    document.addEventListener('bot-pick-manually-settled', event => {
+        if (event.detail?.source !== 'production') return;
+        hasLoaded = false;
+        labLoadedSignature = null;
+        evidenceCache.clear();
+        requestController?.abort();
+        requestController = null;
+        labController?.abort();
+        labController = null;
+        labRequestSignature = null;
+        if (activeSurface === 'research') void load(true);
+    });
     pageSizeSelect.addEventListener('change', () => {
         currentPage = 1;
         pageSize = Number(pageSizeSelect.value) || 50;

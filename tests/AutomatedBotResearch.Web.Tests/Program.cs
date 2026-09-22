@@ -17,7 +17,8 @@ if (args.Contains("--live-lab", StringComparer.Ordinal))
 var tests = new (string Name, Action Run)[]
 {
     ("Research client sends every independent filter", ClientSendsResearchFilters),
-    ("Manual settlement uses admin/CSRF and forwards the authenticated actor", ManualSettlementUsesAuthenticatedActor),
+    ("Manual settlement uses admin/CSRF and shares results even for legacy clients", ManualSettlementUsesAuthenticatedActor),
+    ("Published settlement forwards its actor and preserves validation errors", PublishedSettlementUsesAuthenticatedActor),
     ("Selection queries constrain current, older and canonical rows to each market", SelectionQueriesUseMarketFamily),
     ("Monthly history uses aggregate API without downloading selections", MonthlyHistoryUsesAggregateApi),
     ("Initial table preserves every market row with explicit unverified zero-stake plans", InitialSelectionsAreVisibleAndUnverified),
@@ -51,14 +52,18 @@ static void ManualSettlementUsesAuthenticatedActor()
     Check(method.GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), true).Length == 1, "Manual writes need CSRF protection.");
     Check(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
         .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Any(attribute => attribute.Policy == CornersPrediction.Web.Services.PlatformPolicies.Admin), "Manual writes require admin.");
+    var calls = 0;
+    Guid expectedRequestId = default;
     using var http = new HttpClient(new StubHandler(request =>
     {
+        calls++;
         Equal(HttpMethod.Put, request.Method, "manual method");
         Equal("/api/automated-corners/general-picks/42/settlement", request.RequestUri!.AbsolutePath, "manual path");
         Equal("operator@example.test", request.Headers.GetValues("X-Acting-User").Single(), "authenticated actor");
         var body = request.Content!.ReadFromJsonAsync<GeneralPickManualSettlementViewModel>().GetAwaiter().GetResult()!;
         Equal(0, body.ActualValue, "zero outcome");
         Equal("Official league site", body.Reason, "audit note");
+        Equal(expectedRequestId, body.RequestId, "idempotency key");
         Equal(true, body.ApplyToFixture, "fixture scope must reach the API");
         return Json(HttpStatusCode.OK, new { appliedToFixture = true, affectedBots = 3, affectedPublishedPicks = 2 });
     })) { BaseAddress = new Uri("http://manual-test") };
@@ -69,14 +74,71 @@ static void ManualSettlementUsesAuthenticatedActor()
                 new(System.Security.Claims.ClaimTypes.Name, "operator@example.test"),
                 new(System.Security.Claims.ClaimTypes.Role, "Admin")], "test")) } }
     };
-    var result = controller.SettleGeneralPick(42, new(0, "Official league site", Guid.NewGuid(), true), default)
-        .GetAwaiter().GetResult() as OkObjectResult;
-    Check(result?.Value is System.Text.Json.JsonElement payload && payload.GetProperty("affectedBots").GetInt32() == 3,
-        "Manual settlement proxy lost the affected bots result.");
+    var omittedScopeJson = System.Text.Json.JsonSerializer.Serialize(new
+    {
+        actualValue = 0, reason = "Official league site", requestId = Guid.NewGuid()
+    });
+    var omittedScope = System.Text.Json.JsonSerializer.Deserialize<GeneralPickManualSettlementViewModel>(
+        omittedScopeJson, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+    foreach (var request in new[]
+    {
+        new GeneralPickManualSettlementViewModel(0, "Official league site", Guid.NewGuid(), true),
+        omittedScope,
+        new GeneralPickManualSettlementViewModel(0, "Official league site", Guid.NewGuid(), false)
+    })
+    {
+        expectedRequestId = request.RequestId;
+        var result = controller.SettleGeneralPick(42, request, default).GetAwaiter().GetResult() as OkObjectResult;
+        Check(result?.Value is System.Text.Json.JsonElement payload && payload.GetProperty("affectedBots").GetInt32() == 3,
+            "Manual settlement proxy lost the affected bots result.");
+    }
+    Equal(3, calls, "current, omitted-scope and explicit-false requests must all reach the shared settlement");
     var preview = typeof(BotPicksController).GetMethod(nameof(BotPicksController.PreviewGeneralPickSettlement))!;
     Check(preview.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
         .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Any(a => a.Policy == CornersPrediction.Web.Services.PlatformPolicies.Admin),
         "Fixture preview requires admin.");
+}
+
+static void PublishedSettlementUsesAuthenticatedActor()
+{
+    var method = typeof(BotPicksController).GetMethod(nameof(BotPicksController.Resolve))!;
+    Check(method.GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), true).Length == 1, "Published manual writes need CSRF protection.");
+    Check(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
+        .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Any(a => a.Policy == CornersPrediction.Web.Services.PlatformPolicies.Admin),
+        "Published manual writes require admin.");
+    foreach (var status in new[] { HttpStatusCode.OK, HttpStatusCode.BadRequest, HttpStatusCode.NotFound })
+    {
+        const string error = "No se pudo identificar el partido de forma inequívoca.";
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            Equal(HttpMethod.Put, request.Method, "published manual method");
+            Equal("/api/automated-corners/selections/42/resolve", request.RequestUri!.AbsolutePath, "published manual path");
+            Equal("operator@example.test", request.Headers.GetValues("X-Acting-User").Single(), "published authenticated actor");
+            Equal(1, request.Content!.ReadFromJsonAsync<ResolveBotPickViewModel>().GetAwaiter().GetResult()!.ActualValue,
+                "published actual result");
+            return status == HttpStatusCode.OK
+                ? Json(status, new { automatedCornerBetSelectionId = 42, status = "Won" })
+                : Json(status, new { error });
+        })) { BaseAddress = new Uri("http://manual-test") };
+        var controller = new BotPicksController(new AutomatedCornersApiClient(http), new RecommendationAutomationApiClient(http), NullLogger<BotPicksController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext {
+                User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([
+                    new(System.Security.Claims.ClaimTypes.Name, "operator@example.test"),
+                    new(System.Security.Claims.ClaimTypes.Role, "Admin")], "test")) } }
+        };
+        var result = controller.Resolve(42, new ResolveBotPickViewModel { ActualValue = 1 }, default).GetAwaiter().GetResult();
+        if (status == HttpStatusCode.OK)
+            Check(result is JsonResult { Value: BotPickSelectionViewModel { AutomatedCornerBetSelectionId: 42, Status: "Won" } },
+                "Published settlement lost its updated selection.");
+        else
+        {
+            Check(result is ObjectResult response && response.StatusCode == (int)status,
+                "Published settlement hid the validation status.");
+            var body = System.Text.Json.JsonSerializer.SerializeToElement(((ObjectResult)result).Value);
+            Equal(error, body.GetProperty("error").GetString(), "published validation message");
+        }
+    }
 }
 
 static async Task<int> RunLiveTwoPhaseComparison()

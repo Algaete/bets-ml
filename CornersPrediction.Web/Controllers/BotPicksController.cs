@@ -498,7 +498,9 @@ public sealed class BotPicksController : Controller
     {
         try
         {
-            var result = await _automatedCornersApiClient.SettleGeneralPickAsync(id, request,
+            // Older open tabs omit the scope flag. A confirmed match statistic
+            // must still settle every bot's picks for that match and market.
+            var result = await _automatedCornersApiClient.SettleGeneralPickAsync(id, request with { ApplyToFixture = true },
                 User.Identity?.Name ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "",
                 cancellationToken);
             return Ok(result);
@@ -533,12 +535,19 @@ public sealed class BotPicksController : Controller
     {
         try
         {
-            var updatedSelection = await _automatedCornersApiClient.ResolveSelectionAsync(id, request, cancellationToken);
+            var actor = User.Identity?.Name
+                ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+            var updatedSelection = await _automatedCornersApiClient.ResolveSelectionAsync(id, request, cancellationToken, actor);
             return Json(updatedSelection);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return StatusCode(499, new { error = "Bot pick settlement was cancelled." });
+        }
+        catch (HttpRequestException exception) when (exception.StatusCode is
+            System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
+        {
+            return StatusCode((int)exception.StatusCode.Value, new { error = exception.Message });
         }
         catch (Exception exception)
         {

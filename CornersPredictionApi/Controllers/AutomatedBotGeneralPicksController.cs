@@ -83,9 +83,10 @@ public sealed class AutomatedBotGeneralPicksController(
     {
         try
         {
-            var result = await settlements.SettleAsync(recordId, request, actor ?? "", cancellationToken);
-            cache.Remove("automated-bot-performance-scorecards-v1");
-            Interlocked.Increment(ref _generalPicksCacheVersion);
+            // Scope is a server rule, including requests from older clients
+            // that omit ApplyToFixture or still send its former false default.
+            var result = await settlements.SettleAsync(recordId, request with { ApplyToFixture = true }, actor ?? "", cancellationToken);
+            InvalidateOutcomeCaches(cache);
             return Ok(result);
         }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
@@ -95,6 +96,12 @@ public sealed class AutomatedBotGeneralPicksController(
             logger.LogError(exception, "Failed to manually settle general pick {RecordId}", recordId);
             return Problem(title: "No se pudo guardar la liquidación manual.", statusCode: 500);
         }
+    }
+
+    public static void InvalidateOutcomeCaches(IMemoryCache cache)
+    {
+        cache.Remove("automated-bot-performance-scorecards-v1");
+        Interlocked.Increment(ref _generalPicksCacheVersion);
     }
 
     [HttpGet("{recordId:long}/settlement-preview")]

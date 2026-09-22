@@ -102,6 +102,12 @@ public interface IAutomatedCornerSelectionsRepository
         int actualValue,
         CancellationToken cancellationToken);
 
+    Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        int actualValue,
+        string actor,
+        CancellationToken cancellationToken) => ResolveAsync(id, actualValue, cancellationToken);
+
     Task<AutomatedCornerSelectionDto> LinkMatchAsync(
         long id,
         long matchHistoryId,
@@ -132,6 +138,12 @@ public interface IResolveAutomatedCornerSelectionUseCase
         long id,
         ResolveAutomatedCornerSelectionRequest request,
         CancellationToken cancellationToken);
+
+    Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        ResolveAutomatedCornerSelectionRequest request,
+        string actor,
+        CancellationToken cancellationToken) => ResolveAsync(id, request, cancellationToken);
 }
 
 public interface ILinkAutomatedCornerSelectionMatchUseCase
@@ -267,6 +279,7 @@ public sealed class UpdateAutomatedCornerSelectionStatusUseCase : IUpdateAutomat
 
 public sealed class ResolveAutomatedCornerSelectionUseCase : IResolveAutomatedCornerSelectionUseCase
 {
+    public const string LegacyManualSettlementActor = "Administrador (API interna sin usuario informado)";
     private readonly IAutomatedCornerSelectionsRepository _repository;
 
     public ResolveAutomatedCornerSelectionUseCase(IAutomatedCornerSelectionsRepository repository)
@@ -277,6 +290,13 @@ public sealed class ResolveAutomatedCornerSelectionUseCase : IResolveAutomatedCo
     public Task<AutomatedCornerSelectionDto> ResolveAsync(
         long id,
         ResolveAutomatedCornerSelectionRequest request,
+        CancellationToken cancellationToken) =>
+        ResolveAsync(id, request, LegacyManualSettlementActor, cancellationToken);
+
+    public Task<AutomatedCornerSelectionDto> ResolveAsync(
+        long id,
+        ResolveAutomatedCornerSelectionRequest request,
+        string actor,
         CancellationToken cancellationToken)
     {
         if (id <= 0)
@@ -284,12 +304,16 @@ public sealed class ResolveAutomatedCornerSelectionUseCase : IResolveAutomatedCo
             throw new ArgumentException("Selection id must be greater than zero.");
         }
 
-        if (request.ActualValue < 0)
+        if (request.ActualValue is < 0 or > 1000)
         {
-            throw new ArgumentException("Actual result must be zero or greater.");
+            throw new ArgumentException("Actual result must be between zero and 1000.");
         }
 
-        return _repository.ResolveAsync(id, request.ActualValue, cancellationToken);
+        var normalizedActor = string.IsNullOrWhiteSpace(actor) ? LegacyManualSettlementActor : actor.Trim();
+        if (normalizedActor.Length > 256)
+            throw new ArgumentException("El usuario responsable de la liquidación no es válido.");
+
+        return _repository.ResolveAsync(id, request.ActualValue, normalizedActor, cancellationToken);
     }
 }
 

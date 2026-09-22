@@ -43,6 +43,8 @@ Equal(25m, summary.YieldPct!.Value, "Monthly yield percentage");
 Check((summary with { SettledStake = 0m }).YieldPct is null, "Unsettled months must not invent a yield.");
 Console.WriteLine("PASS monthly yield uses settled stake and stays absent without settled stake");
 
+await PublishedManualSettlementTests.RunAsync();
+
 if (!args.Contains("--sql"))
 {
     Console.WriteLine("SQL integration checks not requested; pass --sql with BOT_DASHBOARD_TEST_CONNECTION_STRING to run session-local fixture checks.");

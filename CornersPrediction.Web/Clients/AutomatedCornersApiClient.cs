@@ -246,23 +246,19 @@ public sealed class AutomatedCornersApiClient
     public async Task<BotPickSelectionViewModel> ResolveSelectionAsync(
         long id,
         ResolveBotPickViewModel request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? actor = null)
     {
-        var response = await _httpClient.PutAsJsonAsync(
-            $"/api/automated-corners/selections/{id}/resolve",
-            request,
-            cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        using var message = new HttpRequestMessage(HttpMethod.Put,
+            $"/api/automated-corners/selections/{id}/resolve")
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(errorBody)
-                    ? $"Settlement failed with {(int)response.StatusCode}."
-                    : errorBody);
-        }
-
-        var updatedSelection = await response.Content.ReadFromJsonAsync<BotPickSelectionViewModel>(cancellationToken);
+            Content = JsonContent.Create(request)
+        };
+        if (!string.IsNullOrWhiteSpace(actor)) message.Headers.Add("X-Acting-User", actor);
+        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        var payload = await ReadSettlementResponse(response, cancellationToken);
+        var updatedSelection = payload.Deserialize<BotPickSelectionViewModel>(
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         return updatedSelection ?? throw new InvalidOperationException("Settlement returned an empty response.");
     }
 

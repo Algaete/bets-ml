@@ -2,6 +2,15 @@
 
 Actualizado el **21 de septiembre de 2026**. La sección más reciente tiene prioridad; las inferiores conservan el historial de sesiones anteriores.
 
+## Corrección Productivo → todos los bots: 21 de septiembre, 21:39 Chile
+
+- Causa confirmada de Sabadell–Real Oviedo (20/09, 09:00): Productivo seguía llamando a la liquidación individual. Las selecciones 3840 F, 3841 C, 3842 D y 3843 E se habían guardado una por una; el registro compartido estaba vacío. No era un problema de coincidencia de nombres ni del modelo.
+- Se unificó `/selections/{id}/resolve` con la liquidación compartida por partido/mercado, preservando el contrato anterior, el actor autenticado y la invalidación de caché. Generales fuerza el alcance compartido también para pestañas antiguas que omiten el flag. Productivo recarga las filas de todos los bots y muestra **Liquidar para todos** o **Corregir para todos**; al volver a Generales se refrescan tabla y laboratorio.
+- Se compartió el **1 gol de Real Oviedo confirmado por el usuario y ya registrado**: 4 bots, 4 picks publicados y 32 evaluaciones heredan el mismo resultado. Solo se reconciliaron goles visita de este partido; no se inventaron resultados ni se migraron automáticamente todas las liquidaciones históricas.
+- Validación: solución compilada sin errores/advertencias; 65 pruebas de liquidación, 10 pruebas Web, regresiones Productivo del dashboard y ambos harness JS correctos. Prueba SQL con datos ficticios y rollback: Productivo → Generales/otros bots, incluido partido sin ID de API-Football, líneas/cuotas/stake propios y autor auditado.
+- API/robots 5070 y web 5130 reiniciadas. Salud API 200, web 302 a login. Logs: `/private/tmp/corners-api-20260921-shared-fix.log` y `/private/tmp/corners-web-20260921-shared-fix.log`. El proceso persistente `52d3def9-277e-4371-a809-cbeadfab5de8` se reanudó en lote 5/11, 4 completos y 0 errores al comprobar; no se creó otra ejecución.
+- La regla productiva del 3% y el pendiente de lentitud de ciertas consultas de aprobadas no cambiaron.
+
 ## Liquidación manual compartida: 21 de septiembre
 
 - Ver `docs/liquidacion-manual-compartida-2026-09-21.md`. Bot Picks generales permite **Liquidar partido** y **Corregir resultado compartido**: un dato de partido/mercado se comparte entre todos los bots, líneas y lados, incluidos los de otras páginas. No se infieren las estadísticas de otros mercados.

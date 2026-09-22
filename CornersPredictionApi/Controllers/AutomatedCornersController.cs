@@ -279,8 +279,9 @@ public sealed class AutomatedCornersController : ControllerBase
         try
         {
             await _automationRepository.EnsureSchemaAsync(cancellationToken);
-            var updatedSelection = await _resolveSelectionUseCase.ResolveAsync(id, request, cancellationToken);
-            _cache.Remove(PerformanceScorecardsCacheKey);
+            var actor = Request.Headers["X-Acting-User"].ToString();
+            var updatedSelection = await _resolveSelectionUseCase.ResolveAsync(id, request, actor, cancellationToken);
+            AutomatedBotGeneralPicksController.InvalidateOutcomeCaches(_cache);
             return Ok(updatedSelection);
         }
         catch (ArgumentException exception)
